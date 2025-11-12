@@ -1,12 +1,12 @@
-# On-Dvice LLM Chat
+# ChatLLM
 
-On-Dvice LLM Chat is a privacy-focused, on-device AI chat application for Apple platforms. It leverages Apple's Foundation Models framework to power conversational AI directly on your device, ensuring your data stays local without cloud dependencies. The app supports persistent chat history, advanced reasoning capabilities, web search integration for real-time information, and image analysis (including OCR and object detection). Built with SwiftUI and SwiftData, it's designed for seamless performance on iOS, iPadOS, and macOS.
+ChatLLM is a privacy-focused, on-device AI chat application for Apple platforms. It leverages Apple's Foundation Models framework to power conversational AI directly on your device, ensuring your data stays local without cloud dependencies. The app supports persistent chat history, advanced reasoning capabilities, web search integration for real-time information, and image analysis (including OCR and object detection). Built with SwiftUI and SwiftData, it's designed for seamless performance on iOS, iPadOS, and macOS.
 
 This app is ideal for developers, students, and users who want a fast, offline-capable chatbot for tasks like code assistance, explanations, debugging, and casual queries—all while maintaining full control over your data.
 
 ## Key Features
 
-- **On-Device AI Conversations**: Uses Apple's SystemLanguageModel for instant, private responses. Supports streaming token-by-token generation for a natural chat experience.
+- **ChatLLM**: Uses Apple's SystemLanguageModel for instant, private responses. Supports streaming token-by-token generation for a natural chat experience.
   
 - **Reasoning Modes**:
   - **Manual Reasoning**: Always shows the AI's step-by-step thinking process before the final answer—great for complex problem-solving, code debugging, or logical analysis.
@@ -43,7 +43,6 @@ This app is ideal for developers, students, and users who want a fast, offline-c
 ## Requirements
 
 - **Platforms**: iOS 26.0+ (requires Apple Intelligence-compatible devices like iPhone 15 Pro+).
-- **Xcode**: 15.0 or later.
 - **Optional**: Tavily API key (free tier at [tavily.com](https://tavily.com)) for web search. Without it, the app works fully on-device.
 
 No third-party dependencies beyond Apple's frameworks—keeps it lightweight and secure.
