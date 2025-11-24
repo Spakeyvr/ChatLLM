@@ -103,7 +103,7 @@ Fork the repo, create a branch, and submit a pull request. Follow Swift best pra
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details (add one if missing).
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
