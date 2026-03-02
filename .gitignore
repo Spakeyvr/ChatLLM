@@ -13,3 +13,11 @@ On-Device_LLM_Chat/**/*.mlmodelc/
 weights/
 On-Device_LLM_Chat/Qwen*mlmodelc/
 
+
+# === Build artifacts (Xcode / Swift / ML projects) ===
+build/
+**/build/
+.DS_Store
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
