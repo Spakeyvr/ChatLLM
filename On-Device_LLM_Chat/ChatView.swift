@@ -37,6 +37,9 @@ struct ChatView: View {
     // Backend bridge for checking reasoning availability
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
 
+    // Camera state
+    @State private var showCameraCapture = false
+
     // Pickers state
     @State private var selectedPickerItems: [PhotosPickerItem] = []
 
@@ -283,35 +286,22 @@ struct ChatView: View {
                     }
                     await MainActor.run {
                         selectedImage = image
-                        // Run full Vision analysis in background for comprehensive context
-                        Task {
-                            let analyzer = VisionAnalyzer()
-                            // Use comprehensive analysis options with LOWER OCR threshold for better text detection
-                            // Memes and stylized text often have lower confidence scores
-                            var options = AnalysisOptions.all
-                            options.minimumTextConfidence = 0.3 // Lower threshold for better OCR detection
-                            options.useAccurateOCR = true // Use accurate mode for better results
-
-                            if let result = try? await analyzer.analyze(image: image, options: options) {
-                                detectedObjects = result.objects
-                                fullImageAnalysis = result
-                                print("✅ Vision analysis complete: \(result.objects.count) objects, \(result.textBlocks.count) text blocks")
-                                if !result.textBlocks.isEmpty {
-                                    print("📝 OCR found text: \(result.fullText)")
-                                }
-                            } else {
-                                detectedObjects = []
-                                fullImageAnalysis = nil
-                                print("⚠️ Vision analysis returned nil")
-                            }
-                        }
                         forceSearch = false
                     }
+                    await runVisionAnalysis(on: image)
                 } catch {
                     logger.error("Failed to load image: \(error.localizedDescription)")
                 }
                 selectedPhotoItem = nil
             }
+        }
+        .onChange(of: showCameraCapture) { _, isPresented in
+            // When camera sheet is dismissed with a captured image, run Vision analysis
+            guard !isPresented, let image = selectedImage else { return }
+            detectedObjects = nil
+            fullImageAnalysis = nil
+            forceSearch = false
+            Task { await runVisionAnalysis(on: image) }
         }
         .alert(item: $errorAlert) { alert in
             if let retry = alert.retry {
@@ -384,6 +374,10 @@ struct ChatView: View {
             SafariView(url: url)
                 .ignoresSafeArea()
         }
+        .sheet(isPresented: $showCameraCapture) {
+            CameraCapturePicker(image: $selectedImage, isPresented: $showCameraCapture)
+                .ignoresSafeArea()
+        }
     }
 
     @ViewBuilder
@@ -401,6 +395,9 @@ struct ChatView: View {
             },
             onClear: {
                 inputText = ""
+            },
+            onCamera: {
+                showCameraCapture = true
             },
             onPhotosPicker: {
                 showImagePicker = true
@@ -533,6 +530,24 @@ struct ChatView: View {
         }
     }
 
+    private func runVisionAnalysis(on image: UIImage) async {
+        let analyzer = VisionAnalyzer()
+        var options = AnalysisOptions.all
+        options.minimumTextConfidence = 0.3
+        options.useAccurateOCR = true
+        if let result = try? await analyzer.analyze(image: image, options: options) {
+            await MainActor.run {
+                detectedObjects = result.objects
+                fullImageAnalysis = result
+            }
+        } else {
+            await MainActor.run {
+                detectedObjects = []
+                fullImageAnalysis = nil
+            }
+        }
+    }
+
     private func handleImageForOCR(_ image: UIImage) async {
         do {
             _ = try await ImageStore.shared.save(image: image)
@@ -588,6 +603,41 @@ struct ChatView: View {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 150_000_000) // ~150 ms
             action()
+        }
+    }
+}
+
+// MARK: - Camera Capture Picker
+
+private struct CameraCapturePicker: UIViewControllerRepresentable {
+    @Binding var image: UIImage?
+    @Binding var isPresented: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraCapturePicker
+        init(_ parent: CameraCapturePicker) { self.parent = parent }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let img = info[.originalImage] as? UIImage {
+                parent.image = img
+            }
+            parent.isPresented = false
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.isPresented = false
         }
     }
 }

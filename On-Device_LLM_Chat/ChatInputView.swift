@@ -17,6 +17,7 @@ struct ComposerView: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onClear: () -> Void
+    let onCamera: () -> Void
     let onPhotosPicker: () -> Void
     let onFileImporter: () -> Void
     @Binding var forceSearch: Bool
@@ -31,6 +32,7 @@ struct ComposerView: View {
             onClear: onClear,
             canSend: canSend,
             isGenerating: isGenerating,
+            onCamera: onCamera,
             onPhotosPicker: onPhotosPicker,
             onFileImporter: onFileImporter,
             forceSearch: $forceSearch,

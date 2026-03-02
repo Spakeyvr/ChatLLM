@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SimpleTextComposer: View {
     @Binding var text: String
@@ -15,12 +16,14 @@ struct SimpleTextComposer: View {
     var onClear: () -> Void
     var canSend: Bool
     var isGenerating: Bool
+    var onCamera: (() -> Void)?
     var onPhotosPicker: (() -> Void)?
     var onFileImporter: (() -> Void)?
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
 
     @FocusState private var isTextFieldFocused: Bool
+    @State private var showAddSheet = false
 
     // Layout constants (aligned sizes so the circle doesn't stick out)
     private let circleSize: CGFloat = 44            // match pill height
@@ -34,37 +37,29 @@ struct SimpleTextComposer: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
 
-            // LEFT: Attachment menu button with Liquid Glass - OUTSIDE GlassEffectContainer to preserve morphing
-            Menu {
-                Button(action: { onPhotosPicker?() }) {
-                    Label("Photos", systemImage: "photo.on.rectangle")
-                }
-                Button(action: { onFileImporter?() }) {
-                    Label("Files", systemImage: "folder")
-                }
-            } label: {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 21, height: 30)
-            }
-            .buttonStyle(.glass)
-            .contentShape(.circle)
-            .accessibilityLabel("Add attachments")
-
-            // Web search toggle
+            // LEFT: Single + button - opens AddOptionsSheet
             Button {
-                forceSearch.toggle()
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showAddSheet = true
             } label: {
-                Image(systemName: forceSearch && searchAvailable ? "globe.badge.chevron.backward" : "globe")
+                Image(systemName: "plus")
                     .font(.system(size: 16, weight: .semibold))
                     .frame(width: 21, height: 30)
                     .foregroundStyle(forceSearch && searchAvailable ? Color.blue : Color.primary)
             }
             .buttonStyle(.glass)
             .contentShape(.circle)
-            .disabled(!searchAvailable)
-            .accessibilityLabel(forceSearch ? "Disable web search" : "Enable web search")
+            .accessibilityLabel("Add attachment or web search")
+            .sheet(isPresented: $showAddSheet) {
+                AddOptionsSheet(
+                    onCamera: { showAddSheet = false; onCamera?() },
+                    onPhotoLibrary: { showAddSheet = false; onPhotosPicker?() },
+                    onFile: { showAddSheet = false; onFileImporter?() },
+                    forceSearch: $forceSearch,
+                    searchAvailable: searchAvailable
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
 
            
             // MIDDLE: Text pill with send button overlaid on its right edge - IN GlassEffectContainer
@@ -170,6 +165,82 @@ private struct PillHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 44
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+// MARK: - Add Options Sheet
+
+private struct AddOptionsSheet: View {
+    var onCamera: () -> Void
+    var onPhotoLibrary: () -> Void
+    var onFile: () -> Void
+    @Binding var forceSearch: Bool
+    var searchAvailable: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 0) {
+                // MARK: Top icon grid
+                HStack(spacing: 12) {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        AttachTile(icon: "camera", label: "Camera", action: onCamera)
+                    }
+                    AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
+                    AttachTile(icon: "doc.badge.arrow.up", label: "Files", action: onFile)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
+
+                Divider()
+                    .padding(.horizontal, 20)
+
+                // MARK: Toggle rows
+                VStack(spacing: 0) {
+                    Toggle(isOn: $forceSearch) {
+                        Label {
+                            Text("Web Search")
+                                .font(.body)
+                        } icon: {
+                            Image(systemName: "globe")
+                                .font(.body)
+                                .frame(width: 28)
+                        }
+                    }
+                    .disabled(!searchAvailable)
+                    .tint(.blue)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                }
+
+                Spacer()
+            }
+            .navigationTitle("Add to Chat")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+private struct AttachTile: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 26, weight: .regular))
+                Text(label)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 100)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
     }
 }
 
