@@ -1,0 +1,15 @@
+
+# Core ML / LLM models (never commit these)
+*.mlmodelc
+*.bin
+weights/
+On-Device_LLM_Chat/**/*.mlmodelc/
+
+
+# === NEVER commit large ML models ===
+*.mlmodelc/
+*.mlmodel
+**/*weight.bin
+weights/
+On-Device_LLM_Chat/Qwen*mlmodelc/
+
