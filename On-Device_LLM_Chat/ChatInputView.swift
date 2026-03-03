@@ -56,11 +56,9 @@ struct NavigationTitleView: View {
     @AppStorage("selectedLLMBackend") private var selectedBackend: String = "foundationModels"
 
     @State private var showModelManagement = false
-    @State private var showDownloadAlert = false
-    @State private var modelToDownload: LLMModelManager.LLMModelInfo?
 
     // modelBackendBridge.modelManager is always set in ModelBackendBridge.init
-    private var modelManager: LLMModelManager { modelBackendBridge.modelManager! }
+    private var modelManager: MLXModelManager { modelBackendBridge.modelManager! }
 
     private var isLoading: Bool {
         modelBackendBridge.modelManager?.isLoading ?? false
@@ -95,43 +93,19 @@ struct NavigationTitleView: View {
                     }
                 }
 
-                // Custom CoreML Models
+                // MLX Models
                 ForEach(modelManager.availableModels, id: \.id) { model in
-                    let isComingSoon = model.id == "llama-3.2-3b-instruct"
-
                     if model.isAvailable {
                         Button {
-                            selectedBackend = "customCoreML"
-                            modelBackendBridge.selectedBackend = .customCoreML
+                            selectedBackend = "mlx"
+                            modelBackendBridge.selectedBackend = .mlx
                             modelBackendBridge.selectModel(model.id)
                             modelManager.cancelAndLoad(model)
                         } label: {
                             HStack {
                                 Text("\(model.name) (\(model.parameters))")
-                                if selectedBackend == "customCoreML" && modelBackendBridge.selectedModelID == model.id {
+                                if selectedBackend == "mlx" && modelBackendBridge.selectedModelID == model.id {
                                     Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    } else if isComingSoon {
-                        Button { } label: {
-                            HStack {
-                                Text("\(model.name) (\(model.parameters))")
-                                Image(systemName: "clock").foregroundStyle(.purple)
-                                Text("Coming Soon").font(.caption).foregroundStyle(.purple)
-                            }
-                        }
-                        .disabled(true)
-                    } else if model.downloadURL != nil {
-                        Button {
-                            modelToDownload = model
-                            showDownloadAlert = true
-                        } label: {
-                            HStack {
-                                Text("\(model.name) (\(model.parameters))")
-                                Image(systemName: "arrow.down.circle")
-                                if let size = model.fileSizeFormatted {
-                                    Text(size).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -162,21 +136,6 @@ struct NavigationTitleView: View {
                     ModelManagementView(modelManager: modelManager)
                 } else {
                     Text("Model management requires iOS 16+")
-                }
-            }
-            .alert("Download Model?", isPresented: $showDownloadAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Download") {
-                    if let model = modelToDownload, let modelManager = modelBackendBridge.modelManager {
-                        Task {
-                            do { try await modelManager.downloadModel(model) }
-                            catch { print("Download failed: \(error)") }
-                        }
-                    }
-                }
-            } message: {
-                if let model = modelToDownload {
-                    Text("Download \(model.displayName)? This will use \(model.fileSizeFormatted ?? "~1.8 GB") of storage.")
                 }
             }
         }
@@ -217,7 +176,7 @@ struct NavigationTitleView: View {
 
 @available(iOS 16.0, *)
 struct ModelManagementView: View {
-    @ObservedObject var modelManager: LLMModelManager
+    @ObservedObject var modelManager: MLXModelManager
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -242,8 +201,8 @@ struct ModelManagementView: View {
 
 @available(iOS 16.0, *)
 struct ModelManagementRow: View {
-    let model: LLMModelManager.LLMModelInfo
-    @ObservedObject var modelManager: LLMModelManager
+    let model: MLXModelManager.MLXModelInfo
+    @ObservedObject var modelManager: MLXModelManager
 
     @State private var showDeleteAlert = false
     @State private var showInfoSheet = false
@@ -263,14 +222,11 @@ struct ModelManagementRow: View {
 
                 Spacer()
 
-                if let isDownloading = modelManager.isDownloading[model.id], isDownloading {
-                    ProgressView()
-                } else if model.isAvailable {
+                if model.isAvailable {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 }
 
-                // Info button (always visible)
                 Button {
                     showInfoSheet = true
                 } label: {
@@ -281,20 +237,8 @@ struct ModelManagementRow: View {
                 .buttonStyle(.plain)
             }
 
-            // Download progress
-            if let progress = modelManager.downloadProgress[model.id], progress > 0, progress < 1 {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                Text("\(Int(progress * 100))%")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             // Action buttons
             HStack(spacing: 12) {
-                // Check if this is a coming soon model
-                let isComingSoon = model.id == "llama-3.2-3b-instruct"
-
                 if model.isAvailable {
                     Button(role: .destructive) {
                         showDeleteAlert = true
@@ -303,56 +247,11 @@ struct ModelManagementRow: View {
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
-                } else if let isDownloading = modelManager.isDownloading[model.id], isDownloading {
-                    Button {
-                        modelManager.cancelDownload(for: model.id)
-                    } label: {
-                        Label("Cancel", systemImage: "xmark")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                } else if isComingSoon {
-                    // Coming Soon - show disabled badge
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .foregroundStyle(.purple)
-                        Text("Coming Soon")
-                            .foregroundStyle(.purple)
-                    }
-                    .font(.caption)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background {
-                        Capsule()
-                            .fill(Color.purple.opacity(0.15))
-                            .overlay {
-                                Capsule()
-                                    .strokeBorder(Color.purple.opacity(0.3), lineWidth: 1)
-                            }
-                    }
-                } else if model.downloadURL != nil {
-                    // Has download URL - show download button
-                    Button {
-                        Task {
-                            try? await modelManager.downloadModel(model)
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "arrow.down.circle")
-                            Text("Download")
-                            if let size = model.fileSizeFormatted {
-                                Text("(\(size))")
-                            }
-                        }
-                        .font(.caption)
-                    }
-                    .buttonStyle(.borderedProminent)
                 } else {
-                    // No download URL and not available - unavailable
                     HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle")
+                        Image(systemName: "folder.badge.questionmark")
                             .foregroundStyle(.orange)
-                        Text("Unavailable")
+                        Text("Place at Documents/Models/\(model.localDirName)/")
                             .foregroundStyle(.secondary)
                     }
                     .font(.caption)
@@ -442,10 +341,10 @@ struct ReasoningModeSettings: View {
 
                         if selectedBackend == "foundationModels" {
                             Button {
-                                selectedBackend = "customCoreML"
+                                selectedBackend = "mlx"
                                 onDismiss()
                             } label: {
-                                Label("Switch to Custom Models", systemImage: "arrow.right.circle.fill")
+                                Label("Switch to MLX Models", systemImage: "arrow.right.circle.fill")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                             }

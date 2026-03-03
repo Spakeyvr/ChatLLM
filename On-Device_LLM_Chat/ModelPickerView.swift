@@ -25,19 +25,17 @@ struct ModelPickerView: View {
                 }
             }
 
-            // Qwen 3 Instruct option
+            // Qwen 3.5 (MLX)
             let bridge = ModelBackendBridge.shared
             if let qwenModel = bridge.modelManager?.availableModels.first(where: { $0.isAvailable }) {
                 Button {
-                    selectedBackend = "customCoreML"
-                    bridge.selectBackend(.customCoreML)
+                    selectedBackend = "mlx"
+                    bridge.selectBackend(.mlx)
                     bridge.selectModel(qwenModel.id)
-                    // selectBackend creates the canonical manager and calls startLoading().
-                    // No direct loadModel call — that would create a second concurrent load.
                 } label: {
                     HStack {
                         Text(qwenModel.name)
-                        if selectedBackend == "customCoreML" && bridge.modelManager?.currentModel?.id == qwenModel.id {
+                        if selectedBackend == "mlx" && bridge.modelManager?.currentModel?.id == qwenModel.id {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -64,7 +62,7 @@ struct ModelPickerView: View {
     }
 
     private var displayName: String {
-        if selectedBackend == "customCoreML",
+        if selectedBackend == "mlx",
            let model = ModelBackendBridge.shared.modelManager?.currentModel {
             return model.name
         }

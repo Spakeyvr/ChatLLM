@@ -13,6 +13,11 @@ import UIKit
 import FoundationModels
 import Security  // For Keychain
 import os.log
+import MLXLMCommon
+
+// Resolve ambiguities between MLXLMCommon and SwiftData/FoundationModels
+typealias ModelContext = SwiftData.ModelContext
+typealias Tool = FoundationModels.Tool
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -438,15 +443,16 @@ final class ChatViewModel: ObservableObject {
 
         let webSearchAvailable = !disableWebSearch && searchService != nil
         let promptBridge = ModelBackendBridge.shared
-        var builtPrompt: String
-        if promptBridge.selectedBackend == .customCoreML && promptBridge.modelManager != nil {
-            // CoreML (Qwen3): use the chat-template format the tokenizer expects.
-            // additionalInstruction and the reasoning prefix are handled inside buildQwenChatPrompt.
-            builtPrompt = buildQwenChatPrompt(
+        // MLX path: structured messages passed to Qwen3VLProcessor which applies the Jinja template.
+        // enable_thinking is controlled via additionalContext, not baked into the message text.
+        var mlxMessages: [Chat.Message]? = nil
+        var builtPrompt: String  // FM path prompt (also used for debug snapshot on MLX path)
+        if promptBridge.selectedBackend == .mlx && promptBridge.modelManager != nil {
+            mlxMessages = buildQwenMessages(
                 upToOrderExclusive: order,
-                currentReasoningActive: targetToReset.isReasoningMode,
                 additionalInstruction: additionalUserInstruction
             )
+            builtPrompt = "MLX:\(mlxMessages!.count) msgs"
         } else {
             // Foundation Models: keep existing plain-text prompt format unchanged.
             builtPrompt = buildPrompt(upToOrderExclusive: order, currentReasoningActive: targetToReset.isReasoningMode, webSearchAvailable: webSearchAvailable)
@@ -478,20 +484,20 @@ final class ChatViewModel: ObservableObject {
             do {
                 let stream: AsyncThrowingStream<String, Error>
                 let bridge = ModelBackendBridge.shared
-                if bridge.selectedBackend == .customCoreML, let manager = bridge.modelManager {
+                if bridge.selectedBackend == .mlx, let manager = bridge.modelManager {
                     // Wait for any in-progress model load to finish before generating
                     while manager.isLoading && !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(200))
                     }
                     guard !Task.isCancelled else { throw CancellationError() }
                     if manager.currentModel != nil {
-                        // Wrap the CoreML callback stream into AsyncThrowingStream
                         let isReasoning = targetToReset.isReasoningMode
+                        let msgs = mlxMessages ?? []
                         stream = AsyncThrowingStream { continuation in
                             Task { @MainActor in
                                 do {
                                     try await manager.generateTextStream(
-                                        prompt: builtPrompt,
+                                        messages: msgs,
                                         enableThinking: isReasoning,
                                         onToken: { token in continuation.yield(token) }
                                     )
@@ -502,9 +508,16 @@ final class ChatViewModel: ObservableObject {
                             }
                         }
                     } else {
-                        // Model failed to load — fall back to Foundation Models
+                        // Model failed to load — fall back to Foundation Models with FM-formatted prompt
+                        var fbPrompt = buildPrompt(upToOrderExclusive: order, currentReasoningActive: targetToReset.isReasoningMode, webSearchAvailable: webSearchAvailable)
+                        if let instruction = additionalUserInstruction, !instruction.isEmpty {
+                            fbPrompt += "\n\nUser: \(instruction)"
+                        }
+                        if targetToReset.isReasoningMode && !fbPrompt.contains("<thinking>") {
+                            fbPrompt += "\n\nAssistant: <thinking>"
+                        }
                         stream = try await self.withTimeout(self.firstTokenTimeout) {
-                            try await self.generator.streamResponse(to: builtPrompt, tools: tools)
+                            try await self.generator.streamResponse(to: fbPrompt, tools: tools)
                         }
                     }
                 } else {

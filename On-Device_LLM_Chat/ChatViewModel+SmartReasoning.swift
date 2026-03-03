@@ -203,30 +203,41 @@ extension ChatViewModel {
             print("🔍 parseReasoningResponse input: '\(trimmedText)'")
         }
 
-        // Safely check for incomplete thinking tags to avoid regex issues
-        let hasOpenThinking = trimmedText.range(of: "<thinking>", options: .caseInsensitive) != nil
+        // Check all tag variants (Qwen3.5 uses <think>, older paths use <thinking>)
+        let hasOpenThinking  = trimmedText.range(of: "<thinking>",  options: .caseInsensitive) != nil
         let hasCloseThinking = trimmedText.range(of: "</thinking>", options: .caseInsensitive) != nil
+        let hasOpenThink     = trimmedText.range(of: "<think>",     options: .caseInsensitive) != nil
+        let hasCloseThink    = trimmedText.range(of: "</think>",    options: .caseInsensitive) != nil
 
-        // If there is an opening <thinking> but no closing tag yet, treat everything after it as reasoning only.
-        if hasOpenThinking && !hasCloseThinking {
-            guard let openRange = trimmedText.range(of: "<thinking>", options: .caseInsensitive) else {
-                return (nil, trimmedText)
-            }
-            let afterOpen = trimmedText[openRange.upperBound...]
-            let reasoningOnly = String(afterOpen).trimmingCharacters(in: .whitespacesAndNewlines)
-            return (reasoningOnly.isEmpty ? nil : reasoningOnly, nil)
+        // In-progress: opening tag present but closing tag not yet arrived
+        let inProgressTag: String? = (hasOpenThinking && !hasCloseThinking) ? "<thinking>" :
+                                     (hasOpenThink    && !hasCloseThink)    ? "<think>"    : nil
+        if let openTag = inProgressTag,
+           let openRange = trimmedText.range(of: openTag, options: .caseInsensitive) {
+            let after = String(trimmedText[openRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (after.isEmpty ? nil : after, nil)
         }
 
-        // Look for <thinking>...</thinking> pattern using safer string manipulation
-        guard hasOpenThinking && hasCloseThinking else {
+        // MLX path: opening <think> was in the prompt prefix so only </think> appears in output.
+        // Split at the first </think> — everything before is reasoning, everything after is the answer.
+        if !hasOpenThinking && !hasOpenThink && hasCloseThink,
+           let closeRange = trimmedText.range(of: "</think>", options: .caseInsensitive) {
+            let reasoning = String(trimmedText[..<closeRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let answer    = String(trimmedText[closeRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (reasoning.isEmpty ? nil : reasoning, answer.isEmpty ? nil : answer)
+        }
+
+        // No recognized tags → plain answer
+        guard (hasOpenThinking && hasCloseThinking) || (hasOpenThink && hasCloseThink) else {
             return (nil, trimmedText)
         }
 
-        // Use NSRegularExpression with proper error handling
-        // Enhanced pattern to handle various formats including "Final answer:" prefix
+        // Full pattern match for both tag variants
         let patterns = [
-            #"<thinking>(.*?)</thinking>\s*(?:Final answer:\s*)?(.*?)$"#,  // Handle "" prefix
-            #"<thinking>(.*?)</thinking>\s*(.*?)$"#                        // Original pattern
+            #"<thinking>(.*?)</thinking>\s*(?:Final answer:\s*)?(.*?)$"#,
+            #"<thinking>(.*?)</thinking>\s*(.*?)$"#,
+            #"<think>(.*?)</think>\s*(?:Final answer:\s*)?(.*?)$"#,
+            #"<think>(.*?)</think>\s*(.*?)$"#,
         ]
 
         for pattern in patterns {
@@ -314,6 +325,23 @@ extension ChatViewModel {
         }()
 
         if message.isReasoningMode {
+            // MLX reasoning path: the <think> opening tag is baked into the prompt prefix,
+            // so the streamed output starts with raw thinking content and ends with </think>.
+            // Before </think> arrives all content is in-progress reasoning with no tags at all.
+            let isMLX = ModelBackendBridge.shared.selectedBackend == .mlx
+            if isMLX {
+                let hasClose = visiblePortion.contains("</think>") || visiblePortion.contains("</thinking>")
+                if !hasClose {
+                    // Still thinking – show in the reasoning bubble, nothing in the answer yet.
+                    let r = visiblePortion.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !r.isEmpty {
+                        message.reasoning = r
+                        message.updateReasoningSteps()
+                    }
+                    return
+                }
+            }
+
             let parsed = parseReasoningResponse(visiblePortion)
 
             // Always update reasoning if present

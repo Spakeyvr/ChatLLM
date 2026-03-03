@@ -21,15 +21,6 @@ struct ThinkingBubbleView: View {
     @State private var animateThinking: Bool = false
     @State private var showCopiedConfirmation = false
 
-    // Determine if we should show structured steps or fallback to full text
-    private var shouldShowSteps: Bool {
-        return reasoningSteps != nil && !(reasoningSteps?.isEmpty ?? true)
-    }
-
-    private var stepCount: Int {
-        return reasoningSteps?.count ?? 0
-    }
-
     private var searchCount: Int {
         return searchInvocations?.count ?? 0
     }
@@ -76,13 +67,7 @@ struct ThinkingBubbleView: View {
                         .fontWeight(.medium)
                         .foregroundStyle(.primary)
 
-                    if hasContent && shouldShowSteps {
-                        let stepLabel = "\(stepCount) step\(stepCount == 1 ? "" : "s")"
-                        let searchLabel = searchCount > 0 ? " • \(searchCount) search\(searchCount == 1 ? "" : "es")" : ""
-                        Text("• \(stepLabel)\(searchLabel)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if hasContent && searchCount > 0 {
+                    if hasContent && searchCount > 0 {
                         Text("• \(searchCount) search\(searchCount == 1 ? "" : "es")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -126,15 +111,11 @@ struct ThinkingBubbleView: View {
             // Expanded content
             if isExpanded && hasContent {
                 VStack(alignment: .leading, spacing: 8) {
-                    if shouldShowSteps, let steps = reasoningSteps {
-                        // Show structured steps
-                        ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                            CoTStepView(step: step, isLast: index == steps.count - 1 && searchCount == 0)
-                        }
-                    } else if let reasoning = reasoning {
-                        // Fallback to full text view
+                    if let rawReasoning = reasoning, !rawReasoning.isEmpty {
+                        let processed = LatexProcessor.process(rawReasoning)
                         VStack(alignment: .leading, spacing: 8) {
-                            if let attributed = try? AttributedString(markdown: reasoning, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                            if let attributed = try? AttributedString(markdown: processed,
+                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
                                 Text(attributed)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -143,7 +124,7 @@ struct ThinkingBubbleView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .multilineTextAlignment(.leading)
                             } else {
-                                Text(reasoning)
+                                Text(processed)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
@@ -155,14 +136,8 @@ struct ThinkingBubbleView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(.regularMaterial.opacity(0.8))
-                        }
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(.blue.opacity(0.15), lineWidth: 1)
-                        }
+                        .background { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.regularMaterial.opacity(0.8)) }
+                        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.blue.opacity(0.15), lineWidth: 1) }
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
@@ -188,31 +163,11 @@ struct ThinkingBubbleView: View {
     }
 
     private func copyAllSteps() {
-        let text: String
-        if shouldShowSteps, let steps = reasoningSteps {
-            text = steps.map { step in
-                var stepText = "Step \(step.stepNumber)"
-                if let title = step.title {
-                    stepText += ": \(title)"
-                }
-                stepText += "\n\(step.content)"
-                return stepText
-            }.joined(separator: "\n\n")
-        } else {
-            text = reasoning ?? ""
-        }
-
-        UIPasteboard.general.string = text
-
-        withAnimation {
-            showCopiedConfirmation = true
-        }
-
+        UIPasteboard.general.string = reasoning ?? ""
+        withAnimation { showCopiedConfirmation = true }
         Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-            withAnimation {
-                showCopiedConfirmation = false
-            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation { showCopiedConfirmation = false }
         }
     }
 }
@@ -303,10 +258,6 @@ struct StepByStepReasoningSheet: View {
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
 
-    private var hasSteps: Bool {
-        return reasoningSteps != nil && !(reasoningSteps?.isEmpty ?? true)
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -330,22 +281,18 @@ struct StepByStepReasoningSheet: View {
                         .padding(.bottom, 20)
                     }
 
-                    if hasSteps, let steps = reasoningSteps {
-                        // Show structured step-by-step view
-                        ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                            StepCard(step: step, isLast: index == steps.count - 1, isFirst: index == 0)
-                        }
-                    } else if !reasoning.isEmpty {
-                        // Fallback to full text view
+                    if !reasoning.isEmpty {
+                        let processed = LatexProcessor.process(reasoning)
                         VStack(alignment: .leading, spacing: 12) {
-                            if let attributed = try? AttributedString(markdown: reasoning, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                            if let attributed = try? AttributedString(markdown: processed,
+                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
                                 Text(attributed)
                                     .font(.body)
                                     .foregroundStyle(.primary)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
-                                Text(reasoning)
+                                Text(processed)
                                     .font(.body)
                                     .foregroundStyle(.primary)
                                     .textSelection(.enabled)

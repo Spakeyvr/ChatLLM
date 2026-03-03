@@ -10,6 +10,10 @@
 		3D11527F2EAFB66200FC2980 /* ChatLLM 2.icon in Resources */ = {isa = PBXBuildFile; fileRef = 3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */; };
 		3D1342292EF6F07600AB678F /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 3D1342302EF6F07600AB678F /* Tokenizers */; };
 		3DD829762EB154F000D2EE7F /* AsyncAlgorithms in Frameworks */ = {isa = PBXBuildFile; productRef = 3DD829752EB154F000D2EE7F /* AsyncAlgorithms */; };
+		E52029172F572460005824D2 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = E52029162F572460005824D2 /* MLXEmbedders */; };
+		E52029192F572460005824D2 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = E52029182F572460005824D2 /* MLXLLM */; };
+		E520291B2F572460005824D2 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = E520291A2F572460005824D2 /* MLXLMCommon */; };
+		E520291D2F572460005824D2 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = E520291C2F572460005824D2 /* MLXVLM */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +76,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E520291D2F572460005824D2 /* MLXVLM in Frameworks */,
+				E52029192F572460005824D2 /* MLXLLM in Frameworks */,
+				E52029172F572460005824D2 /* MLXEmbedders in Frameworks */,
+				E520291B2F572460005824D2 /* MLXLMCommon in Frameworks */,
 				3D1342292EF6F07600AB678F /* Tokenizers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -102,6 +110,7 @@
 				3DAC54622EAC24760054484A /* On-Device_LLM_ChatUITests */,
 				3DAC54472EAC24740054484A /* Products */,
 				3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */,
+				E52029152F572460005824D2 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -113,6 +122,13 @@
 				3DAC545F2EAC24760054484A /* On-Device_LLM_ChatUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		E52029152F572460005824D2 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -136,6 +152,10 @@
 			name = "On-Device_LLM_Chat";
 			packageProductDependencies = (
 				3D1342302EF6F07600AB678F /* Tokenizers */,
+				E52029162F572460005824D2 /* MLXEmbedders */,
+				E52029182F572460005824D2 /* MLXLLM */,
+				E520291A2F572460005824D2 /* MLXLMCommon */,
+				E520291C2F572460005824D2 /* MLXVLM */,
 			);
 			productName = "On-Device_LLM_Chat";
 			productReference = 3DAC54462EAC24740054484A /* On-Device_LLM_Chat.app */;
@@ -227,6 +247,7 @@
 				3DD829772EB155B300D2EE7F /* XCRemoteSwiftPackageReference "swift-collections" */,
 				3D75FC252EC3AB98008937DD /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				3D1342282EF6F07500AB678F /* XCRemoteSwiftPackageReference "swift-transformers" */,
+				E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3DAC54472EAC24740054484A /* Products */;
@@ -446,10 +467,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ChatLLM;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take photos to attach to your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = "";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -494,10 +515,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ChatLLM;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take photos to attach to your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = "";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -678,6 +699,14 @@
 				minimumVersion = 1.3.0;
 			};
 		};
+		E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -690,6 +719,26 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3D242DD72EAEA63600AE350C /* XCRemoteSwiftPackageReference "swift-async-algorithms" */;
 			productName = AsyncAlgorithms;
+		};
+		E52029162F572460005824D2 /* MLXEmbedders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXEmbedders;
+		};
+		E52029182F572460005824D2 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		E520291A2F572460005824D2 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		E520291C2F572460005824D2 /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

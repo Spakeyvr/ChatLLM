@@ -133,39 +133,6 @@ extension ChatViewModel {
             }
         }
 
-        // Remove duplicate sentence fragments
-        let sentences = cleaned.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        var seenSentences: Set<String> = []
-        var uniqueSentences: [String] = []
-        for sentence in sentences {
-            let normalized = sentence.lowercased()
-            var isDuplicate = false
-            for seen in seenSentences {
-                if normalized.count > 15 && seen.count > 15 {
-                    if normalized.hasPrefix(seen) || seen.hasPrefix(normalized) {
-                        isDuplicate = true
-                        print("🧹 Removing duplicate sentence fragment: '\(String(sentence.prefix(30)))...)'")
-                        break
-                    }
-                }
-            }
-            if !isDuplicate && !seenSentences.contains(normalized) {
-                seenSentences.insert(normalized)
-                uniqueSentences.append(sentence)
-            }
-        }
-        if uniqueSentences.count < sentences.count {
-            cleaned = uniqueSentences.joined(separator: ". ")
-            if cleaned.count > 10 &&
-               !cleaned.hasSuffix(".") &&
-               !cleaned.hasSuffix("!") &&
-               !cleaned.hasSuffix("?") {
-                cleaned += "."
-            }
-        }
-
         // Fix mid-word cuts like "I can'I can't"
         let words = cleaned.components(separatedBy: .whitespaces)
         var fixedWords: [String] = []

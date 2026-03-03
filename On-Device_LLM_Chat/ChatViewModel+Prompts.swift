@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 
 extension ChatViewModel {
 
@@ -132,14 +133,18 @@ extension ChatViewModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Qwen3 Chat Template Prompt Builder
+    // MARK: - Qwen3.5 Message Builder (MLX)
 
-    // Short system prompt for CoreML models with small context windows (512 tokens).
+    // Short system prompt for MLX models with small context windows.
     internal static let qwenCompactSystemPrompt = """
     You are a helpful assistant. Answer clearly in the user's language. Be concise and direct.
     """
 
-    func buildQwenChatPrompt(upToOrderExclusive maxOrderExclusive: Int, currentReasoningActive: Bool? = nil, additionalInstruction: String? = nil) -> String {
+    /// Builds a structured message array for the Qwen3.5 VLM processor.
+    /// The processor's `applyChatTemplate` applies the Jinja template with `add_generation_prompt=true`.
+    /// Thinking mode is controlled by the caller via `additionalContext: ["enable_thinking": false]`
+    /// — NOT through any manual prefix here.
+    func buildQwenMessages(upToOrderExclusive maxOrderExclusive: Int, additionalInstruction: String? = nil) -> [Chat.Message] {
         let relevantMessages = conversation.messages
             .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
             .sorted(by: { $0.order < $1.order })
@@ -164,23 +169,10 @@ extension ChatViewModel {
             )
         }
 
-        let reasoningActive: Bool
-        if let active = currentReasoningActive {
-            reasoningActive = active
-        } else {
-            reasoningActive = conversation.reasoningMode || conversation.smartReasoningMode
-        }
+        var messages: [Chat.Message] = []
+        messages.append(.system(Self.qwenCompactSystemPrompt))
 
-        // Find the index of the last non-empty user message for /think or /no_think suffix
-        let lastUserIndex = snapshots.lastIndex { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-        var parts: [String] = []
-
-        // System block — no \n before <|im_end|> (standard Qwen3 chat template)
-        parts.append("<|im_start|>system\n\(Self.qwenCompactSystemPrompt)<|im_end|>")
-
-        // Message blocks
-        for (index, msg) in snapshots.enumerated() {
+        for msg in snapshots {
             if msg.role == .assistant && !msg.isFinal { continue }
             guard msg.role != .system else { continue }
             guard !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -189,9 +181,7 @@ extension ChatViewModel {
             case .system:
                 break
             case .user:
-                let isLastUser = index == lastUserIndex
-                let thinkSuffix = isLastUser ? (reasoningActive ? " /think" : " /no_think") : ""
-                parts.append("<|im_start|>user\n\(msg.text)\(thinkSuffix)<|im_end|>")
+                messages.append(.user(msg.text))
             case .assistant:
                 let content: String
                 if msg.isReasoningMode, let reasoning = msg.reasoning, let answer = msg.finalAnswer {
@@ -200,26 +190,15 @@ extension ChatViewModel {
                 } else {
                     content = stripSourcesFromText(msg.text)
                 }
-                parts.append("<|im_start|>assistant\n\(content)<|im_end|>")
+                messages.append(.assistant(content))
             }
         }
 
-        // Additional instruction as an extra user turn (no_think — it's a directive, not a reasoning question)
         if let instruction = additionalInstruction, !instruction.isEmpty {
-            parts.append("<|im_start|>user\n\(instruction) /no_think\n<|im_end|>")
+            messages.append(.user(instruction))
         }
 
-        // Final assistant prefix — matches official Qwen3 chat template exactly:
-        // • reasoning on  → open <think> block (model fills it)
-        // • reasoning off → empty <think></think> block so model skips thinking and answers directly
-        //   (equivalent to enable_thinking=False in apply_chat_template)
-        if reasoningActive {
-            parts.append("<|im_start|>assistant\n<think>")
-        } else {
-            parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
-        }
-
-        return parts.joined(separator: "\n")
+        return messages
     }
 
     // MARK: - Static Prompts
