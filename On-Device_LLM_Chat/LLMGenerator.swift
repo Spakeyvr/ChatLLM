@@ -24,7 +24,6 @@ extension LLMGenerator {
     }
 }
 
-// Shared prompt enhancement — avoids duplicating the same logic in OnDeviceLLMGenerator and MockGenerator.
 private func buildEnhancedPrompt(for original: String) -> String {
     guard original.contains("<thinking>"),
           !original.contains("Reasoning Mode Instructions:") else {
@@ -45,6 +44,11 @@ private func buildEnhancedPrompt(for original: String) -> String {
 
     """
     return preamble + original
+}
+
+private func makeSafetyBlockedError() -> NSError {
+    NSError(domain: "OnDeviceLLMGenerator", code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "Apple's safety system blocked this response. Try rephrasing your request."])
 }
 
 final class OnDeviceLLMGenerator: LLMGenerator {
@@ -79,7 +83,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
             let response = try await session.respond(to: effectivePrompt)
             return response.content
         } catch {
-            if isSafetyModerationError(error) { return "" }
+            if isSafetyModerationError(error) { throw makeSafetyBlockedError() }
             throw error
         }
     }
@@ -111,7 +115,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                     continuation.finish()
                 } catch {
                     if self.isSafetyModerationError(error) {
-                        continuation.finish()
+                        continuation.finish(throwing: makeSafetyBlockedError())
                         return
                     }
                     continuation.finish(throwing: error)
@@ -123,59 +127,4 @@ final class OnDeviceLLMGenerator: LLMGenerator {
     func cleanupForRegeneration() {
         // Session is created fresh per call; no shared state to clean up.
     }
-}
-
-final class MockGenerator: LLMGenerator {
-    func isAvailable() -> Bool { true }
-
-    func respond(to prompt: String, tools: [any Tool]) async throws -> String {
-        let effectivePrompt = buildEnhancedPrompt(for: prompt)
-        if effectivePrompt.contains("<thinking>") {
-            return """
-            <thinking>
-            1) Identify the user's goal and constraints.
-            2) Outline a concise plan with the minimum steps to succeed.
-            3) Verify assumptions and edge cases.
-            </thinking>
-
-            Answer:
-            Mock response to: \(String(prompt.prefix(60)))
-            """
-        }
-        return "Mock response to: \(String(prompt.prefix(60)))"
-    }
-
-    func streamResponse(to prompt: String, tools: [any Tool]) async throws -> AsyncThrowingStream<String, Error> {
-        let effectivePrompt = buildEnhancedPrompt(for: prompt)
-        let isReasoningMode = effectivePrompt.contains("<thinking>")
-
-        let parts: [String]
-        if isReasoningMode {
-            parts = [
-                "<thinking>\n",
-                "1) Identify the user's goal and constraints.\n",
-                "2) Outline a concise plan with the minimum steps to succeed.\n",
-                "3) Verify assumptions and edge cases.\n",
-                "</thinking>\n\n",
-                "Answer:\n",
-                "Mock ", "streamed ", "response ", "to: ", String(prompt.prefix(40))
-            ]
-        } else {
-            parts = ["Mock ", "streamed ", "response ", "to: ", String(prompt.prefix(40))]
-        }
-
-        var iterator = parts.makeIterator()
-        return AsyncThrowingStream { continuation in
-            Task {
-                while let next = iterator.next() {
-                    if Task.isCancelled { continuation.finish(); return }
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    continuation.yield(next)
-                }
-                continuation.finish()
-            }
-        }
-    }
-
-    func cleanupForRegeneration() {}
 }

@@ -63,6 +63,7 @@ final class Message {
     var finalAnswer: String?
     var promptSnapshot: String?
     var searchQuery: String?  // Stores the user's query when web search was used
+    @Transient var generationError: String?  // ephemeral; not persisted
 
     // All web search invocations stored as JSON for SwiftData compatibility
     var searchInvocationsJSON: String?
@@ -377,14 +378,16 @@ extension Message {
         let needsReset = !self.text.isEmpty ||
                         self.reasoning != nil ||
                         self.finalAnswer != nil ||
-                        self.isFinal
-        
+                        self.isFinal ||
+                        self.generationError != nil
+
         if needsReset {
             invalidateCache()
             self.text = ""
             self.reasoning = nil
             self.finalAnswer = nil
             self.isFinal = false
+            self.generationError = nil
         }
         
         return savedSources

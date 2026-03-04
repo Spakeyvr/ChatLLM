@@ -506,17 +506,12 @@ final class ChatViewModel: ObservableObject {
                             }
                         }
                     } else {
-                        // Model failed to load — fall back to Foundation Models with FM-formatted prompt
-                        var fbPrompt = buildPrompt(upToOrderExclusive: order, currentReasoningActive: targetToReset.isReasoningMode, webSearchAvailable: webSearchAvailable)
-                        if let instruction = additionalUserInstruction, !instruction.isEmpty {
-                            fbPrompt += "\n\nUser: \(instruction)"
-                        }
-                        if targetToReset.isReasoningMode && !fbPrompt.contains("<thinking>") {
-                            fbPrompt += "\n\nAssistant: <thinking>"
-                        }
-                        stream = try await self.withTimeout(self.firstTokenTimeout) {
-                            try await self.generator.streamResponse(to: fbPrompt, tools: tools)
-                        }
+                        // Model failed to load — surface a clear error instead of falling back silently
+                        let modelName = manager.currentModel?.name ?? "The model"
+                        let reason = manager.loadError ?? "The model hasn't finished loading."
+                        throw NSError(domain: "MLXGeneration", code: 1, userInfo: [
+                            NSLocalizedDescriptionKey: "\(modelName) isn't ready. \(reason)\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings."
+                        ])
                     }
                 } else {
                     stream = try await self.withTimeout(self.firstTokenTimeout) {
@@ -533,8 +528,8 @@ final class ChatViewModel: ObservableObject {
                         }
                     } catch let timeout as GenerationTimeoutError {
                         if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
-                            cumulativeSoFar += "\n\n[Error] \(timeout.localizedDescription)"
-                            self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
+                            target.generationError = timeout.localizedDescription
+                            target.markAsComplete()
                             self.conversation.lastUpdated = Date()
                             self.scheduleCoalescedSave()
                         }
@@ -605,11 +600,12 @@ final class ChatViewModel: ObservableObject {
             } catch {
                 print("❌ streaming Task: Error - \(error)")
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
-                    if self.isContextWindowError(error) {
-                        self.updateMessageWithReasoningContent(target, fullText: "\n\n[Error] \(ContextWindowError().localizedDescription)")
-                    } else {
-                        self.updateMessageWithReasoningContent(target, fullText: "\n\n[Error] \((error as NSError).localizedDescription)")
-                    }
+                    let msg = self.isContextWindowError(error)
+                        ? ContextWindowError().localizedDescription
+                        : (error as NSError).localizedDescription
+                    target.generationError = msg
+                    if cumulativeSoFar.isEmpty { target.text = "" }
+                    target.markAsComplete()
                     wroteAny = true
                 }
             }
@@ -646,40 +642,19 @@ final class ChatViewModel: ObservableObject {
                 let hasVisibleText = !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 let hasAnyVisibleContent = hasVisibleText || hasVisibleFinal
 
-                if !hasAnyVisibleContent {
+                if !hasAnyVisibleContent && target.generationError == nil {
                     logger.warning("No visible content after streaming (wroteAny=\(wroteAny))")
-
-                    let lastUserMessage = self.conversation.messages
-                        .filter { $0.role == .user && $0.order < target.order }
-                        .sorted { $0.order < $1.order }
-                        .last
-                    let hasImageAttachment = lastUserMessage?.attachments.contains(where: { $0.type == .image }) ?? false
-
-                    let errorMessage: String
-                    if hasImageAttachment {
-                        let userText = lastUserMessage?.text ?? ""
-                        let mightBeSafetyFiltered = userText.contains("TEXT CONTENT:") || userText.lowercased().contains("meme")
-
-                        if mightBeSafetyFiltered {
-                            errorMessage = String(localized: "The model returned an empty response while analyzing your image. This is likely because Apple's safety guardrails were triggered by text content in the image (memes often contain casual language that triggers content filters).\n\nThe image text was:\n• Successfully extracted by OCR\n• But blocked by Apple's content safety system\n\nPlease try:\n• Using an image without profanity or casual language\n• Manually typing out what the image says and asking about it")
-                        } else {
-                            errorMessage = String(localized: "The model returned an empty response while analyzing your image. This can happen when:\n• The image analysis data wasn't properly extracted\n• The model had trouble processing the visual context\n• Apple's safety guardrails were triggered\n\nPlease try:\n• Using a clearer image with better lighting\n• Asking a more specific question about the image\n• Starting a new chat and re-uploading the image")
-                        }
-                    } else {
-                        errorMessage = String(localized: "The model returned an empty response. This sometimes happens with certain requests. Please try:\n• Rephrasing your question\n• Starting a new chat if this conversation is very long\n• Using the regenerate option")
-                    }
 
                     let hasPreviousContent = !previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                                             !(previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
 
                     if hasPreviousContent {
+                        // Restore previous content — no error needed
                         target.text = previousFinal ?? previousText
                         target.reasoning = previousReasoning
                         target.finalAnswer = previousFinal
                     } else {
-                        target.text = errorMessage
-                        target.reasoning = nil
-                        target.finalAnswer = nil
+                        target.generationError = "The model returned an empty response. Try regenerating or rephrasing."
                     }
                 }
 

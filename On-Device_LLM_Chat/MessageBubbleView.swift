@@ -21,6 +21,22 @@ enum Strings {
     static let smartReasoningModeEnabled = String(localized: "Smart reasoning mode enabled")
 }
 
+// MARK: - Shared error callout
+
+private struct ErrorCalloutView: View {
+    let text: String
+    var topPadding: CGFloat = 0
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.callout)
+            .foregroundStyle(.red)
+            .padding(10)
+            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.top, topPadding)
+    }
+}
+
 // MARK: - String helper to extract <sources> blocks
 
 extension String {
@@ -94,7 +110,9 @@ struct MessageCellView: View {
     }
 
     private var hasContent: Bool {
-        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        !(message.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
+        message.generationError != nil
     }
 
     private var canAct: Bool {
@@ -303,12 +321,11 @@ struct StandardMessageBubble: View {
                 if !visibleText.isEmpty {
                     renderMarkdownOrPlain(visibleText, isSystem: isSystem)
                         .textSelection(.enabled)
-                } else if isAssistant && message.isFinal {
-                    // Show placeholder for empty assistant messages
-                    Text("The model returned an empty response. Try regenerating or rephrasing your question.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .italic()
+                }
+
+                // Error callout — shown below partial content (if any) or alone
+                if let errorText = message.generationError {
+                    ErrorCalloutView(text: errorText, topPadding: visibleText.isEmpty ? 0 : 6)
                 }
 
                 // Sources button
@@ -465,12 +482,11 @@ struct ReasoningMessageBubble: View {
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                    } else if message.isFinal {
-                        // Show placeholder for empty final answer
-                        Text("The model returned an empty response. Try regenerating or rephrasing your question.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .italic()
+                    }
+
+                    // Error callout for reasoning messages
+                    if let errorText = message.generationError {
+                        ErrorCalloutView(text: errorText, topPadding: finalText.isEmpty ? 0 : 6)
                     }
 
                     // Search cards inline (for reasoning messages with searches)

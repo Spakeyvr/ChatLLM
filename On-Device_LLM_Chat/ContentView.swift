@@ -474,8 +474,7 @@ struct ContentView: View {
         }
         
         // Create new view model
-        let onDevice = OnDeviceLLMGenerator()
-        let generator: LLMGenerator = onDevice.isAvailable() ? onDevice : MockGenerator()
+        let generator: LLMGenerator = OnDeviceLLMGenerator()
         return ChatViewModel(generator: generator, context: modelContext, conversation: conversation)
     }
 
