@@ -9,6 +9,20 @@ import Foundation
 import FoundationModels
 import os
 
+// Cached regexes for parseReasoningResponse (compiled once at app launch)
+// swiftlint:disable force_try
+private let _parseReasoningRegexes: [NSRegularExpression] = [
+    try! NSRegularExpression(pattern: #"<thinking>(.*?)</thinking>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
+    try! NSRegularExpression(pattern: #"<thinking>(.*?)</thinking>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
+    try! NSRegularExpression(pattern: #"<think>(.*?)</think>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
+    try! NSRegularExpression(pattern: #"<think>(.*?)</think>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
+]
+
+// Cached regex for stripping <sources>…</sources> in updateMessageWithReasoningContent
+private let _sourcesRegexSR = try! NSRegularExpression(
+    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
+// swiftlint:enable force_try
+
 extension ChatViewModel {
 
     // MARK: - Smart Reasoning
@@ -233,51 +247,39 @@ extension ChatViewModel {
         }
 
         // Full pattern match for both tag variants
-        let patterns = [
-            #"<thinking>(.*?)</thinking>\s*(?:Final answer:\s*)?(.*?)$"#,
-            #"<thinking>(.*?)</thinking>\s*(.*?)$"#,
-            #"<think>(.*?)</think>\s*(?:Final answer:\s*)?(.*?)$"#,
-            #"<think>(.*?)</think>\s*(.*?)$"#,
-        ]
+        for regex in _parseReasoningRegexes {
+            let range = NSRange(trimmedText.startIndex..<trimmedText.endIndex, in: trimmedText)
 
-        for pattern in patterns {
-            do {
-                let regex = try NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
-                let range = NSRange(trimmedText.startIndex..<trimmedText.endIndex, in: trimmedText)
+            if let match = regex.firstMatch(in: trimmedText, options: [], range: range),
+               match.numberOfRanges >= 3 {
 
-                if let match = regex.firstMatch(in: trimmedText, options: [], range: range),
-                   match.numberOfRanges >= 3 {
+                var reasoning: String? = nil
+                var finalAnswer: String? = nil
 
-                    var reasoning: String? = nil
-                    var finalAnswer: String? = nil
-
-                    // Safely extract reasoning
-                    let reasoningRange = match.range(at: 1)
-                    if reasoningRange.location != NSNotFound,
-                       let swiftRange = Range(reasoningRange, in: trimmedText) {
-                        reasoning = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if reasoning?.isEmpty == true { reasoning = nil }
-                    }
-
-                    // Safely extract final answer
-                    let answerRange = match.range(at: 2)
-                    if answerRange.location != NSNotFound,
-                       let swiftRange = Range(answerRange, in: trimmedText) {
-                        finalAnswer = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if finalAnswer?.isEmpty == true { finalAnswer = nil }
-                    }
-
-                    // DEBUG: Log extracted values for short responses
-                    if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
-                        print("🔍 parseReasoningResponse extracted:")
-                        print("   - reasoning: '\(reasoning ?? "nil")'")
-                        print("   - finalAnswer: '\(finalAnswer ?? "nil")'")
-                    }
-
-                    return (reasoning, finalAnswer)
+                // Safely extract reasoning
+                let reasoningRange = match.range(at: 1)
+                if reasoningRange.location != NSNotFound,
+                   let swiftRange = Range(reasoningRange, in: trimmedText) {
+                    reasoning = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if reasoning?.isEmpty == true { reasoning = nil }
                 }
-            } catch {
-                continue
+
+                // Safely extract final answer
+                let answerRange = match.range(at: 2)
+                if answerRange.location != NSNotFound,
+                   let swiftRange = Range(answerRange, in: trimmedText) {
+                    finalAnswer = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if finalAnswer?.isEmpty == true { finalAnswer = nil }
+                }
+
+                // DEBUG: Log extracted values for short responses
+                if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
+                    print("🔍 parseReasoningResponse extracted:")
+                    print("   - reasoning: '\(reasoning ?? "nil")'")
+                    print("   - finalAnswer: '\(finalAnswer ?? "nil")'")
+                }
+
+                return (reasoning, finalAnswer)
             }
         }
 
@@ -313,13 +315,11 @@ extension ChatViewModel {
         let visiblePortion = {
             if let s = newSources, !s.isEmpty {
                 // Remove the first <sources> block occurrence
-                let pattern = #"<sources>(.*?)</sources>"#
-                if let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
-                    let ns = cleanedText as NSString
-                    let range = NSRange(location: 0, length: ns.length)
-                    return re.stringByReplacingMatches(in: cleanedText, options: [], range: range, withTemplate: "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                }
+                let re = _sourcesRegexSR
+                let ns = cleanedText as NSString
+                let range = NSRange(location: 0, length: ns.length)
+                return re.stringByReplacingMatches(in: cleanedText, options: [], range: range, withTemplate: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return cleanedText
         }()

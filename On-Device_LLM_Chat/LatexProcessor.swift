@@ -10,6 +10,33 @@ import Foundation
 
 enum LatexProcessor {
 
+    // MARK: - Cached regex objects (compiled once at app launch)
+
+    // swiftlint:disable force_try
+    private static let _displayMathBracketRegex = try! NSRegularExpression(
+        pattern: #"\\\[(.*?)\\\]"#, options: [.dotMatchesLineSeparators])
+    private static let _displayMathDollarRegex = try! NSRegularExpression(
+        pattern: #"\$\$(.*?)\$\$"#, options: [.dotMatchesLineSeparators])
+    private static let _inlineMathParenRegex = try! NSRegularExpression(
+        pattern: #"\\\((.*?)\\\)"#)
+    private static let _inlineMathDollarRegex = try! NSRegularExpression(
+        pattern: #"(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)"#)
+    private static let _fracRegex = try! NSRegularExpression(
+        pattern: #"\\frac\{([^{}]*)\}\{([^{}]*)\}"#)
+    private static let _sqrtNthRegex = try! NSRegularExpression(
+        pattern: #"\\sqrt\[([^\]]*)\]\{([^{}]*)\}"#)
+    private static let _sqrtSimpleRegex = try! NSRegularExpression(
+        pattern: #"\\sqrt\{([^{}]*)\}"#)
+    private static let _superscriptBraceRegex = try! NSRegularExpression(
+        pattern: #"\^\{([^{}]+)\}"#)
+    private static let _superscriptSingleRegex = try! NSRegularExpression(
+        pattern: #"\^([0-9a-zA-Z+\-])"#)
+    private static let _subscriptBraceRegex = try! NSRegularExpression(
+        pattern: #"_\{([^{}]+)\}"#)
+    private static let _subscriptSingleRegex = try! NSRegularExpression(
+        pattern: #"_([0-9a-zA-Z])"#)
+    // swiftlint:enable force_try
+
     // MARK: - Public entry point
 
     /// Convert LaTeX math notation in `text` to Unicode/readable equivalents.
@@ -27,13 +54,13 @@ enum LatexProcessor {
         var result = text
 
         // \[...\]
-        result = mapCaptures(in: result, pattern: #"\\\[(.*?)\\\]"#, dotAll: true) { content in
+        result = mapCaptures(in: result, regex: _displayMathBracketRegex) { content in
             let inner = convertLatexCommands(content.trimmingCharacters(in: .whitespacesAndNewlines))
             return "\n`\(inner)`\n"
         }
 
         // $$...$$
-        result = mapCaptures(in: result, pattern: #"\$\$(.*?)\$\$"#, dotAll: true) { content in
+        result = mapCaptures(in: result, regex: _displayMathDollarRegex) { content in
             let inner = convertLatexCommands(content.trimmingCharacters(in: .whitespacesAndNewlines))
             return "\n`\(inner)`\n"
         }
@@ -47,12 +74,12 @@ enum LatexProcessor {
         var result = text
 
         // \(...\)
-        result = mapCaptures(in: result, pattern: #"\\\((.*?)\\\)"#, dotAll: false) { content in
+        result = mapCaptures(in: result, regex: _inlineMathParenRegex) { content in
             convertLatexCommands(content)
         }
 
         // $...$ — avoid $$ already consumed above
-        result = mapCaptures(in: result, pattern: #"(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)"#, dotAll: false) { content in
+        result = mapCaptures(in: result, regex: _inlineMathDollarRegex) { content in
             convertLatexCommands(content)
         }
 
@@ -85,10 +112,9 @@ enum LatexProcessor {
 
     private static func processFrac(_ text: String) -> String {
         guard text.contains("\\frac") else { return text }
-        guard let regex = try? NSRegularExpression(pattern: #"\\frac\{([^{}]*)\}\{([^{}]*)\}"#) else { return text }
         let ns = text as NSString
         var result = text
-        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+        for match in _fracRegex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
             guard match.numberOfRanges >= 3 else { continue }
             let num = convertLatexCommands(ns.substring(with: match.range(at: 1)))
             let den = convertLatexCommands(ns.substring(with: match.range(at: 2)))
@@ -124,15 +150,14 @@ enum LatexProcessor {
         var result = text
 
         // \sqrt[n]{x}
-        result = mapCaptures(in: result, pattern: #"\\sqrt\[([^\]]*)\]\{([^{}]*)\}"#, dotAll: false,
-                             captureCount: 2) { captures in
+        result = mapCaptures(in: result, regex: _sqrtNthRegex, captureCount: 2) { captures in
             let n = toSuperscript(convertLatexCommands(captures[0]))
             let x = convertLatexCommands(captures[1])
             return "\(n)√\(x)"
         }
 
         // \sqrt{x}
-        result = mapCaptures(in: result, pattern: #"\\sqrt\{([^{}]*)\}"#, dotAll: false) { content in
+        result = mapCaptures(in: result, regex: _sqrtSimpleRegex) { content in
             let x = convertLatexCommands(content)
             // Omit parens for short single-token content
             return x.count <= 3 ? "√\(x)" : "√(\(x))"
@@ -146,9 +171,9 @@ enum LatexProcessor {
     private static func processSuperscript(_ text: String) -> String {
         var result = text
         // ^{content}
-        result = mapCaptures(in: result, pattern: #"\^\{([^{}]+)\}"#, dotAll: false) { toSuperscript($0) }
+        result = mapCaptures(in: result, regex: _superscriptBraceRegex) { toSuperscript($0) }
         // ^single-char
-        result = mapCaptures(in: result, pattern: #"\^([0-9a-zA-Z+\-])"#, dotAll: false) { toSuperscript($0) }
+        result = mapCaptures(in: result, regex: _superscriptSingleRegex) { toSuperscript($0) }
         return result
     }
 
@@ -171,9 +196,9 @@ enum LatexProcessor {
     private static func processSubscript(_ text: String) -> String {
         var result = text
         // _{content}
-        result = mapCaptures(in: result, pattern: #"_\{([^{}]+)\}"#, dotAll: false) { toSubscript($0) }
+        result = mapCaptures(in: result, regex: _subscriptBraceRegex) { toSubscript($0) }
         // _single-char (digit or letter)
-        result = mapCaptures(in: result, pattern: #"_([0-9a-zA-Z])"#, dotAll: false) { toSubscript($0) }
+        result = mapCaptures(in: result, regex: _subscriptSingleRegex) { toSubscript($0) }
         return result
     }
 
@@ -250,27 +275,22 @@ enum LatexProcessor {
 
     // MARK: - Regex helper
 
-    /// Replace all non-overlapping matches of `pattern`, transforming capture group 1 via `transform`.
+    /// Replace all non-overlapping matches using a pre-compiled regex, transforming capture group 1 via `transform`.
     private static func mapCaptures(
         in text: String,
-        pattern: String,
-        dotAll: Bool,
+        regex: NSRegularExpression,
         transform: (String) -> String
     ) -> String {
-        mapCaptures(in: text, pattern: pattern, dotAll: dotAll, captureCount: 1) { transform($0[0]) }
+        mapCaptures(in: text, regex: regex, captureCount: 1) { transform($0[0]) }
     }
 
     /// Multi-capture-group variant. `captureCount` must equal the number of groups.
     private static func mapCaptures(
         in text: String,
-        pattern: String,
-        dotAll: Bool,
+        regex: NSRegularExpression,
         captureCount: Int,
         transform: ([String]) -> String
     ) -> String {
-        var opts: NSRegularExpression.Options = []
-        if dotAll { opts.insert(.dotMatchesLineSeparators) }
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: opts) else { return text }
         let ns = text as NSString
         var result = text
         for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {

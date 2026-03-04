@@ -345,9 +345,6 @@ struct ModelInfoSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Location")
                             .foregroundStyle(.secondary)
-                        Text("Documents/Models/\(model.localDirName)/")
-                            .font(.caption)
-                            .foregroundStyle(.primary)
                     }
                 }
             }

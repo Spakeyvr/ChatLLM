@@ -6,169 +6,53 @@
 //
 
 import SwiftUI
-import UIKit
+import Combine
 
-// MARK: - Modern Chain of Thought bubble with structured steps
+// MARK: - Inline thinking indicator shown during streaming
 
-struct ThinkingBubbleView: View {
-    let hasContent: Bool
-    let reasoning: String?
-    let reasoningSteps: [ReasoningStep]?
-    let searchInvocations: [SearchInvocation]?
-    @Binding var isExpanded: Bool
-    let isGenerating: Bool
+struct InlineThinkingView: View {
+    let onTap: (() -> Void)?
+    @State private var phase: Int = 0
+    @State private var shimmerOffset: CGFloat = -0.4
 
-    @State private var animateThinking: Bool = false
-    @State private var showCopiedConfirmation = false
-
-    private var searchCount: Int {
-        return searchInvocations?.count ?? 0
-    }
+    private let ticker = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header button
-            Button(action: {
-                if hasContent {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
+        HStack(spacing: 6) {
+            HStack(spacing: 3) {
+            }
+            .onReceive(ticker) { _ in
+                phase = (phase + 1) % 3
+            }
+
+            Text("Thinking…")
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+                .overlay {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .white.opacity(0.85), location: 0.5),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
+                        endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
+                    )
+                    .mask {
+                        Text("Thinking…")
+                            .font(.subheadline)
+                    }
+                    .blendMode(.plusLighter)
+                }
+                .onAppear {
+                    shimmerOffset = -0.4
+                    withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                        shimmerOffset = 1.4
                     }
                 }
-            }) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        if hasContent {
-                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .transition(.opacity.combined(with: .scale))
-                        } else {
-                            HStack(spacing: 4) {
-                                ForEach(0..<3) { index in
-                                    Circle()
-                                        .frame(width: 4, height: 4)
-                                        .foregroundStyle(.blue)
-                                        .opacity(animateThinking ? 0.3 : 1.0)
-                                        .animation(
-                                            .easeInOut(duration: 0.8)
-                                            .repeatForever()
-                                            .delay(Double(index) * 0.2),
-                                            value: animateThinking
-                                        )
-                                }
-                            }
-                            .onAppear { animateThinking = true }
-                        }
-                    }
-                    .frame(width: 20, height: 16)
-
-                    Text("Thinking")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.primary)
-
-                    if hasContent && searchCount > 0 {
-                        Text("• \(searchCount) search\(searchCount == 1 ? "" : "es")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if isGenerating && !hasContent {
-                        Text("AI is reasoning...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    // Copy button when expanded
-                    if hasContent && isExpanded {
-                        Button {
-                            copyAllSteps()
-                        } label: {
-                            Image(systemName: showCopiedConfirmation ? "checkmark" : "doc.on.doc")
-                                .font(.caption)
-                                .foregroundStyle(showCopiedConfirmation ? .green : .blue)
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .buttonStyle(.plain)
-            .disabled(!hasContent)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.thinMaterial)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.blue.opacity(0.3), lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .zIndex(1)
-
-            // Expanded content
-            if isExpanded && hasContent {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let rawReasoning = reasoning, !rawReasoning.isEmpty {
-                        let processed = LatexProcessor.process(rawReasoning)
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let attributed = try? AttributedString(markdown: processed,
-                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                                Text(attributed)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .multilineTextAlignment(.leading)
-                            } else {
-                                Text(processed)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .multilineTextAlignment(.leading)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.regularMaterial.opacity(0.8)) }
-                        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.blue.opacity(0.15), lineWidth: 1) }
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-
-                    // Search cards after reasoning steps
-                    if let invocations = searchInvocations, !invocations.isEmpty {
-                        SearchInvocationsList(invocations: invocations) { _ in }
-                    }
-                }
-                .padding(.top, 4)
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top)
-                        .combined(with: .opacity)
-                        .combined(with: .scale(scale: 0.95, anchor: .top)),
-                    removal: .move(edge: .top)
-                        .combined(with: .opacity)
-                        .combined(with: .scale(scale: 0.95, anchor: .top))
-                ))
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: isExpanded)
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func copyAllSteps() {
-        UIPasteboard.general.string = reasoning ?? ""
-        withAnimation { showCopiedConfirmation = true }
-        Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation { showCopiedConfirmation = false }
-        }
+        .contentShape(Rectangle())
+        .onTapGesture { onTap?() }
     }
 }
 

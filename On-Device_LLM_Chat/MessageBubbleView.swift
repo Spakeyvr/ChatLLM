@@ -37,16 +37,18 @@ private struct ErrorCalloutView: View {
     }
 }
 
+// Cached regex for extractSourcesBlocks — compiled once at app launch
+// swiftlint:disable:next force_try
+private let _extractSourcesRegex = try! NSRegularExpression(
+    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
+
 // MARK: - String helper to extract <sources> blocks
 
 extension String {
     // Returns the visible text with all <sources>…</sources> blocks removed,
     // and a single combined sources string (if any) for UI presentation.
     func extractSourcesBlocks() -> (visible: String, sources: String?) {
-        let pattern = #"<sources>(.*?)</sources>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-            return (self, nil)
-        }
+        let regex = _extractSourcesRegex
         let ns = self as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
 
@@ -112,6 +114,7 @@ struct MessageCellView: View {
     private var hasContent: Bool {
         !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
         !(message.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
+        !(message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
         message.generationError != nil
     }
 
@@ -123,7 +126,11 @@ struct MessageCellView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Bubble or loading placeholder
             if message.role == .assistant, isCurrentlyStreaming, !hasContent {
-                LoadingIndicatorView(isModelLoading: true)
+                if message.isReasoningMode {
+                    InlineThinkingView(onTap: nil)
+                } else {
+                    LoadingIndicatorView(isModelLoading: true)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     MessageBubble(message: message, viewModel: viewModel)
@@ -277,7 +284,7 @@ struct MessageBubble: View {
         if isAssistant && (message.isReasoningMode || message.text.contains("<thinking>")) {
             ReasoningMessageBubble(message: message, viewModel: viewModel)
         } else {
-            StandardMessageBubble(message: message)
+            StandardMessageBubble(message: message, viewModel: viewModel)
         }
     }
 }
@@ -286,6 +293,7 @@ struct MessageBubble: View {
 
 struct StandardMessageBubble: View {
     let message: Message
+    @ObservedObject var viewModel: ChatViewModel
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
 
     // Cache for markdown rendering
@@ -299,6 +307,10 @@ struct StandardMessageBubble: View {
     var isUser: Bool { message.role == .user }
     var isAssistant: Bool { message.role == .assistant }
     var isSystem: Bool { message.role == .system }
+
+    private var isStreaming: Bool {
+        viewModel.isGenerating && viewModel.streamingMessageID == message.id
+    }
 
     var body: some View {
         // Split out any <sources> blocks so we can hide them behind a button
@@ -367,8 +379,13 @@ struct StandardMessageBubble: View {
 
     @ViewBuilder
     private func renderMarkdownOrPlain(_ text: String, isSystem: Bool) -> some View {
-        // Check cache validity
-        if lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
+        // During streaming: show plain text — O(1), no LaTeX, no markdown parse
+        if isStreaming {
+            Text(text)
+                .font(.system(size: messageFontSize))
+                .foregroundStyle(isSystem ? .secondary : .primary)
+        } else if lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
+            // Cache hit
             Text(cachedAttributedString!)
                 .font(.system(size: messageFontSize))
                 .foregroundStyle(isSystem ? .secondary : .primary)
@@ -400,13 +417,13 @@ struct StandardMessageBubble: View {
 
 struct ReasoningMessageBubble: View {
     let message: Message
-    @State private var showReasoningSheet: Bool = false
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @ObservedObject var viewModel: ChatViewModel
 
     // Sources UI state
     @State private var showSources = false
     @State private var selectedSearchInvocation: SearchInvocation?
+    @State private var showReasoningSheet = false
 
     private var isCurrentlyStreaming: Bool {
         viewModel.isGenerating && viewModel.streamingMessageID == message.id
@@ -427,10 +444,6 @@ struct ReasoningMessageBubble: View {
 
     private var hasReasoningContent: Bool {
         return parsedContent.reasoning != nil && !parsedContent.reasoning!.isEmpty
-    }
-
-    private var hasReasoningSteps: Bool {
-        return message.reasoningSteps != nil && !(message.reasoningSteps?.isEmpty ?? true)
     }
 
     private func parseReasoningFromText(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
@@ -464,85 +477,108 @@ struct ReasoningMessageBubble: View {
                 let finalText = split.visible
                 let sourcesText = split.sources
 
-                VStack(alignment: .leading, spacing: 8) {
-                    if !finalText.isEmpty {
-                        let processedFinal = LatexProcessor.process(finalText)
-                        if let attributed = try? AttributedString(markdown: processedFinal, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                            Text(attributed)
-                                .font(.system(size: messageFontSize))
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text(processedFinal)
-                                .font(.system(size: messageFontSize))
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    // Error callout for reasoning messages
-                    if let errorText = message.generationError {
-                        ErrorCalloutView(text: errorText, topPadding: finalText.isEmpty ? 0 : 6)
-                    }
-
-                    // Search cards inline (for reasoning messages with searches)
-                    if let invocations = message.searchInvocations, !invocations.isEmpty, message.isFinal {
-                        SearchInvocationsList(invocations: invocations) { invocation in
-                            selectedSearchInvocation = invocation
-                        }
-                        .padding(.vertical, 4)
-                    }
-
-                    HStack(spacing: 12) {
-                        // View Reasoning button - opens sheet with step-by-step view
-                        if hasReasoningContent && message.isFinal {
-                            Button {
-                                showReasoningSheet = true
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "brain.head.profile")
-                                    Text("View Reasoning")
-                                }
-                                .font(.caption)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(.thinMaterial, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        // Only show combined Sources button for non-search-invocation messages
-                        if let sourcesText, !sourcesText.isEmpty, (message.searchInvocations ?? []).isEmpty {
-                            SourcesButton(showSources: $showSources)
-                                .sheet(isPresented: $showSources) {
-                                    SourcesSheetView(
-                                        sourcesText: sourcesText,
-                                        title: String(localized: "Sources"),
-                                        searchQuery: message.searchQuery
-                                    )
-                                }
-                        }
-                    }
+                // Show "Thinking…" text during entire streaming phase; tappable once sheet has content
+                if isCurrentlyStreaming {
+                    InlineThinkingView(
+                        onTap: hasReasoningContent ? { showReasoningSheet = true } : nil
+                    )
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.clear)
-                        .background(
-                            .ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.secondary.opacity(0.12))
-                )
+
+                // Final answer section — only shown when there is content to display
+                let hasFinalSection = !finalText.isEmpty || message.generationError != nil ||
+                    (message.searchInvocations?.isEmpty == false && message.isFinal) ||
+                    (message.isFinal && sourcesText != nil) ||
+                    (hasReasoningContent && message.isFinal)
+                if hasFinalSection {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !finalText.isEmpty {
+                            if isCurrentlyStreaming {
+                                Text(finalText)
+                                    .font(.system(size: messageFontSize))
+                                    .foregroundStyle(.primary)
+                                    .textSelection(.enabled)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                let processedFinal = LatexProcessor.process(finalText)
+                                if let attributed = try? AttributedString(markdown: processedFinal, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                                    Text(attributed)
+                                        .font(.system(size: messageFontSize))
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text(processedFinal)
+                                        .font(.system(size: messageFontSize))
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+
+                        // Error callout for reasoning messages
+                        if let errorText = message.generationError {
+                            ErrorCalloutView(text: errorText, topPadding: finalText.isEmpty ? 0 : 6)
+                        }
+
+                        // Search cards inline (for reasoning messages with searches)
+                        if let invocations = message.searchInvocations, !invocations.isEmpty, message.isFinal {
+                            SearchInvocationsList(invocations: invocations) { invocation in
+                                selectedSearchInvocation = invocation
+                            }
+                            .padding(.vertical, 4)
+                        }
+
+                        HStack(spacing: 12) {
+                            // View Reasoning button — opens step-by-step sheet
+                            if hasReasoningContent && message.isFinal {
+                                Button {
+                                    showReasoningSheet = true
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "brain.head.profile")
+                                        Text("View Reasoning")
+                                    }
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(.thinMaterial, in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Only show combined Sources button for non-search-invocation messages
+                            if let sourcesText, !sourcesText.isEmpty, (message.searchInvocations ?? []).isEmpty {
+                                SourcesButton(showSources: $showSources)
+                                    .sheet(isPresented: $showSources) {
+                                        SourcesSheetView(
+                                            sourcesText: sourcesText,
+                                            title: String(localized: "Sources"),
+                                            searchQuery: message.searchQuery
+                                        )
+                                    }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.clear)
+                            .background(
+                                .ultraThinMaterial,
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.12))
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

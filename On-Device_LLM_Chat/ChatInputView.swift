@@ -245,6 +245,7 @@ struct ModelManagementRow: View {
                     } label: {
                         Label("Delete", systemImage: "trash")
                             .font(.caption)
+                            .foregroundStyle(.red)
                     }
                     .buttonStyle(.bordered)
                 } else if modelManager.isDownloading {

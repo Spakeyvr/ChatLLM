@@ -455,6 +455,7 @@ final class ChatViewModel: ObservableObject {
             guard let self = self else { return }
             var cumulativeSoFar = ""
             var wroteAny = false
+            var lastModelWrite: Date = .distantPast
 
             do {
                 let stream: AsyncThrowingStream<String, Error>
@@ -538,10 +539,14 @@ final class ChatViewModel: ObservableObject {
                     }
                     if !cumulativeSoFar.isEmpty && newText.hasPrefix(cumulativeSoFar) && newText.count > cumulativeSoFar.count {
                         cumulativeSoFar = newText
-                        self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
                         wroteAny = true
-                        self.conversation.lastUpdated = Date()
-                        self.scheduleCoalescedSave()
+                        let now = Date()
+                        if now.timeIntervalSince(lastModelWrite) >= 0.08 {
+                            self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
+                            lastModelWrite = now
+                            self.conversation.lastUpdated = now
+                            self.scheduleCoalescedSave()
+                        }
                         continue
                     }
                     if !newText.isEmpty && newText.count > 10 && cumulativeSoFar.hasPrefix(newText) {
@@ -562,13 +567,23 @@ final class ChatViewModel: ObservableObject {
 
                     if !delta.isEmpty {
                         cumulativeSoFar += delta
-                        self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
                         wroteAny = true
                     } else if overlapLength == 0 && !newText.isEmpty {
                         cumulativeSoFar += newText
-                        self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
                         wroteAny = true
                     }
+                    let now = Date()
+                    if now.timeIntervalSince(lastModelWrite) >= 0.08 {
+                        self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
+                        lastModelWrite = now
+                        self.conversation.lastUpdated = now
+                        self.scheduleCoalescedSave()
+                    }
+                }
+
+                // Final unconditional flush to ensure last tokens are written
+                if wroteAny, let finalTarget = self.conversation.messages.first(where: { $0.id == targetID }) {
+                    self.updateMessageWithReasoningContent(finalTarget, fullText: cumulativeSoFar)
                     self.conversation.lastUpdated = Date()
                     self.scheduleCoalescedSave()
                 }
