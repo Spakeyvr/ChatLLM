@@ -85,9 +85,9 @@ actor ModelDownloader {
             do {
                 var chunk = Data(capacity: Self.chunkSize)
                 for try await byte in asyncBytes {
-                    try Task.checkCancellation()
                     chunk.append(byte)
                     if chunk.count >= Self.chunkSize {
+                        try Task.checkCancellation()
                         handle.write(chunk)
                         totalWritten += Int64(chunk.count)
                         chunk.removeAll(keepingCapacity: true)

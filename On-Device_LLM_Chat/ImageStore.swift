@@ -92,10 +92,7 @@ actor ImageStore {
     private func directory() throws -> URL {
         let dir = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("Attachments", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
-            logger.debug("✅ Created attachments directory")
-        }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
         return dir
     }
 

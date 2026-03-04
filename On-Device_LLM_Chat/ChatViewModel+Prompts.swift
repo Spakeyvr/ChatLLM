@@ -8,7 +8,27 @@
 import Foundation
 import MLXLMCommon
 
+private let _sourcesRegex = try? NSRegularExpression(
+    pattern: #"<sources>(.*?)</sources>"#,
+    options: [.dotMatchesLineSeparators, .caseInsensitive])
+
 extension ChatViewModel {
+
+    private struct MessageSnapshot {
+        let role: MessageRole
+        let text: String
+        let isReasoningMode: Bool
+        let reasoning: String?
+        let finalAnswer: String?
+        let isFinal: Bool
+    }
+
+    private func messageSnapshots(upToOrderExclusive maxOrderExclusive: Int) -> [MessageSnapshot] {
+        conversation.messages
+            .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
+            .sorted { $0.order < $1.order }
+            .map { MessageSnapshot(role: $0.role, text: $0.text, isReasoningMode: $0.isReasoningMode, reasoning: $0.reasoning, finalAnswer: $0.finalAnswer, isFinal: $0.isFinal) }
+    }
 
     func setReasoningMode(_ enabled: Bool) {
         conversation.reasoningMode = enabled
@@ -31,31 +51,8 @@ extension ChatViewModel {
     // MARK: - Prompt Builder
 
     func buildPrompt(upToOrderExclusive maxOrderExclusive: Int, currentReasoningActive: Bool? = nil, webSearchAvailable: Bool = false) -> String {
-        let relevantMessages = conversation.messages
-            .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
-        .sorted(by: { $0.order < $1.order })
-
-        // CRITICAL FIX: Eagerly load all message properties we'll need to avoid SwiftData fault errors
-        // This prevents "detached from context without resolving attribute faults" errors
-        struct MessageSnapshot {
-            let role: MessageRole
-            let text: String
-            let isReasoningMode: Bool
-            let reasoning: String?
-            let finalAnswer: String?
-            let isFinal: Bool
-        }
-
-        let snapshots = relevantMessages.map { msg in
-            MessageSnapshot(
-                role: msg.role,
-                text: msg.text,
-                isReasoningMode: msg.isReasoningMode,
-                reasoning: msg.reasoning,
-                finalAnswer: msg.finalAnswer,
-                isFinal: msg.isFinal
-            )
-        }
+        // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
+        let snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
 
         // Determine whether this response should use reasoning mode.
         // When explicitly passed (e.g. regeneration), honour that value;
@@ -123,10 +120,7 @@ extension ChatViewModel {
 
     /// Helper to strip <sources>...</sources> blocks from text to avoid prompt bloat
     func stripSourcesFromText(_ text: String) -> String {
-        let pattern = #"<sources>(.*?)</sources>"#
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) else {
-            return text
-        }
+        guard let re = _sourcesRegex else { return text }
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
         return re.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
@@ -145,29 +139,7 @@ extension ChatViewModel {
     /// Thinking mode is controlled by the caller via `additionalContext: ["enable_thinking": false]`
     /// — NOT through any manual prefix here.
     func buildQwenMessages(upToOrderExclusive maxOrderExclusive: Int, additionalInstruction: String? = nil) -> [Chat.Message] {
-        let relevantMessages = conversation.messages
-            .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
-            .sorted(by: { $0.order < $1.order })
-
-        struct MessageSnapshot {
-            let role: MessageRole
-            let text: String
-            let isReasoningMode: Bool
-            let reasoning: String?
-            let finalAnswer: String?
-            let isFinal: Bool
-        }
-
-        let snapshots = relevantMessages.map { msg in
-            MessageSnapshot(
-                role: msg.role,
-                text: msg.text,
-                isReasoningMode: msg.isReasoningMode,
-                reasoning: msg.reasoning,
-                finalAnswer: msg.finalAnswer,
-                isFinal: msg.isFinal
-            )
-        }
+        let snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
 
         var messages: [Chat.Message] = []
         messages.append(.system(Self.qwenCompactSystemPrompt))

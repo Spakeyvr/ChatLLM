@@ -58,18 +58,11 @@ final class OnDeviceLLMGenerator: LLMGenerator {
     }
 
     private func isSafetyModerationError(_ error: Error) -> Bool {
-        let ns = error as NSError
-        let message = ns.localizedDescription.lowercased()
-        if message.contains("unsafe") ||
-           message.contains("safety") ||
-           message.contains("content filter") ||
-           message.contains("violates") {
-            return true
-        }
-        if ns.domain.contains("FoundationModels") || ns.domain.contains("LanguageModel") {
-            return true
-        }
-        return false
+        let message = (error as NSError).localizedDescription.lowercased()
+        return message.contains("unsafe") ||
+               message.contains("safety") ||
+               message.contains("content filter") ||
+               message.contains("violates")
     }
 
     func respond(to prompt: String, tools: [any Tool]) async throws -> String {

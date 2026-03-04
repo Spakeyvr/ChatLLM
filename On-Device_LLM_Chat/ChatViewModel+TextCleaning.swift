@@ -7,6 +7,19 @@
 
 import Foundation
 
+// MARK: - Cached regexes (compiled once at startup)
+private let _answerTagRegex = try? NSRegularExpression(pattern: #"<answer>([\s\S]*?)</answer>"#, options: [.caseInsensitive])
+private let _leadingMarkdownRegex = try? NSRegularExpression(pattern: #"(?s)^\s*(\*\*|\*|[-]{2,}|#{1,6})\s*\n+"#, options: [])
+private let _wordBoundaryRegexes: [(NSRegularExpression, String)] = [
+    ("to([A-Z])", "to $1"), ("be([A-Z])", "be $1"), ("is([A-Z])", "is $1"),
+    ("as([A-Z])", "as $1"), ("in([A-Z])", "in $1"), ("of([A-Z])", "of $1"),
+].compactMap { (p, r) in (try? NSRegularExpression(pattern: p, options: [])).map { ($0, r) } }
+private let _typoFixRegexes: [(NSRegularExpression, String)] = [
+    (#"(?i)\bios\b"#, "iOS"),
+    (#"(?i)(?<![\/\.])\bsecurityreleases\b"#, "security releases"),
+    (#"(?i)\bversionhistory\b"#, "version history"),
+].compactMap { (p, r) in (try? NSRegularExpression(pattern: p, options: [])).map { ($0, r) } }
+
 extension ChatViewModel {
 
     // MARK: - Text Cleaning
@@ -21,8 +34,7 @@ extension ChatViewModel {
 
         // Strip <answer>...</answer> tags, keeping inner content
         if cleaned.contains("<answer>") || cleaned.contains("<Answer>") || cleaned.contains("<ANSWER>") {
-            let answerPattern = #"<answer>([\s\S]*?)</answer>"#
-            if let re = try? NSRegularExpression(pattern: answerPattern, options: [.caseInsensitive]) {
+            if let re = _answerTagRegex {
                 let ns = cleaned as NSString
                 let range = NSRange(location: 0, length: ns.length)
                 let stripped = re.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "$1")
@@ -57,7 +69,7 @@ extension ChatViewModel {
         }
 
         // Remove stray leading Markdown-only lines like "**", "*", "---", or "###"
-        if let re = try? NSRegularExpression(pattern: #"(?s)^\s*(\*\*|\*|[-]{2,}|#{1,6})\s*\n+"#, options: []) {
+        if let re = _leadingMarkdownRegex {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = re.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
             if result != cleaned {
@@ -67,69 +79,47 @@ extension ChatViewModel {
         }
 
         // Fix missing-space glitches like "appears toThe"
-        let patterns = [
-            ("to([A-Z])", "to $1"),
-            ("be([A-Z])", "be $1"),
-            ("is([A-Z])", "is $1"),
-            ("as([A-Z])", "as $1"),
-            ("in([A-Z])", "in $1"),
-            ("of([A-Z])", "of $1"),
-        ]
-
-        for (pattern, replacement) in patterns {
-            do {
-                let regex = try NSRegularExpression(pattern: pattern, options: [])
-                let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
-                let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
-                if result != cleaned {
-                    print("🧹 Fixed word boundary glitch: '\(pattern)'")
-                    cleaned = result
-                }
-            } catch {
-                continue
+        for (regex, replacement) in _wordBoundaryRegexes {
+            let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
+            let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
+            if result != cleaned {
+                print("🧹 Fixed word boundary glitch")
+                cleaned = result
             }
         }
 
         // NOTE: Removed risky connector-word spacing fix that caused inside-word splits like "F or".
 
         // Conservative normalizations for frequent LLM typos; skips URLs.
-        do {
-            let fixes: [(String, String)] = [
-                (#"(?i)\bios\b"#, "iOS"),
-                // "securityreleases" not after "/" or "." to avoid mangling URLs
-                (#"(?i)(?<![\/\.])\bsecurityreleases\b"#, "security releases"),
-                (#"(?i)\bversionhistory\b"#, "version history")
-            ]
-            for (pattern, replacement) in fixes {
-                let regex = try NSRegularExpression(pattern: pattern, options: [])
-                let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
-                let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
-                if result != cleaned {
-                    print("🧹 Normalized '\(pattern)' -> '\(replacement)'")
-                    cleaned = result
-                }
+        for (regex, replacement) in _typoFixRegexes {
+            let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
+            let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
+            if result != cleaned {
+                print("🧹 Normalized typo -> '\(replacement)'")
+                cleaned = result
             }
-        } catch {
-            // ignore
         }
 
-        // Detect exact character-level repetitions like "hello worldhello world"
+        // Detect exact character-level repetitions like "hello worldhello world".
+        // Only scan the tail (newly added text) — any earlier repetitions were caught on prior tokens.
         for windowSize in stride(from: min(50, cleaned.count / 2), through: 5, by: -1) {
-            let chunks = stride(from: 0, to: cleaned.count - windowSize, by: 1).map { i in
-                let start = cleaned.index(cleaned.startIndex, offsetBy: i)
-                let end = cleaned.index(start, offsetBy: windowSize)
-                return String(cleaned[start..<end])
-            }
-            for i in 0..<(chunks.count - 1) {
-                if chunks[i] == chunks[i + 1] {
-                    let startIdx = cleaned.index(cleaned.startIndex, offsetBy: i + windowSize)
-                    guard let endIdx = cleaned.index(startIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex) else { continue }
-                    if endIdx <= cleaned.endIndex {
-                        print("🧹 Cleaning repetition: '\(chunks[i])'")
-                        cleaned.removeSubrange(startIdx..<endIdx)
-                        return cleanGlitchedText(cleaned)
-                    }
+            let tailLength = min(cleaned.count, windowSize * 2 + 100)
+            let tailOffset = cleaned.count - tailLength
+            var prevIdx = cleaned.index(cleaned.startIndex, offsetBy: tailOffset)
+            var nextIdx = cleaned.index(prevIdx, offsetBy: 1)
+            let limit = tailLength - windowSize - 1
+            guard limit > 0 else { continue }
+            for _ in 0..<limit {
+                guard let prevEnd = cleaned.index(prevIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
+                      let nextEnd = cleaned.index(nextIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
+                      nextEnd <= cleaned.endIndex else { break }
+                if cleaned[prevIdx..<prevEnd] == cleaned[nextIdx..<nextEnd] {
+                    print("🧹 Cleaning repetition (window \(windowSize))")
+                    cleaned.removeSubrange(prevIdx..<prevEnd)
+                    return cleanGlitchedText(cleaned)
                 }
+                prevIdx = cleaned.index(after: prevIdx)
+                nextIdx = cleaned.index(after: nextIdx)
             }
         }
 

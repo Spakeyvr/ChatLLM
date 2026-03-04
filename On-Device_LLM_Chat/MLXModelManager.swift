@@ -136,7 +136,7 @@ final class MLXModelManager: ObservableObject {
                     self.currentModel = model
                     self.isLoading = false
                     self.pendingModelToLoad = nil
-                    Memory.cacheLimit = 20 * 1024 * 1024
+                    Memory.cacheLimit = 4 * 1024 * 1024
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
             } catch is CancellationError {
@@ -256,6 +256,7 @@ final class MLXModelManager: ObservableObject {
         if currentModel?.id == model.id {
             currentModel = nil
             container = nil
+            Memory.clearCache()
         }
         let dir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
         do {
@@ -275,6 +276,7 @@ final class MLXModelManager: ObservableObject {
         cancelCurrentLoad()
         container = nil
         currentModel = nil
+        Memory.clearCache()
         print("🧹 Unloaded all MLX models")
     }
 

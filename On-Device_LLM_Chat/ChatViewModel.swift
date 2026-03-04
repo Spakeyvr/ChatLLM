@@ -354,43 +354,20 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    private static let contextWindowErrorCodes: Set<Int> = [-1, 400, 413]
+
     /// Detects if an error is related to context window/length limits
     func isContextWindowError(_ error: Error) -> Bool {
         let errorString = error.localizedDescription.lowercased()
+        let hasContext = errorString.contains("context")
+        let hasLimitWord = errorString.contains("length") || errorString.contains("limit") || errorString.contains("window")
+        if hasContext && hasLimitWord { return true }
         let nsError = error as NSError
-
-        let contextKeywords = [
-            "context",
-            "length",
-            "token",
-            "too long",
-            "exceeds",
-            "maximum",
-            "limit",
-            "context window",
-            "context length"
-        ]
-
-        for keyword in contextKeywords {
-            if errorString.contains(keyword) {
-                if errorString.contains("context") &&
-                   (errorString.contains("length") || errorString.contains("limit") || errorString.contains("window")) {
-                    return true
-                }
-            }
+        if Self.contextWindowErrorCodes.contains(nsError.code) &&
+           (nsError.domain.contains("LanguageModel") || nsError.domain.contains("FoundationModels")) &&
+           hasContext {
+            return true
         }
-
-        if nsError.domain.contains("LanguageModel") || nsError.domain.contains("FoundationModels") {
-            let contextErrorCodes = [
-                -1, // Generic error that might be context-related
-                400, // Bad request (often context length)
-                413, // Payload too large
-            ]
-            if contextErrorCodes.contains(nsError.code) && errorString.contains("context") {
-                return true
-            }
-        }
-
         return false
     }
 
