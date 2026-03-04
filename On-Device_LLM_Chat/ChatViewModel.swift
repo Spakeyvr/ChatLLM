@@ -173,8 +173,6 @@ final class ChatViewModel: ObservableObject {
 
         guard !isGenerating, !Task.isCancelled else { return }
 
-        Speaker.shared.stop()
-
         let shouldUseReasoning: Bool
         do {
             shouldUseReasoning = try await shouldUseReasoningForPrompt(trimmed)

@@ -90,6 +90,7 @@ struct ModelSelectionView: View {
     private func modelRow(for model: MLXModelManager.MLXModelInfo) -> some View {
         ModelRow(
             model: model,
+            modelManager: modelManager,
             isSelected: modelManager.currentModel?.id == model.id,
             isLoading: modelManager.isLoading && modelManager.currentModel?.id != model.id
         ) {
@@ -165,6 +166,7 @@ struct ModelSelectionView: View {
 
 struct ModelRow: View {
     let model: MLXModelManager.MLXModelInfo
+    @ObservedObject var modelManager: MLXModelManager
     let isSelected: Bool
     let isLoading: Bool
     let onSelect: () -> Void
@@ -207,9 +209,37 @@ struct ModelRow: View {
                     }
 
                     if !model.isAvailable {
-                        Label("Place at Documents/Models/\(model.localDirName)/", systemImage: "folder.badge.plus")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
+                        if modelManager.isDownloading {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ProgressView(value: modelManager.downloadProgress)
+                                    .frame(maxWidth: 180)
+                                HStack(spacing: 8) {
+                                    Text("\(Int(modelManager.downloadProgress * 100))%")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Button("Cancel") {
+                                        modelManager.cancelDownload()
+                                    }
+                                    .font(.caption2)
+                                    .foregroundStyle(.red)
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Button("Download (~3.9 GB)") {
+                                    modelManager.startDownload(for: model)
+                                }
+                                .font(.caption2)
+                                .buttonStyle(.borderedProminent)
+                                if let error = modelManager.downloadError {
+                                    Text(error)
+                                        .font(.caption2)
+                                        .foregroundStyle(.red)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -382,6 +412,7 @@ struct LoadingOverlay: View {
 
 #Preview("Model Row - Available") {
     @Previewable @State var showingInfo = false
+    let mgr = MLXModelManager()
 
     List {
         ModelRow(
@@ -389,12 +420,14 @@ struct LoadingOverlay: View {
                 id: "qwen3.5-4b-4bit",
                 name: "Qwen 3.5",
                 localDirName: "Qwen3.5-4B-MLX-4bit",
+                hfRepoId: "Qwen/Qwen3-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
                 description: "Alibaba's Qwen 3.5 4B model with thinking support and 262K context",
                 contextLength: 262144,
                 isAvailable: true,
                 supportsReasoning: true
             ),
+            modelManager: mgr,
             isSelected: false,
             isLoading: false,
             onSelect: {},
@@ -408,6 +441,7 @@ struct LoadingOverlay: View {
                 id: "qwen3.5-4b-4bit",
                 name: "Qwen 3.5",
                 localDirName: "Qwen3.5-4B-MLX-4bit",
+                hfRepoId: "Qwen/Qwen3-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
                 description: "Alibaba's Qwen 3.5 4B model with thinking support and 262K context",
                 contextLength: 262144,
@@ -419,18 +453,22 @@ struct LoadingOverlay: View {
 }
 
 #Preview("Model Row - Not Available") {
+    let mgr = MLXModelManager()
+
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
                 id: "qwen3.5-4b-4bit",
                 name: "Qwen 3.5",
                 localDirName: "Qwen3.5-4B-MLX-4bit",
+                hfRepoId: "Qwen/Qwen3-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
                 description: "Alibaba's Qwen 3.5 4B model with thinking support and 262K context",
                 contextLength: 262144,
                 isAvailable: false,
                 supportsReasoning: true
             ),
+            modelManager: mgr,
             isSelected: false,
             isLoading: false,
             onSelect: {},
@@ -441,18 +479,22 @@ struct LoadingOverlay: View {
 }
 
 #Preview("Model Row - Selected") {
+    let mgr = MLXModelManager()
+
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
                 id: "qwen3.5-4b-4bit",
                 name: "Qwen 3.5",
                 localDirName: "Qwen3.5-4B-MLX-4bit",
+                hfRepoId: "Qwen/Qwen3-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
                 description: "Alibaba's Qwen 3.5 4B model with thinking support and 262K context",
                 contextLength: 262144,
                 isAvailable: true,
                 supportsReasoning: true
             ),
+            modelManager: mgr,
             isSelected: true,
             isLoading: false,
             onSelect: {},

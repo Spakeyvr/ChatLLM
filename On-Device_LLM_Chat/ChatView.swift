@@ -10,7 +10,6 @@ import SwiftData
 import UniformTypeIdentifiers
 import UIKit
 import PhotosUI
-import AVFoundation
 import Combine
 import OSLog
 import SafariServices

@@ -33,8 +33,6 @@ extension ChatViewModel {
         await waitForStreamToFinish()
         guard !isGenerating, !Task.isCancelled else { return }
         
-        Speaker.shared.stop()
-        
         // Build comprehensive image context from analysis result
         var imageContext = ""
         var hasAnalysisData = false

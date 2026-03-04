@@ -247,14 +247,32 @@ struct ModelManagementRow: View {
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
-                } else {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.badge.questionmark")
-                            .foregroundStyle(.orange)
-                        Text("Place at Documents/Models/\(model.localDirName)/")
+                } else if modelManager.isDownloading {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: modelManager.downloadProgress)
+                        Text("\(Int(modelManager.downloadProgress * 100))%")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Button("Cancel") {
+                        modelManager.cancelDownload()
+                    }
+                    .foregroundStyle(.red)
                     .font(.caption)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button("Download (~3.9 GB)") {
+                            modelManager.startDownload(for: model)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .font(.caption)
+                        if let error = modelManager.downloadError {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                    }
                 }
             }
         }

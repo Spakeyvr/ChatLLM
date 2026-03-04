@@ -143,9 +143,6 @@ struct MessageCellView: View {
                     canAct: canAct,
                     isFinal: message.isFinal,
                     onStop: { viewModel.cancelGeneration() },
-                    onReadAloud: {
-                        Speaker.shared.toggleSpeak(text: message.displayText)
-                    },
                     onTryAgain: {
                         viewModel.scheduleRegeneration(messageID: message.id, instruction: nil)
                     },
@@ -807,7 +804,6 @@ struct AssistantActionsBar: View {
     var canAct: Bool
     var isFinal: Bool
     var onStop: () -> Void
-    var onReadAloud: () -> Void
     var onTryAgain: () -> Void
     var onConcise: () -> Void
     var onFormal: () -> Void
@@ -820,14 +816,6 @@ struct AssistantActionsBar: View {
             // Stop button removed from here; lives in the composer now.
 
             Group {
-                Button(action: onReadAloud) {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .foregroundStyle(.primary)
-                }
-                .disabled(!canAct)
-                .accessibilityLabel(String(localized: "Read out loud"))
-                .buttonStyle(.plain)
-
                 Menu {
                     Button(action: onTryAgain) {
                         Label(String(localized: "Try again"), systemImage: "arrow.triangle.2.circlepath")

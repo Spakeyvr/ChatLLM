@@ -160,14 +160,6 @@ struct SettingsSheet: View {
                     .padding(.vertical, 4)
                 }
                 
-                // MARK: Voice Selection
-                Section(
-                    header: Text(String(localized: "Text-to-Speech Voice")),
-                    footer: Text(String(localized: "Premium voices offer the most natural sound. Download more voices in Settings > Accessibility > Read & Speak > Voices. Restart the app after downloading."))
-                ) {
-                    VoicePickerView()
-                }
-                
                 // MARK: Object Detection
                 Section(
                     header: Text(String(localized: "Object Detection")),

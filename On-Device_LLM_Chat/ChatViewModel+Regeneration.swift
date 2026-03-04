@@ -91,7 +91,6 @@ extension ChatViewModel {
 
         print("✅ Starting regeneration for message order \(messageOrder)")
         print("📊 Current message count: \(conversation.messages.count)")
-        Speaker.shared.stop()
 
         let messagesToDelete = conversation.messages
             .filter { $0.order > messageOrder }
@@ -205,7 +204,6 @@ extension ChatViewModel {
         }
 
         print("✅ Starting regeneration with custom instruction")
-        Speaker.shared.stop()
 
         let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -303,8 +301,7 @@ extension ChatViewModel {
             let updatedOrder = assistant.order
             print("✅ Starting regeneration (via edit) for message order \(updatedOrder)")
 
-            Speaker.shared.stop()
-
+    
             let precedingUserMessage = conversation.messages
                 .filter { $0.role == .user && $0.order < updatedOrder }
                 .sorted { $0.order < $1.order }
