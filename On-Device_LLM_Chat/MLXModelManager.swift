@@ -8,7 +8,6 @@
 import Foundation
 import Combine
 import MLX
-import MLXLLM
 import MLXLMCommon
 
 // MARK: - MLXModelManager
@@ -28,6 +27,34 @@ final class MLXModelManager: ObservableObject {
         let contextLength: Int
         var isAvailable: Bool
         let supportsReasoning: Bool
+        let supportsNativeImages: Bool
+        let requiredProcessorClass: String?
+
+        init(
+            id: String,
+            name: String,
+            localDirName: String,
+            hfRepoId: String,
+            parameters: String,
+            description: String,
+            contextLength: Int,
+            isAvailable: Bool,
+            supportsReasoning: Bool,
+            supportsNativeImages: Bool = false,
+            requiredProcessorClass: String? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.localDirName = localDirName
+            self.hfRepoId = hfRepoId
+            self.parameters = parameters
+            self.description = description
+            self.contextLength = contextLength
+            self.isAvailable = isAvailable
+            self.supportsReasoning = supportsReasoning
+            self.supportsNativeImages = supportsNativeImages
+            self.requiredProcessorClass = requiredProcessorClass
+        }
 
         var displayName: String { "\(name) (\(parameters))" }
     }
@@ -52,20 +79,29 @@ final class MLXModelManager: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private let downloader = ModelDownloader()
     private var downloaderTask: Task<Void, Never>?
+    private var compatibilityErrors: [String: String] = [:]
 
     private static let modelDefinition = MLXModelInfo(
         id: "qwen3.5-4b-4bit",
         name: "Qwen 3.5",
         localDirName: "Qwen3.5-4B-MLX-4bit",
-        hfRepoId: "Qwen/Qwen3-4B-MLX-4bit",
+        hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
         parameters: "4B (4-bit)",
-        description: "Alibaba's Qwen 3.5 4B model with extended 262K context and native reasoning support.",
+        description: "Qwen 3.5 4B multimodal model with native reasoning and image support.",
         contextLength: 262144,
         isAvailable: false,
-        supportsReasoning: true
+        supportsReasoning: true,
+        supportsNativeImages: true,
+        requiredProcessorClass: "Qwen3VLProcessor"
     )
 
     private let documentsDirectory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+
+    private struct ModelInstallationStatus {
+        let isInstalled: Bool
+        let isCompatible: Bool
+        let compatibilityError: String?
+    }
 
     // MARK: - Model Directory (Documents)
 
@@ -75,27 +111,93 @@ final class MLXModelManager: ObservableObject {
         return FileManager.default.fileExists(atPath: config.path) ? dir : nil
     }
 
-    private func isModelAvailable(_ info: MLXModelInfo) -> Bool {
+    private func installationStatus(for info: MLXModelInfo) -> ModelInstallationStatus {
         let dir = documentsDirectory.appendingPathComponent("Models/\(info.localDirName)")
         let fm = FileManager.default
-        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path) else { return false }
+        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
+            return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
+        }
         let contents = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
-        return contents.contains { $0.hasSuffix(".safetensors") }
+        guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else {
+            return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
+        }
+
+        guard info.supportsNativeImages else {
+            return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
+        }
+
+        guard let expectedProcessor = info.requiredProcessorClass else {
+            return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
+        }
+
+        let processorURLCandidates = [
+            dir.appendingPathComponent("preprocessor_config.json"),
+            dir.appendingPathComponent("processor_config.json")
+        ]
+
+        var detectedProcessorClass: String?
+        for url in processorURLCandidates {
+            guard let data = try? Data(contentsOf: url),
+                  let rawObject = try? JSONSerialization.jsonObject(with: data),
+                  let json = rawObject as? [String: Any],
+                  let processorClass = json["processor_class"] as? String else {
+                continue
+            }
+            detectedProcessorClass = processorClass
+            break
+        }
+
+        guard let detectedProcessorClass else {
+            return ModelInstallationStatus(
+                isInstalled: true,
+                isCompatible: false,
+                compatibilityError:
+                    "Installed model '\(info.localDirName)' is missing processor metadata for native image support. Re-download \(info.localDirName) to enable native images."
+            )
+        }
+
+        guard detectedProcessorClass == expectedProcessor else {
+            return ModelInstallationStatus(
+                isInstalled: true,
+                isCompatible: false,
+                compatibilityError:
+                    "Installed model '\(info.localDirName)' is incompatible with native image support (processor '\(detectedProcessorClass)'). Re-download \(info.localDirName) to get the correct multimodal files."
+            )
+        }
+
+        return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
+    }
+
+    private func isModelAvailable(_ info: MLXModelInfo) -> Bool {
+        let status = installationStatus(for: info)
+        return status.isInstalled && status.isCompatible
+    }
+
+    private func compatibilityError(for info: MLXModelInfo) -> String? {
+        compatibilityErrors[info.id]
     }
 
     // MARK: - Init
 
     init() {
         var model = Self.modelDefinition
-        model.isAvailable = isModelAvailable(model)
+        let status = installationStatus(for: model)
+        model.isAvailable = status.isInstalled && status.isCompatible
+        if let error = status.compatibilityError {
+            compatibilityErrors[model.id] = error
+        }
         availableModels = [model]
     }
 
     // MARK: - Loading
 
     func startLoading() {
-        guard let model = availableModels.first, model.isAvailable else {
+        guard let model = availableModels.first else {
             loadError = nil
+            return
+        }
+        guard model.isAvailable else {
+            loadError = compatibilityError(for: model)
             return
         }
         cancelCurrentLoad()
@@ -118,7 +220,11 @@ final class MLXModelManager: ObservableObject {
 
     private func load(_ model: MLXModelInfo) {
         guard model.isAvailable, let modelURL = modelDirectoryURL(for: model) else {
-            loadError = "Model '\(model.localDirName)' not found in Documents/Models/. Use the Download button to fetch it."
+            if let compatibilityError = compatibilityError(for: model) {
+                loadError = compatibilityError
+            } else {
+                loadError = "Model '\(model.localDirName)' not found in Documents/Models/. Use the Download button to fetch it."
+            }
             return
         }
         pendingModelToLoad = model
@@ -128,8 +234,7 @@ final class MLXModelManager: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let config = ModelConfiguration(directory: modelURL)
-                let loaded = try await LLMModelFactory.shared.loadContainer(configuration: config)
+                let loaded = try await loadModelContainer(directory: modelURL)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self.container = loaded
@@ -168,6 +273,9 @@ final class MLXModelManager: ObservableObject {
         downloaderTask = Task { [weak self] in
             guard let self else { return }
             do {
+                if FileManager.default.fileExists(atPath: targetDir.path) {
+                    try FileManager.default.removeItem(at: targetDir)
+                }
                 try await self.downloader.download(
                     repoId: model.hfRepoId,
                     to: targetDir,
@@ -228,7 +336,8 @@ final class MLXModelManager: ObservableObject {
         defer { Memory.clearCache() }
 
         let additionalContext: [String: any Sendable]? = enableThinking ? nil : ["enable_thinking": false]
-        let userInput = UserInput(chat: messages, additionalContext: additionalContext)
+        let processing = UserInput.Processing(resize: CGSize(width: 512, height: 512))
+        let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)
         let input = try await container.prepare(input: userInput)
         let params = enableThinking
             ? GenerateParameters(temperature: 0.6, topP: 0.95)
@@ -245,9 +354,14 @@ final class MLXModelManager: ObservableObject {
     // MARK: - Diagnostics / Management
 
     func refreshModelAvailability() {
+        compatibilityErrors = [:]
         availableModels = availableModels.map { model in
             var updated = model
-            updated.isAvailable = isModelAvailable(model)
+            let status = installationStatus(for: model)
+            updated.isAvailable = status.isInstalled && status.isCompatible
+            if let error = status.compatibilityError {
+                compatibilityErrors[model.id] = error
+            }
             return updated
         }
     }

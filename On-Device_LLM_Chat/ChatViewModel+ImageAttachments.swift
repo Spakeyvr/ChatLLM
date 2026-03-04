@@ -11,7 +11,14 @@ import SwiftData
 import UIKit
 
 extension ChatViewModel {
-    
+
+    private var canUseNativeImageSupport: Bool {
+        let bridge = ModelBackendBridge.shared
+        guard bridge.selectedBackend == .mlx else { return false }
+        guard let model = bridge.modelManager?.currentModel else { return false }
+        return model.supportsNativeImages
+    }
+
     /// Send a user message with an image attachment
     /// - Parameters:
     ///   - text: The message text
@@ -26,86 +33,40 @@ extension ChatViewModel {
     ) async {
         print("🖼️ sendWithImage called")
         print("📝 Text: '\(text)'")
-        
+
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
         
         // Ensure any previous stream is fully finished
         await waitForStreamToFinish()
         guard !isGenerating, !Task.isCancelled else { return }
-        
-        // Build comprehensive image context from analysis result
-        var imageContext = ""
-        var hasAnalysisData = false
-        
-        if let result = analysisResult {
-            // Use the full detailed description for best model understanding
-            let detailedDescription = result.generateDetailedDescription()
-            if !detailedDescription.isEmpty && !result.isEmpty {
-                imageContext = detailedDescription
-                hasAnalysisData = true
-                print("📋 Using full Vision analysis context (\(detailedDescription.count) chars)")
-            } else {
-                // Fallback: provide basic context even if no objects detected
-                imageContext = """
-                [IMAGE ANALYSIS]
-                
-                The Vision framework analyzed the image but found:
-                - No specific objects detected
-                - No text recognized (OCR found nothing)
-                - No faces detected
-                
-                This could mean the image contains:
-                - Stylized or artistic text that OCR couldn't read
-                - Illustrations or artwork without clear objects
-                - Content with low contrast or unusual fonts
-                
-                Please base your response on what the user is asking about.
-                """
-                print("📋 Using fallback image context (empty analysis)")
-            }
-        } else if let detections = detections, !detections.isEmpty {
-            // Legacy support: simple object list
-            let objectList = detections.prefix(10).map { $0.label }.joined(separator: ", ")
-            imageContext = "[IMAGE ANALYSIS]\n\nDETECTED OBJECTS:\n  \(objectList)"
-            hasAnalysisData = true
-            print("📋 Using legacy detection context: \(objectList)")
+
+        if canUseNativeImageSupport {
+            await sendWithNativeImage(
+                userPrompt: userPrompt,
+                image: image,
+                detections: detections,
+                analysisResult: analysisResult
+            )
         } else {
-            // No analysis data at all - still inform model about the image
-            imageContext = """
-            [IMAGE ANALYSIS]
-            
-            An image was attached but the Vision framework couldn't process it.
-            This might be due to the image format or content type.
-            
-            Please acknowledge that you can see an image was shared but cannot analyze its contents directly.
-            """
-            print("📋 Using no-analysis fallback context")
+            await sendWithVisionFallback(
+                userPrompt: userPrompt,
+                image: image,
+                detections: detections,
+                analysisResult: analysisResult
+            )
         }
-        
-        // Create a simple enhanced prompt without overwhelming the model
-        // IMPORTANT: Keep prompt structure clear and direct for Foundation Models LLM
-        let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
-        let enhancedText: String
-        
-        // Simplified format: provide context first, then the question
-        // This structure is more natural for the LLM to process
-        enhancedText = """
-        --- Image Analysis Data ---
-        \(imageContext)
-        --- End Image Analysis ---
-        
-        User's question: \(userPrompt)
-        
-        Please respond based on the image analysis data above.
-        """
-        
-        print("📋 Enhanced prompt length: \(enhancedText.count) characters")
-        print("📋 Has actual analysis data: \(hasAnalysisData)")
-        
-        // Determine if reasoning should be used
+    }
+
+    private func sendWithNativeImage(
+        userPrompt: String,
+        image: UIImage,
+        detections: [DetectedObject]?,
+        analysisResult: VisionAnalysisResult?
+    ) async {
         let shouldUseReasoning: Bool
         do {
-            shouldUseReasoning = try await shouldUseReasoningForPrompt(enhancedText)
+            shouldUseReasoning = try await shouldUseReasoningForPrompt(userPrompt)
         } catch let reasoningError as ReasoningEvaluationError {
             print("Error determining reasoning mode, using fallback: \(reasoningError.localizedDescription)")
             shouldUseReasoning = reasoningError.fallbackResult
@@ -113,47 +74,38 @@ extension ChatViewModel {
             print("Unexpected error determining reasoning mode: \(error)")
             shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
         }
-        
+
         guard !Task.isCancelled else { return }
-        
+
         let baseOrder = nextOrder
-        
-        // Create user message with ENHANCED text that includes image context
-        // This ensures the model has full context for this AND future messages
         let userMsg = Message(
             role: .user,
-            text: enhancedText,  // Include image context in the stored message
+            text: userPrompt,
             order: baseOrder,
             conversation: conversation,
             isFinal: true
         )
         conversation.messages.append(userMsg)
-        
-        // Add image attachment
+
+        var canonicalImageURL: URL?
         do {
             let attachment = try await addImageAttachment(image, to: userMsg)
-            
-            // Store the full analysis result if available, otherwise store basic detections
+            canonicalImageURL = attachment.actualFileURL
             if let result = analysisResult {
                 attachment.storeAnalysisResult(result)
-            } else if let detections = detections {
-                let legacyResult = VisionAnalysisResult(objects: detections)
-                attachment.storeAnalysisResult(legacyResult)
+            } else if let detections, !detections.isEmpty {
+                attachment.storeAnalysisResult(VisionAnalysisResult(objects: detections))
             }
-            
-            print("✅ Image attached successfully")
         } catch {
             print("⚠️ Failed to attach image: \(error)")
         }
-        
-        // Check if auto-naming is needed
+
         let userMessagesCount = conversation.messages.lazy.filter { $0.role == .user }.count
         let isFirstUserMessage = userMessagesCount == 1
         let needsAutoNaming = conversation.title == String(localized: "New Chat") &&
                              !conversation.hasAutoGeneratedTitle &&
                              isFirstUserMessage
-        
-        // Create assistant message
+
         let assistantMsg = Message(
             role: .assistant,
             text: "",
@@ -165,24 +117,233 @@ extension ChatViewModel {
         conversation.messages.append(assistantMsg)
         conversation.lastUpdated = Date()
         immediateSave()
-        
+
         guard !Task.isCancelled else { return }
-        
-        // Stream assistant response
-        // Image context is already stored in the user message, so no additional instruction needed
-        await streamAssistant(
+
+        let firstAttempt = await streamAssistant(
             into: assistantMsg,
             basedOnHistoryUpTo: assistantMsg.order,
             additionalUserInstruction: nil,
-            disableWebSearch: true  // Disable web search for image analysis to avoid confusion
+            disableWebSearch: true,
+            allowNativeImages: true
         )
-        
-        // Generate title if needed
+
+        if firstAttempt == .failedBeforeOutput && !Task.isCancelled {
+            print("⚠️ Native image generation failed before output; falling back to Vision analysis context")
+
+            let resolvedAnalysis = await resolveVisionAnalysisResult(
+                canonicalImageURL: canonicalImageURL,
+                fallbackImage: image,
+                detections: detections,
+                analysisResult: analysisResult
+            )
+            let fallbackText = buildVisionEnhancedText(
+                userPrompt: userPrompt,
+                detections: detections,
+                analysisResult: resolvedAnalysis
+            )
+            userMsg.text = fallbackText
+
+            if let attachment = userMsg.attachments.first(where: { $0.type == .image }) {
+                if let resolvedAnalysis {
+                    attachment.storeAnalysisResult(resolvedAnalysis)
+                } else if let detections, !detections.isEmpty {
+                    attachment.storeAnalysisResult(VisionAnalysisResult(objects: detections))
+                }
+            }
+
+            conversation.lastUpdated = Date()
+            immediateSave()
+
+            _ = await streamAssistant(
+                into: assistantMsg,
+                basedOnHistoryUpTo: assistantMsg.order,
+                additionalUserInstruction: nil,
+                disableWebSearch: true,
+                allowNativeImages: false
+            )
+        }
+
         if needsAutoNaming && !Task.isCancelled {
             await generateChatTitle(fromUserMessage: userPrompt)
         }
     }
-    
+
+    private func sendWithVisionFallback(
+        userPrompt: String,
+        image: UIImage,
+        detections: [DetectedObject]?,
+        analysisResult: VisionAnalysisResult?
+    ) async {
+        let enhancedText = buildVisionEnhancedText(
+            userPrompt: userPrompt,
+            detections: detections,
+            analysisResult: analysisResult
+        )
+
+        let shouldUseReasoning: Bool
+        do {
+            shouldUseReasoning = try await shouldUseReasoningForPrompt(enhancedText)
+        } catch let reasoningError as ReasoningEvaluationError {
+            print("Error determining reasoning mode, using fallback: \(reasoningError.localizedDescription)")
+            shouldUseReasoning = reasoningError.fallbackResult
+        } catch {
+            print("Unexpected error determining reasoning mode: \(error)")
+            shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
+        }
+
+        guard !Task.isCancelled else { return }
+
+        let baseOrder = nextOrder
+
+        let userMsg = Message(
+            role: .user,
+            text: enhancedText,
+            order: baseOrder,
+            conversation: conversation,
+            isFinal: true
+        )
+        conversation.messages.append(userMsg)
+
+        do {
+            let attachment = try await addImageAttachment(image, to: userMsg)
+            if let result = analysisResult {
+                attachment.storeAnalysisResult(result)
+            } else if let detections, !detections.isEmpty {
+                attachment.storeAnalysisResult(VisionAnalysisResult(objects: detections))
+            }
+            print("✅ Image attached successfully")
+        } catch {
+            print("⚠️ Failed to attach image: \(error)")
+        }
+
+        let userMessagesCount = conversation.messages.lazy.filter { $0.role == .user }.count
+        let isFirstUserMessage = userMessagesCount == 1
+        let needsAutoNaming = conversation.title == String(localized: "New Chat") &&
+                             !conversation.hasAutoGeneratedTitle &&
+                             isFirstUserMessage
+
+        let assistantMsg = Message(
+            role: .assistant,
+            text: "",
+            order: baseOrder + 1,
+            conversation: conversation,
+            isFinal: false,
+            isReasoningMode: shouldUseReasoning
+        )
+        conversation.messages.append(assistantMsg)
+        conversation.lastUpdated = Date()
+        immediateSave()
+
+        guard !Task.isCancelled else { return }
+
+        _ = await streamAssistant(
+            into: assistantMsg,
+            basedOnHistoryUpTo: assistantMsg.order,
+            additionalUserInstruction: nil,
+            disableWebSearch: true,
+            allowNativeImages: false
+        )
+
+        if needsAutoNaming && !Task.isCancelled {
+            await generateChatTitle(fromUserMessage: userPrompt)
+        }
+    }
+
+    private func resolveVisionAnalysisResult(
+        canonicalImageURL: URL?,
+        fallbackImage: UIImage,
+        detections: [DetectedObject]?,
+        analysisResult: VisionAnalysisResult?
+    ) async -> VisionAnalysisResult? {
+        if let analysisResult {
+            return analysisResult
+        }
+
+        if let detections, !detections.isEmpty {
+            return VisionAnalysisResult(objects: detections)
+        }
+
+        let analyzer = VisionAnalyzer()
+        var options = AnalysisOptions.all
+        options.minimumTextConfidence = 0.3
+        options.useAccurateOCR = true
+
+        if let canonicalImageURL {
+            print("📎 Vision fallback source: canonical attachment (\(canonicalImageURL.lastPathComponent))")
+            if let canonicalImage = await loadImageFromDisk(canonicalImageURL) {
+                return try? await analyzer.analyze(image: canonicalImage, options: options)
+            }
+            print("⚠️ Failed to load canonical attachment for fallback analysis, using in-memory image")
+        } else {
+            print("⚠️ No canonical attachment URL for fallback analysis, using in-memory image")
+        }
+
+        return try? await analyzer.analyze(image: fallbackImage, options: options)
+    }
+
+    private func loadImageFromDisk(_ url: URL) async -> UIImage? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            autoreleasepool {
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return UIImage(data: data)
+            }
+        }.value
+    }
+
+    private func buildVisionEnhancedText(
+        userPrompt: String,
+        detections: [DetectedObject]?,
+        analysisResult: VisionAnalysisResult?
+    ) -> String {
+        var imageContext = ""
+        if let result = analysisResult {
+            let detailedDescription = result.generateDetailedDescription()
+            if !detailedDescription.isEmpty && !result.isEmpty {
+                imageContext = detailedDescription
+            } else {
+                imageContext = """
+                [IMAGE ANALYSIS]
+
+                The Vision framework analyzed the image but found:
+                - No specific objects detected
+                - No text recognized (OCR found nothing)
+                - No faces detected
+
+                This could mean the image contains:
+                - Stylized or artistic text that OCR couldn't read
+                - Illustrations or artwork without clear objects
+                - Content with low contrast or unusual fonts
+
+                Please base your response on what the user is asking about.
+                """
+            }
+        } else if let detections, !detections.isEmpty {
+            let objectList = detections.prefix(10).map { $0.label }.joined(separator: ", ")
+            imageContext = "[IMAGE ANALYSIS]\n\nDETECTED OBJECTS:\n  \(objectList)"
+        } else {
+            imageContext = """
+            [IMAGE ANALYSIS]
+
+            An image was attached but the Vision framework couldn't process it.
+            This might be due to the image format or content type.
+
+            Please acknowledge that you can see an image was shared but cannot analyze its contents directly.
+            """
+        }
+
+        return """
+        --- Image Analysis Data ---
+        \(imageContext)
+        --- End Image Analysis ---
+
+        User's question: \(userPrompt)
+
+        Please respond based on the image analysis data above.
+        """
+    }
+
     // MARK: - Private Helpers
     
     /// Add image attachment (basic version)
@@ -218,11 +379,13 @@ extension ChatViewModel {
     
     /// Delete an attachment
     func deleteAttachment(_ attachment: MessageAttachment) async {
+        let canonicalURL = attachment.actualFileURL
         do {
-            try await ImageStore.shared.delete(url: attachment.fileURL)
+            try await ImageStore.shared.delete(url: canonicalURL)
         } catch {
             print("Failed to delete attachment file: \(error)")
         }
+        await ImageStore.shared.deleteInferenceVariant(for: canonicalURL)
         
         if let message = attachment.message {
             message.attachments.removeAll { $0.id == attachment.id }

@@ -193,7 +193,7 @@ class ModelBackendBridge: ObservableObject {
                 available: false,
                 implementation: .unavailable,
                 description: "Reasoning mode is only available with Qwen models.",
-                recommendation: "Ensure the Qwen 3.5 model is placed in Documents/Models/Qwen3.5-4B-4bit/."
+                recommendation: "Ensure the Qwen 3.5 model is placed in Documents/Models/Qwen3.5-4B-MLX-4bit/."
             )
         }
     }

@@ -49,6 +49,7 @@ final class ChatViewModel: ObservableObject {
 
     // Track the active streaming task so we can cancel it
     internal var currentStreamTask: Task<Void, Never>?
+    private var lastStreamOutcome: StreamOutcome = .succeeded
 
     // Serializes concurrent Foundation Models sessions via continuation queue.
     private let fmGate = FoundationModelsGate()
@@ -336,6 +337,13 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    enum StreamOutcome {
+        case succeeded
+        case failedBeforeOutput
+        case failedAfterPartialOutput
+        case cancelled
+    }
+
     func withTimeout<T>(_ duration: Duration, operation: @escaping () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
@@ -372,12 +380,19 @@ final class ChatViewModel: ObservableObject {
     }
 
     // Add optional transient instruction that is appended to the prompt for this run only.
-    internal func streamAssistant(into assistantMessage: Message, basedOnHistoryUpTo order: Int, additionalUserInstruction: String? = nil, disableWebSearch: Bool = false) async {
+    @discardableResult
+    internal func streamAssistant(
+        into assistantMessage: Message,
+        basedOnHistoryUpTo order: Int,
+        additionalUserInstruction: String? = nil,
+        disableWebSearch: Bool = false,
+        allowNativeImages: Bool = true
+    ) async -> StreamOutcome {
         print("🔄 streamAssistant: Starting (order: \(order), messageID: \(assistantMessage.id))")
 
         guard !Task.isCancelled else {
             print("⚠️ streamAssistant: Task cancelled before starting")
-            return
+            return .cancelled
         }
 
         // isGenerating is managed exclusively here to avoid race conditions.
@@ -398,7 +413,7 @@ final class ChatViewModel: ObservableObject {
         guard let targetToReset = conversation.messages.first(where: { $0.id == targetID }),
               targetRole == .assistant else {
             streamingMessageID = nil
-            return
+            return .failedBeforeOutput
         }
 
         // Preserve sources from previous web search before resetting
@@ -423,10 +438,20 @@ final class ChatViewModel: ObservableObject {
         var mlxMessages: [Chat.Message]? = nil
         var builtPrompt: String  // FM path prompt (also used for debug snapshot on MLX path)
         if promptBridge.selectedBackend == .mlx && promptBridge.modelManager != nil {
-            mlxMessages = buildQwenMessages(
-                upToOrderExclusive: order,
-                additionalInstruction: additionalUserInstruction
-            )
+            do {
+                mlxMessages = try await buildQwenMessages(
+                    upToOrderExclusive: order,
+                    additionalInstruction: additionalUserInstruction,
+                    includeLatestUserImages: allowNativeImages
+                )
+            } catch {
+                targetToReset.generationError = "Failed to prepare image for native inference: \(error.localizedDescription)"
+                targetToReset.markAsComplete()
+                conversation.lastUpdated = Date()
+                immediateSave()
+                streamingMessageID = nil
+                return .failedBeforeOutput
+            }
             builtPrompt = "MLX:\(mlxMessages!.count) msgs"
         } else {
             // Foundation Models: keep existing plain-text prompt format unchanged.
@@ -456,6 +481,7 @@ final class ChatViewModel: ObservableObject {
             var cumulativeSoFar = ""
             var wroteAny = false
             var lastModelWrite: Date = .distantPast
+            var outcome: StreamOutcome = .succeeded
 
             do {
                 let stream: AsyncThrowingStream<String, Error>
@@ -505,6 +531,7 @@ final class ChatViewModel: ObservableObject {
                             try await iterator.next()
                         }
                     } catch let timeout as GenerationTimeoutError {
+                        outcome = wroteAny ? .failedAfterPartialOutput : .failedBeforeOutput
                         if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
                             target.generationError = timeout.localizedDescription
                             target.markAsComplete()
@@ -589,6 +616,7 @@ final class ChatViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 print("⚠️ streaming Task: Cancelled")
+                outcome = .cancelled
             } catch {
                 print("❌ streaming Task: Error - \(error)")
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
@@ -599,6 +627,7 @@ final class ChatViewModel: ObservableObject {
                     if cumulativeSoFar.isEmpty { target.text = "" }
                     target.markAsComplete()
                     wroteAny = true
+                    outcome = cumulativeSoFar.isEmpty ? .failedBeforeOutput : .failedAfterPartialOutput
                 }
             }
 
@@ -647,6 +676,7 @@ final class ChatViewModel: ObservableObject {
                         target.finalAnswer = previousFinal
                     } else {
                         target.generationError = "The model returned an empty response. Try regenerating or rephrasing."
+                        outcome = .failedBeforeOutput
                     }
                 }
 
@@ -671,10 +701,14 @@ final class ChatViewModel: ObservableObject {
 
             self.streamingMessageID = nil
             self.immediateSave()
+            self.currentStreamTask = nil
+            self.lastStreamOutcome = outcome
         }
 
+        lastStreamOutcome = .succeeded
         currentStreamTask = task
         await task.value
         currentStreamTask = nil
+        return lastStreamOutcome
     }
 }

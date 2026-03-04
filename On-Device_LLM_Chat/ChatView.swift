@@ -88,6 +88,11 @@ struct ChatView: View {
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
+    private var shouldPrecomputeVisionAnalysis: Bool {
+        guard modelBackendBridge.selectedBackend == .mlx else { return true }
+        return !(modelBackendBridge.modelManager?.currentModel?.supportsNativeImages ?? false)
+    }
+
     // Error handling helper
     private struct ErrorAlert: Identifiable {
         let id = UUID()
@@ -287,7 +292,14 @@ struct ChatView: View {
                         selectedImage = image
                         forceSearch = false
                     }
-                    await runVisionAnalysis(on: image)
+                    if shouldPrecomputeVisionAnalysis {
+                        await runVisionAnalysis(on: image)
+                    } else {
+                        await MainActor.run {
+                            detectedObjects = nil
+                            fullImageAnalysis = nil
+                        }
+                    }
                 } catch {
                     logger.error("Failed to load image: \(error.localizedDescription)")
                 }
@@ -300,7 +312,9 @@ struct ChatView: View {
             detectedObjects = nil
             fullImageAnalysis = nil
             forceSearch = false
-            Task { await runVisionAnalysis(on: image) }
+            if shouldPrecomputeVisionAnalysis {
+                Task { await runVisionAnalysis(on: image) }
+            }
         }
         .alert(item: $errorAlert) { alert in
             if let retry = alert.retry {

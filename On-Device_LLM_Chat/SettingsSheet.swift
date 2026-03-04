@@ -163,7 +163,7 @@ struct SettingsSheet: View {
                 // MARK: Object Detection
                 Section(
                     header: Text(String(localized: "Object Detection")),
-                    footer: Text(String(localized: "Uses Apple's native Vision Framework for object detection. No external models required - works instantly and efficiently on-device."))
+                    footer: Text(String(localized: "Used as a compatibility fallback for image analysis when native model-based vision is unavailable."))
                 ) {
                     // Confidence Threshold slider
                     VStack(alignment: .leading, spacing: 12) {
@@ -171,7 +171,7 @@ struct SettingsSheet: View {
                             Label(String(localized: "Confidence Threshold"), systemImage: "chart.bar.fill")
                             InfoButton(
                                 title: String(localized: "Confidence Threshold"),
-                                message: String(localized: "Minimum confidence (10–90%) for detecting objects. Higher values reduce false positives but may miss valid objects.")
+                                message: String(localized: "Minimum confidence (10–90%) for Vision fallback object detection. Higher values reduce false positives but may miss valid objects.")
                             )
                         }
                         
@@ -184,7 +184,7 @@ struct SettingsSheet: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.caption2)
                             .foregroundStyle(.green)
-                        Text("Using Apple Vision Framework")
+                        Text("Vision Framework fallback enabled")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -881,5 +881,4 @@ struct PlatformTextView: UIViewRepresentable {
     }
 }
 #endif
-
 

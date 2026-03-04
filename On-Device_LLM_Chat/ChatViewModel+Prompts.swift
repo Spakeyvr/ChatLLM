@@ -7,6 +7,7 @@
 
 import Foundation
 import MLXLMCommon
+import os.log
 
 private let _sourcesRegex = try? NSRegularExpression(
     pattern: #"<sources>(.*?)</sources>"#,
@@ -14,20 +15,41 @@ private let _sourcesRegex = try? NSRegularExpression(
 
 extension ChatViewModel {
 
+    private struct AttachmentSnapshot {
+        let type: AttachmentType
+        let actualFileURL: URL
+    }
+
     private struct MessageSnapshot {
+        let order: Int
         let role: MessageRole
         let text: String
         let isReasoningMode: Bool
         let reasoning: String?
         let finalAnswer: String?
         let isFinal: Bool
+        let attachments: [AttachmentSnapshot]
     }
 
     private func messageSnapshots(upToOrderExclusive maxOrderExclusive: Int) -> [MessageSnapshot] {
         conversation.messages
             .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
             .sorted { $0.order < $1.order }
-            .map { MessageSnapshot(role: $0.role, text: $0.text, isReasoningMode: $0.isReasoningMode, reasoning: $0.reasoning, finalAnswer: $0.finalAnswer, isFinal: $0.isFinal) }
+            .map { message in
+                let attachmentSnapshots = message.attachments.map { attachment in
+                    AttachmentSnapshot(type: attachment.type, actualFileURL: attachment.actualFileURL)
+                }
+                return MessageSnapshot(
+                    order: message.order,
+                    role: message.role,
+                    text: message.text,
+                    isReasoningMode: message.isReasoningMode,
+                    reasoning: message.reasoning,
+                    finalAnswer: message.finalAnswer,
+                    isFinal: message.isFinal,
+                    attachments: attachmentSnapshots
+                )
+            }
     }
 
     func setReasoningMode(_ enabled: Bool) {
@@ -134,12 +156,67 @@ extension ChatViewModel {
     You are a helpful assistant. Answer clearly in the user's language. Be concise and direct.
     """
 
+    private func nativeImageInputs(from attachments: [AttachmentSnapshot]) async throws -> [UserInput.Image] {
+        var inputs: [UserInput.Image] = []
+        var warnedForPreparationFailure = false
+
+        for attachment in attachments where attachment.type == .image {
+            let canonicalURL = attachment.actualFileURL
+            guard FileManager.default.fileExists(atPath: canonicalURL.path) else {
+                logger.warning("Skipping missing canonical attachment: \(canonicalURL.lastPathComponent, privacy: .public)")
+                continue
+            }
+
+            do {
+                let inferenceURL = try await ImageStore.shared.saveInferenceVariant(
+                    from: canonicalURL,
+                    maxDimension: 512
+                )
+                await logNativeImageTelemetry(canonicalURL: canonicalURL, inferenceURL: inferenceURL)
+                inputs.append(.url(inferenceURL))
+            } catch {
+                if !warnedForPreparationFailure {
+                    warnedForPreparationFailure = true
+                    logger.warning("Native image preprocessing failed before generation; will trigger Vision fallback. Error: \(error.localizedDescription, privacy: .public)")
+                }
+                throw error
+            }
+        }
+
+        return inputs
+    }
+
+    private func logNativeImageTelemetry(canonicalURL: URL, inferenceURL: URL) async {
+        let canonicalMetrics = await ImageStore.shared.imageMetrics(at: canonicalURL)
+        let inferenceMetrics = await ImageStore.shared.imageMetrics(at: inferenceURL)
+        guard let canonicalMetrics, let inferenceMetrics else { return }
+
+        let canonicalSize = ByteCountFormatter.string(
+            fromByteCount: canonicalMetrics.byteSize,
+            countStyle: .file
+        )
+        let inferenceSize = ByteCountFormatter.string(
+            fromByteCount: inferenceMetrics.byteSize,
+            countStyle: .file
+        )
+
+        logger.info("Native image telemetry canonical=\(canonicalMetrics.width)x\(canonicalMetrics.height) (\(canonicalSize, privacy: .public)) inference=\(inferenceMetrics.width)x\(inferenceMetrics.height) (\(inferenceSize, privacy: .public))")
+    }
+
     /// Builds a structured message array for the Qwen3.5 VLM processor.
     /// The processor's `applyChatTemplate` applies the Jinja template with `add_generation_prompt=true`.
     /// Thinking mode is controlled by the caller via `additionalContext: ["enable_thinking": false]`
     /// — NOT through any manual prefix here.
-    func buildQwenMessages(upToOrderExclusive maxOrderExclusive: Int, additionalInstruction: String? = nil) -> [Chat.Message] {
+    func buildQwenMessages(
+        upToOrderExclusive maxOrderExclusive: Int,
+        additionalInstruction: String? = nil,
+        includeLatestUserImages: Bool = true
+    ) async throws -> [Chat.Message] {
         let snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
+        let latestUserOrder = snapshots
+            .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(\.order)
+            .max()
 
         var messages: [Chat.Message] = []
         messages.append(.system(Self.qwenCompactSystemPrompt))
@@ -153,7 +230,9 @@ extension ChatViewModel {
             case .system:
                 break
             case .user:
-                messages.append(.user(msg.text))
+                let includeImages = includeLatestUserImages && msg.order == latestUserOrder
+                let images = includeImages ? (try await nativeImageInputs(from: msg.attachments)) : []
+                messages.append(.user(msg.text, images: images))
             case .assistant:
                 let content: String
                 if msg.isReasoningMode, let reasoning = msg.reasoning, let answer = msg.finalAnswer {
