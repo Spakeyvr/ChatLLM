@@ -14,7 +14,7 @@ actor ImageStore {
     static let shared = ImageStore()
 
     private let logger = Logger(subsystem: "com.yourapp.chatllm", category: "ImageStore")
-    private let nativeInferenceMaxDimension: CGFloat = 512
+    private let nativeInferenceMaxDimension: CGFloat = 336
 
     struct ImageMetrics: Sendable {
         let width: Int
@@ -23,7 +23,7 @@ actor ImageStore {
     }
 
     // Save the canonical attachment image used by UI/history/Vision fallback.
-    func save(image: UIImage, maxDimension: CGFloat = 2000, jpegQuality: CGFloat = 0.75) async throws -> URL {
+    func save(image: UIImage, maxDimension: CGFloat = 1200, jpegQuality: CGFloat = 0.75) async throws -> URL {
         // Validate input dimensions and scale
         guard image.size.width > 0 && image.size.height > 0 && image.scale > 0 else {
             logger.error("❌ Cannot save image with invalid dimensions or scale: \(image.size.width)x\(image.size.height) @ \(image.scale)x")
@@ -65,8 +65,8 @@ actor ImageStore {
     /// The canonical attachment remains unchanged; this writes into Attachments/Inference/.
     func saveInferenceVariant(
         from sourceURL: URL,
-        maxDimension: CGFloat = 512,
-        jpegQuality: CGFloat = 0.72
+        maxDimension: CGFloat = 336,
+        jpegQuality: CGFloat = 0.90
     ) async throws -> URL {
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw NSError(domain: "ImageStore", code: -4, userInfo: [

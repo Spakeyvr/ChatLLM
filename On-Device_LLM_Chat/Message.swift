@@ -8,6 +8,25 @@
 import Foundation
 import SwiftData
 
+// Pre-compiled regexes used in Message display and parsing (compiled once at app launch)
+// swiftlint:disable force_try
+private let _thinkingTagRegex = try! NSRegularExpression(
+    pattern: #"<thinking>[\s\S]*?</thinking>\s*"#, options: [.caseInsensitive])
+private let _answerTagDisplayRegex = try! NSRegularExpression(
+    pattern: #"<answer>([\s\S]*?)</answer>"#, options: [.caseInsensitive])
+private let _hiddenImageContextRegex = try! NSRegularExpression(
+    pattern: #"\[HIDDEN_IMAGE_CONTEXT\].*?\[/HIDDEN_IMAGE_CONTEXT\]"#, options: [.dotMatchesLineSeparators])
+private let _imageAnalysisBlockRegex = try! NSRegularExpression(
+    pattern: #"--- Image Analysis Data ---.*?(?:--- End Image Analysis ---\s*User's question:\s*|--- User Question ---\n?)"#,
+    options: [.dotMatchesLineSeparators])
+private let _resetSourcesRegex = try! NSRegularExpression(
+    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
+private let _numberedStepRegex = try! NSRegularExpression(
+    pattern: #"(?:^|\n)(?:(?:Step\s*)?(\d+)[:.\)]\s*([^\n]*)\n?)"#, options: [.caseInsensitive])
+private let _headingStepRegex = try! NSRegularExpression(
+    pattern: #"(?:^|\n)(#{1,3})\s+([^\n]+)\n"#, options: [])
+// swiftlint:enable force_try
+
 // MARK: - Reasoning Step Model
 
 /// Represents a single step in the Chain of Thought reasoning process
@@ -155,56 +174,35 @@ final class Message {
         }
         
         // CRITICAL FIX (Bug #6): Always strip raw <thinking> tags from display
-        // This handles cases where isReasoningMode is false but text contains thinking tags
         if result.contains("<thinking>") || result.contains("<THINKING>") {
-            // Pattern to match thinking tags and their content (case insensitive)
-            let thinkingPattern = #"<thinking>[\s\S]*?</thinking>\s*"#
-            if let re = try? NSRegularExpression(pattern: thinkingPattern, options: [.caseInsensitive]) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            
-            // Also remove "Final answer:" prefix if present after stripping thinking
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = _thinkingTagRegex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if result.lowercased().hasPrefix("final answer:") {
                 result = String(result.dropFirst("final answer:".count))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        
+
         // Strip <answer> tags from display (Qwen3 sometimes wraps responses in these)
         if result.contains("<answer>") || result.contains("<Answer>") || result.contains("<ANSWER>") {
-            let answerPattern = #"<answer>([\s\S]*?)</answer>"#
-            if let re = try? NSRegularExpression(pattern: answerPattern, options: [.caseInsensitive]) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = _answerTagDisplayRegex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$1")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         // Strip hidden image analysis context from display
-        // This keeps it in the stored text for model prompts but hides it from user view
         if result.contains("[HIDDEN_IMAGE_CONTEXT]") {
-            let pattern = #"\[HIDDEN_IMAGE_CONTEXT\].*?\[/HIDDEN_IMAGE_CONTEXT\]"#
-            if let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = _hiddenImageContextRegex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        
-        // Also strip the newer "--- Image Analysis Data ---" format from display
-        // This format provides context to the LLM but should be hidden from users
+
+        // Strip "--- Image Analysis Data ---" block from display
         if result.contains("--- Image Analysis Data ---") {
-            // Pattern matches the entire image analysis block including the user question prompt
-            let pattern = #"--- Image Analysis Data ---.*?(?:--- End Image Analysis ---\s*User's question:\s*|--- User Question ---\n?)"#
-            if let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            
-            // Also remove any trailing instruction about responding
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = _imageAnalysisBlockRegex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if result.hasSuffix("Please respond based on the image analysis data above.") {
                 result = result.replacingOccurrences(of: "\n\nPlease respond based on the image analysis data above.", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -359,17 +357,14 @@ extension Message {
         // CRITICAL FIX (Bug 4): Optionally preserve sources from previous web search
         var savedSources: String? = nil
         if preserveSources {
-            // Extract sources from wherever they might be stored
             let carrier = isReasoningMode ? (finalAnswer ?? text) : text
-            let pattern = #"<sources>(.*?)</sources>"#
-            if let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
-                let ns = carrier as NSString
-                let range = NSRange(location: 0, length: ns.length)
-                if let match = re.firstMatch(in: carrier, options: [], range: range), match.numberOfRanges >= 2 {
-                    let inner = match.range(at: 1)
-                    if inner.location != NSNotFound {
-                        savedSources = ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
+            let ns = carrier as NSString
+            let range = NSRange(location: 0, length: ns.length)
+            if let match = _resetSourcesRegex.firstMatch(in: carrier, options: [], range: range),
+               match.numberOfRanges >= 2 {
+                let inner = match.range(at: 1)
+                if inner.location != NSNotFound {
+                    savedSources = ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
         }
@@ -444,8 +439,8 @@ extension Message {
         var currentStepNumber = 1
         
         // Strategy 1: Try to detect numbered steps (1., 2., Step 1:, etc.)
-        let numberedPattern = #"(?:^|\n)(?:(?:Step\s*)?(\d+)[:.\)]\s*([^\n]*)\n?)"#
-        if let regex = try? NSRegularExpression(pattern: numberedPattern, options: [.caseInsensitive]) {
+        let regex = _numberedStepRegex
+        do {
             let nsString = trimmed as NSString
             let matches = regex.matches(in: trimmed, options: [], range: NSRange(location: 0, length: nsString.length))
             
@@ -489,8 +484,8 @@ extension Message {
         }
         
         // Strategy 2: Try markdown headings (## Step, ### Analysis)
-        let headingPattern = #"(?:^|\n)(#{1,3})\s+([^\n]+)\n"#
-        if let regex = try? NSRegularExpression(pattern: headingPattern, options: []) {
+        do {
+            let regex = _headingStepRegex
             let nsString = trimmed as NSString
             let matches = regex.matches(in: trimmed, options: [], range: NSRange(location: 0, length: nsString.length))
             

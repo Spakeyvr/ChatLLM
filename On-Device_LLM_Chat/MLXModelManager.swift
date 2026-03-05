@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UIKit
 import MLX
 import MLXLMCommon
 
@@ -91,7 +92,7 @@ final class MLXModelManager: ObservableObject {
         contextLength: 262144,
         isAvailable: false,
         supportsReasoning: true,
-        supportsNativeImages: false,
+        supportsNativeImages: true,
         requiredProcessorClass: "Qwen3VLProcessor"
     )
 
@@ -244,6 +245,13 @@ final class MLXModelManager: ObservableObject {
                     Memory.cacheLimit = 4 * 1024 * 1024
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
+                // Pre-warm the vision encoder immediately after model load.
+                // VLM encoder weights load lazily on first image query; doing it
+                // now (low memory pressure) prevents a concurrent spike when the
+                // user also has a large UIImage in memory.
+                if model.supportsNativeImages {
+                    await self.prewarmVisionEncoder()
+                }
             } catch is CancellationError {
                 await MainActor.run {
                     self.isLoading = false
@@ -323,6 +331,44 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
+    // MARK: - Vision Encoder Pre-warming
+
+    /// Runs the vision encoder on a tiny dummy image immediately after model load.
+    /// This ensures encoder Metal weights are resident before the user sends a photo,
+    /// eliminating the concurrent spike of (encoder load + UIImage decode) that causes OOM.
+    private func prewarmVisionEncoder() async {
+        guard let container else { return }
+        print("🔥 Pre-warming VLM vision encoder...")
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vlm_prewarm_\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+        do {
+            // 224×224 = 8×8 Qwen3 patches (28px each) — pre-compiles vision encoder
+            // + prefill Metal shaders at model-load time so first user image query
+            // hits cached shaders rather than compiling under memory pressure.
+            let prewarmData: Data = autoreleasepool {
+                let size = CGSize(width: 224, height: 224)
+                let renderer = UIGraphicsImageRenderer(size: size)
+                let img = renderer.image { ctx in
+                    UIColor.gray.setFill()
+                    ctx.fill(CGRect(origin: .zero, size: size))
+                }
+                return img.jpegData(compressionQuality: 0.8) ?? Data()
+            }
+            guard !prewarmData.isEmpty else { return }
+            try prewarmData.write(to: tmpURL)
+
+            let dummyMsg = Chat.Message.user("x", images: [.url(tmpURL)])
+            let userInput = UserInput(chat: [dummyMsg], processing: UserInput.Processing())
+            _ = try await container.prepare(input: userInput)
+            Memory.clearCache()
+            print("✅ VLM vision encoder pre-warmed")
+        } catch {
+            print("⚠️ VLM pre-warm failed (non-fatal): \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Generation
 
     func generateTextStream(
@@ -333,10 +379,9 @@ final class MLXModelManager: ObservableObject {
         guard let container else {
             throw GenerationError.modelNotLoaded
         }
-        defer { Memory.clearCache() }
-
+        Memory.clearCache()
         let additionalContext: [String: any Sendable]? = enableThinking ? nil : ["enable_thinking": false]
-        let processing = UserInput.Processing(resize: CGSize(width: 512, height: 512))
+        let processing = UserInput.Processing()
         let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)
         let input = try await container.prepare(input: userInput)
         let params = enableThinking
@@ -346,7 +391,7 @@ final class MLXModelManager: ObservableObject {
 
         for await generation in stream {
             if case .chunk(let text) = generation {
-                await MainActor.run { onToken(text) }
+                onToken(text)
             }
         }
     }

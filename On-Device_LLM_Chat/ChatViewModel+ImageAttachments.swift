@@ -64,16 +64,10 @@ extension ChatViewModel {
         detections: [DetectedObject]?,
         analysisResult: VisionAnalysisResult?
     ) async {
-        let shouldUseReasoning: Bool
-        do {
-            shouldUseReasoning = try await shouldUseReasoningForPrompt(userPrompt)
-        } catch let reasoningError as ReasoningEvaluationError {
-            print("Error determining reasoning mode, using fallback: \(reasoningError.localizedDescription)")
-            shouldUseReasoning = reasoningError.fallbackResult
-        } catch {
-            print("Unexpected error determining reasoning mode: \(error)")
-            shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-        }
+        // Reasoning mode is forced off for native VLM queries.
+        // Chain-of-thought generates thousands of tokens that grow the KV cache
+        // well beyond iPhone memory limits when combined with visual tokens.
+        let shouldUseReasoning = false
 
         guard !Task.isCancelled else { return }
 
@@ -265,7 +259,10 @@ extension ChatViewModel {
         }
 
         let analyzer = VisionAnalyzer()
-        var options = AnalysisOptions.all
+        // Use a lighter analysis set in the fallback path — we're already under memory pressure
+        // (native VLM generation failed). Body pose, hands, saliency, and face quality are
+        // not needed for the fallback Vision context sent to the LLM.
+        var options = AnalysisOptions.objectsAndText
         options.minimumTextConfidence = 0.3
         options.useAccurateOCR = true
 

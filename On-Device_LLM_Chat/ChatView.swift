@@ -60,8 +60,6 @@ struct ChatView: View {
     // Performance optimization states
     @State private var isViewAppearing = false
     @State private var scrollProxy: ScrollViewProxy?
-    @State private var cachedSortedMessages: [Message] = []
-    @State private var lastMessageCount: Int = 0
 
     // In-app browser state
     @State private var activeURL: URL?
@@ -71,20 +69,10 @@ struct ChatView: View {
         Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatView", category: "ChatView")
     }
 
-    // Optimized message sorting with caching
+    // Pure computed property — no side effects, no @State mutations during body evaluation.
+    // Sorting a typical message list (~10–50 items) is negligible; SwiftUI diffs the result.
     private var sortedMessages: [Message] {
-        // Cache invalidation: only re-sort if message count changes
-        let currentCount = viewModel.conversation.messages.count
-        if currentCount == lastMessageCount && !cachedSortedMessages.isEmpty {
-            return cachedSortedMessages
-        }
-
-        // Sort and cache synchronously for immediate use
-        let sorted = Array(viewModel.conversation.messages).sorted { $0.order < $1.order }
-        cachedSortedMessages = sorted
-        lastMessageCount = currentCount
-
-        return sorted
+        viewModel.conversation.messages.sorted { $0.order < $1.order }
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
@@ -283,37 +271,39 @@ struct ChatView: View {
         .onChange(of: selectedPhotoItem) { _, newItem in
             Task {
                 guard let item = newItem else { return }
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data) else {
-                        return
-                    }
+                guard let image = await loadAndDownscaleImage(from: item) else {
+                    logger.error("Failed to load image from picker item")
+                    selectedPhotoItem = nil
+                    return
+                }
+                await MainActor.run {
+                    selectedImage = image
+                    forceSearch = false
+                }
+                if shouldPrecomputeVisionAnalysis {
+                    await runVisionAnalysis(on: image)
+                } else {
                     await MainActor.run {
-                        selectedImage = image
-                        forceSearch = false
+                        detectedObjects = nil
+                        fullImageAnalysis = nil
                     }
-                    if shouldPrecomputeVisionAnalysis {
-                        await runVisionAnalysis(on: image)
-                    } else {
-                        await MainActor.run {
-                            detectedObjects = nil
-                            fullImageAnalysis = nil
-                        }
-                    }
-                } catch {
-                    logger.error("Failed to load image: \(error.localizedDescription)")
                 }
                 selectedPhotoItem = nil
             }
         }
         .onChange(of: showCameraCapture) { _, isPresented in
-            // When camera sheet is dismissed with a captured image, run Vision analysis
+            // When camera sheet is dismissed with a captured image, downscale then run Vision analysis.
+            // Camera images can be 12 MP+; downscaling here prevents OOM overlap with the MLX model.
             guard !isPresented, let image = selectedImage else { return }
             detectedObjects = nil
             fullImageAnalysis = nil
             forceSearch = false
-            if shouldPrecomputeVisionAnalysis {
-                Task { await runVisionAnalysis(on: image) }
+            Task {
+                let scaled = await downscaleForPipeline(image)
+                await MainActor.run { selectedImage = scaled }
+                if shouldPrecomputeVisionAnalysis {
+                    await runVisionAnalysis(on: scaled)
+                }
             }
         }
         .alert(item: $errorAlert) { alert in
@@ -562,28 +552,20 @@ struct ChatView: View {
     }
 
     private func handleImageForOCR(_ image: UIImage) async {
-        do {
-            _ = try await ImageStore.shared.save(image: image)
-            let text = await viewModel.extractOCR(from: image)
-
-            await MainActor.run {
-                let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmedText.isEmpty {
-                    errorAlert = ErrorAlert(
-                        title: String(localized: "OCR Result"),
-                        message: String(localized: "No text found in the selected image."),
-                        retry: nil
-                    )
-                } else {
-                    if inputText.isEmpty {
-                        inputText = trimmedText
-                    } else {
-                        inputText += "\n" + trimmedText
-                    }
-                }
+        let text = await viewModel.extractOCR(from: image)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isEmpty {
+            errorAlert = ErrorAlert(
+                title: String(localized: "OCR Result"),
+                message: String(localized: "No text found in the selected image."),
+                retry: nil
+            )
+        } else {
+            if inputText.isEmpty {
+                inputText = trimmedText
+            } else {
+                inputText += "\n" + trimmedText
             }
-        } catch {
-            await handleError(error, title: "Image Processing Failed", retry: nil)
         }
     }
 
@@ -617,6 +599,40 @@ struct ChatView: View {
             try? await Task.sleep(nanoseconds: 150_000_000) // ~150 ms
             action()
         }
+    }
+
+    // MARK: - Image Downscaling
+
+    // Pre-scale any image to a pixel budget before the MLX pipeline sees it.
+    // Using scale=1.0 ensures we get exactly targetSize pixels, not targetSize×screenScale.
+    // The original large UIImage goes out of scope inside Task.detached so ARC releases it
+    // before generation starts, preventing the OOM overlap with the ~2.5 GB MLX model.
+    private func downscaleForPipeline(_ image: UIImage) async -> UIImage {
+        let pixelWidth  = image.size.width  * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let maxSide     = max(pixelWidth, pixelHeight)
+        let maxPixels: CGFloat = 1200
+        guard maxSide > maxPixels else { return image }
+        let ratio      = maxPixels / maxSide
+        let targetSize = CGSize(width:  (pixelWidth  * ratio).rounded(),
+                                height: (pixelHeight * ratio).rounded())
+        return await Task.detached(priority: .userInitiated) {
+            autoreleasepool {
+                let format       = UIGraphicsImageRendererFormat()
+                format.scale     = 1.0
+                let renderer     = UIGraphicsImageRenderer(size: targetSize, format: format)
+                return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: targetSize)) }
+            }
+        }.value
+    }
+
+    // Load a PhotosPickerItem and return a downscaled UIImage.
+    // raw is local to this function — ARC releases the full-resolution bitmap
+    // as soon as downscaleForPipeline returns, well before the pipeline starts.
+    private func loadAndDownscaleImage(from item: PhotosPickerItem) async -> UIImage? {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let raw  = UIImage(data: data) else { return nil }
+        return await downscaleForPipeline(raw)
     }
 }
 

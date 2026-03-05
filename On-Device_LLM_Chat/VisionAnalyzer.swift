@@ -381,42 +381,10 @@ struct VisionAnalysisResult: Codable, Sendable {
     /// This replaces common profanity and offensive terms with safe alternatives while preserving meaning
     private static func sanitizeTextForSafety(_ text: String) -> String {
         var result = text
-        
-        // Common words that trigger safety guardrails - replace with completely safe alternatives
-        // Apple's filter is VERY strict - even partial censoring like "a**" can trigger it
-        // Use completely innocuous replacements instead
-        let replacements: [(pattern: String, replacement: String)] = [
-            // Replace profanity with safe alternatives that preserve meaning
-            ("\\bass\\b", "butt"),
-            ("\\basses\\b", "butts"),
-            ("\\bhuge ass\\b", "huge"),  // Remove "ass" entirely in this common phrase
-            ("\\bbig ass\\b", "big"),
-            ("\\bdamn\\b", "darn"),
-            ("\\bdamned\\b", "darned"),
-            ("\\bhell\\b", "heck"),
-            ("\\bshit\\b", "stuff"),
-            ("\\bshitty\\b", "bad"),
-            ("\\bcrap\\b", "stuff"),
-            ("\\bcrappy\\b", "bad"),
-            ("\\bfuck\\b", "[expletive]"),
-            ("\\bfucking\\b", "very"),
-            ("\\bfucked\\b", "messed"),
-            ("\\bbitch\\b", "[expletive]"),
-            ("\\bbitches\\b", "[expletives]"),
-            ("\\bbastard\\b", "[expletive]"),
-            ("\\bpiss\\b", "[expletive]"),
-            ("\\bpissed\\b", "angry"),
-            ("\\bwtf\\b", "what the heck"),
-            ("\\bomg\\b", "oh my gosh"),
-        ]
-        
-        for (pattern, replacement) in replacements {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: replacement)
-            }
+        for (regex, replacement) in _sanitizeRegexes {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: replacement)
         }
-        
         return result
     }
 }
@@ -484,6 +452,33 @@ struct AnalysisOptions: Sendable {
         )
     }
 }
+
+// Pre-compiled regexes for sanitizeTextForSafety (compiled once at app launch)
+// swiftlint:disable force_try
+private let _sanitizeRegexes: [(NSRegularExpression, String)] = [
+    (try! NSRegularExpression(pattern: #"\bhuge ass\b"#, options: .caseInsensitive), "huge"),
+    (try! NSRegularExpression(pattern: #"\bbig ass\b"#,  options: .caseInsensitive), "big"),
+    (try! NSRegularExpression(pattern: #"\basses\b"#,    options: .caseInsensitive), "butts"),
+    (try! NSRegularExpression(pattern: #"\bass\b"#,      options: .caseInsensitive), "butt"),
+    (try! NSRegularExpression(pattern: #"\bdamned\b"#,   options: .caseInsensitive), "darned"),
+    (try! NSRegularExpression(pattern: #"\bdamn\b"#,     options: .caseInsensitive), "darn"),
+    (try! NSRegularExpression(pattern: #"\bhell\b"#,     options: .caseInsensitive), "heck"),
+    (try! NSRegularExpression(pattern: #"\bshitty\b"#,   options: .caseInsensitive), "bad"),
+    (try! NSRegularExpression(pattern: #"\bshit\b"#,     options: .caseInsensitive), "stuff"),
+    (try! NSRegularExpression(pattern: #"\bcrappy\b"#,   options: .caseInsensitive), "bad"),
+    (try! NSRegularExpression(pattern: #"\bcrap\b"#,     options: .caseInsensitive), "stuff"),
+    (try! NSRegularExpression(pattern: #"\bfucking\b"#,  options: .caseInsensitive), "very"),
+    (try! NSRegularExpression(pattern: #"\bfucked\b"#,   options: .caseInsensitive), "messed"),
+    (try! NSRegularExpression(pattern: #"\bfuck\b"#,     options: .caseInsensitive), "[expletive]"),
+    (try! NSRegularExpression(pattern: #"\bbitches\b"#,  options: .caseInsensitive), "[expletives]"),
+    (try! NSRegularExpression(pattern: #"\bbitch\b"#,    options: .caseInsensitive), "[expletive]"),
+    (try! NSRegularExpression(pattern: #"\bbastard\b"#,  options: .caseInsensitive), "[expletive]"),
+    (try! NSRegularExpression(pattern: #"\bpissed\b"#,   options: .caseInsensitive), "angry"),
+    (try! NSRegularExpression(pattern: #"\bpiss\b"#,     options: .caseInsensitive), "[expletive]"),
+    (try! NSRegularExpression(pattern: #"\bwtf\b"#,      options: .caseInsensitive), "what the heck"),
+    (try! NSRegularExpression(pattern: #"\bomg\b"#,      options: .caseInsensitive), "oh my gosh"),
+]
+// swiftlint:enable force_try
 
 // MARK: - Vision Analyzer
 

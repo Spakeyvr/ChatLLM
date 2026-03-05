@@ -8,6 +8,12 @@
 import Foundation
 import os
 
+// swiftlint:disable force_try
+private let _extractSourcesRegex = try! NSRegularExpression(
+    pattern: #"<sources>(.*?)</sources>"#,
+    options: [.dotMatchesLineSeparators, .caseInsensitive])
+// swiftlint:enable force_try
+
 extension ChatViewModel {
 
     // MARK: - Web Search Helpers
@@ -90,16 +96,13 @@ extension ChatViewModel {
 
     // Extract the first <sources>...</sources> block content (without the tags)
     func extractSources(from text: String) -> String? {
-        let pattern = #"<sources>(.*?)</sources>"#
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return nil }
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
-        guard let match = re.firstMatch(in: text, options: [], range: range), match.numberOfRanges >= 2 else { return nil }
+        guard let match = _extractSourcesRegex.firstMatch(in: text, options: [], range: range),
+              match.numberOfRanges >= 2 else { return nil }
         let inner = match.range(at: 1)
-        if inner.location != NSNotFound {
-            return ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return nil
+        guard inner.location != NSNotFound else { return nil }
+        return ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // Strip legacy <search> tags from stored messages (backward compat).

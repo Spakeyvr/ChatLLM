@@ -50,33 +50,29 @@ extension ChatViewModel {
 
     /// Determines if reasoning mode should be used based on prompt complexity
     internal func shouldUseReasoningForPrompt(_ userText: String) async throws -> Bool {
-        // If manual reasoning mode is explicitly enabled, always use it
-        if conversation.reasoningMode {
-            return true
+        if conversation.reasoningMode { return true }
+        guard conversation.smartReasoningMode else { return false }
+
+        // On MLX backend, skip Foundation Models entirely — loading Apple Intelligence
+        // alongside the MLX model causes OOM. Use the heuristic directly.
+        if ModelBackendBridge.shared.selectedBackend == .mlx {
+            return useReasoningHeuristic(userText)
         }
 
-        // If smart reasoning mode is not enabled, don't use reasoning
-        guard conversation.smartReasoningMode else {
-            return false
-        }
-
-        // Use Foundation Models to evaluate if reasoning is needed
         let result = try await evaluatePromptComplexity(userText)
         return result
     }
 
-    /// Uses Foundation Models to determine if a prompt requires reasoning
+    /// Uses Foundation Models to determine if a prompt requires reasoning.
+    /// Only called on the Foundation Models backend.
     private func evaluatePromptComplexity(_ userText: String) async throws -> Bool {
         let model = SystemLanguageModel.default
         guard case .available = model.availability else {
-            // Throw an error so calling methods can handle fallback appropriately
             throw ReasoningEvaluationError.foundationModelsUnavailable(fallbackResult: useReasoningHeuristic(userText))
         }
 
-        // Add input validation to prevent issues
         let trimmedInput = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedInput.isEmpty, trimmedInput.count <= 2000 else {
-            logger.debug("Input too long or empty for complexity evaluation (\(trimmedInput.count) chars), using heuristic")
             throw ReasoningEvaluationError.foundationModelsUnavailable(fallbackResult: useReasoningHeuristic(userText))
         }
 
@@ -90,47 +86,20 @@ extension ChatViewModel {
 
             Respond with ONLY "NO" if the request can be answered directly (simple questions, factual lookups, basic explanations, casual conversation, straightforward how-to questions, etc.).
 
-            Examples that NEED reasoning:
-            - "How do I optimize this Swift code for better performance?"
-            - "What's wrong with my algorithm logic?"
-            - "Help me debug this SwiftUI layout issue"
-            - "Explain the trade-offs between different architectural patterns"
-            - "How should I structure my app's data model?"
-            - "Why is my app crashing when I do X?"
-
-            Examples that DON'T need reasoning:
-            - "What is SwiftUI?"
-            - "How do I create a button in SwiftUI?"
-            - "What's the syntax for a for loop in Swift?"
-            - "What is OpenAI?"
-            - "Hello, how are you?"
-            - "Can you help me?"
-            - "Show me an example of..."
-
             Be conservative - only use reasoning when it genuinely adds value for complex, multi-step problems.
             """
 
-            // CRITICAL FIX: Use the lock to prevent concurrent Foundation Models sessions
-            // Increased timeout from 5s to 10s for better reliability under load
             let response = try await withFoundationModelsLock(timeout: .seconds(10)) {
-                // Create session inside the lock
                 let session = LanguageModelSession(instructions: instructions)
-
-                // BUG FIX: Removed unnecessary 100ms delay that added latency to every message
-                // The lock already prevents concurrent access, making this delay redundant
-
                 return try await session.respond(to: "User request: \"\(trimmedInput)\"")
             }
 
             let decision = response.content.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             let shouldUseReasoning = decision == "YES"
-
             logger.info("Smart reasoning decision for '\(String(trimmedInput.prefix(50)))...': \(shouldUseReasoning ? "YES" : "NO")")
             return shouldUseReasoning
-
         } catch {
             logger.error("Error evaluating prompt complexity: \(error.localizedDescription)")
-            // Throw a specialized error with heuristic fallback
             throw ReasoningEvaluationError.foundationModelsError(error: error, fallbackResult: useReasoningHeuristic(userText))
         }
     }

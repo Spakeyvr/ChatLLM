@@ -169,8 +169,7 @@ extension ChatViewModel {
 
             do {
                 let inferenceURL = try await ImageStore.shared.saveInferenceVariant(
-                    from: canonicalURL,
-                    maxDimension: 512
+                    from: canonicalURL
                 )
                 await logNativeImageTelemetry(canonicalURL: canonicalURL, inferenceURL: inferenceURL)
                 inputs.append(.url(inferenceURL))

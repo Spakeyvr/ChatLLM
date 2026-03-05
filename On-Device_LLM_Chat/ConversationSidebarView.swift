@@ -9,6 +9,14 @@ import SwiftUI
 import SwiftData
 import UIKit
 
+// Pre-compiled regexes for stripForPreview (compiled once at app launch)
+// swiftlint:disable force_try
+private let _previewSourcesBlockRegex = try! NSRegularExpression(pattern: #"<sources>.*?</sources>"#,  options: [.dotMatchesLineSeparators, .caseInsensitive])
+private let _previewThinkingBlockRegex = try! NSRegularExpression(pattern: #"<thinking>.*?</thinking>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
+private let _previewSourcesTagRegex   = try! NSRegularExpression(pattern: #"</?sources>"#,              options: [.caseInsensitive])
+private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?thinking>"#,             options: [.caseInsensitive])
+// swiftlint:enable force_try
+
 // MARK: - Conversation Row
 
 struct ConversationRow: View {
@@ -42,20 +50,18 @@ struct ConversationRow: View {
     private func stripForPreview(_ text: String) -> String {
         var output = text
 
-        func replacing(_ pattern: String) {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
-                let ns = output as NSString
-                let range = NSRange(location: 0, length: ns.length)
-                output = regex.stringByReplacingMatches(in: output, options: [], range: range, withTemplate: "")
-            }
+        func applying(_ regex: NSRegularExpression) {
+            let ns = output as NSString
+            let range = NSRange(location: 0, length: ns.length)
+            output = regex.stringByReplacingMatches(in: output, options: [], range: range, withTemplate: "")
         }
 
         // Remove full blocks first
-        replacing(#"<sources>.*?</sources>"#)
-        replacing(#"<thinking>.*?</thinking>"#)
+        applying(_previewSourcesBlockRegex)
+        applying(_previewThinkingBlockRegex)
         // Remove any stray opening/closing tags that may remain
-        replacing(#"</?sources>"#)
-        replacing(#"</?thinking>"#)
+        applying(_previewSourcesTagRegex)
+        applying(_previewThinkingTagRegex)
         // Collapse excessive whitespace/newlines
         output = output
             .replacingOccurrences(of: "[ \\t]*\\n[ \\t]*\\n+", with: "\n", options: .regularExpression)
