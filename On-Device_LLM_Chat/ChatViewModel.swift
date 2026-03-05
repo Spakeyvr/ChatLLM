@@ -481,7 +481,20 @@ final class ChatViewModel: ObservableObject {
             var cumulativeSoFar = ""
             var wroteAny = false
             var lastModelWrite: Date = .distantPast
+            var lastRenderedLength = 0
             var outcome: StreamOutcome = .succeeded
+
+            // Shared throttle helper — captures local streaming vars by reference
+            @MainActor func renderIfThrottled(target: Message) {
+                let hasEnoughDelta = lastRenderedLength == 0 || (cumulativeSoFar.count - lastRenderedLength) >= 24
+                let now = Date()
+                guard now.timeIntervalSince(lastModelWrite) >= 0.12 && hasEnoughDelta else { return }
+                self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar, finalize: false)
+                lastModelWrite = now
+                lastRenderedLength = cumulativeSoFar.count
+                self.conversation.lastUpdated = now
+                self.scheduleCoalescedSave()
+            }
 
             do {
                 let stream: AsyncThrowingStream<String, Error>
@@ -567,13 +580,7 @@ final class ChatViewModel: ObservableObject {
                     if !cumulativeSoFar.isEmpty && newText.hasPrefix(cumulativeSoFar) && newText.count > cumulativeSoFar.count {
                         cumulativeSoFar = newText
                         wroteAny = true
-                        let now = Date()
-                        if now.timeIntervalSince(lastModelWrite) >= 0.08 {
-                            self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
-                            lastModelWrite = now
-                            self.conversation.lastUpdated = now
-                            self.scheduleCoalescedSave()
-                        }
+                        renderIfThrottled(target: target)
                         continue
                     }
                     if !newText.isEmpty && newText.count > 10 && cumulativeSoFar.hasPrefix(newText) {
@@ -599,18 +606,12 @@ final class ChatViewModel: ObservableObject {
                         cumulativeSoFar += newText
                         wroteAny = true
                     }
-                    let now = Date()
-                    if now.timeIntervalSince(lastModelWrite) >= 0.08 {
-                        self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar)
-                        lastModelWrite = now
-                        self.conversation.lastUpdated = now
-                        self.scheduleCoalescedSave()
-                    }
+                    renderIfThrottled(target: target)
                 }
 
                 // Final unconditional flush to ensure last tokens are written
                 if wroteAny, let finalTarget = self.conversation.messages.first(where: { $0.id == targetID }) {
-                    self.updateMessageWithReasoningContent(finalTarget, fullText: cumulativeSoFar)
+                    self.updateMessageWithReasoningContent(finalTarget, fullText: cumulativeSoFar, finalize: true)
                     self.conversation.lastUpdated = Date()
                     self.scheduleCoalescedSave()
                 }

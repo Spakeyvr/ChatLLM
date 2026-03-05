@@ -112,9 +112,9 @@ struct MessageCellView: View {
     }
 
     private var hasContent: Bool {
-        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-        !(message.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
-        !(message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
+        !message.text.isEmpty ||
+        !(message.finalAnswer?.isEmpty ?? true) ||
+        !(message.reasoning?.isEmpty ?? true) ||
         message.generationError != nil
     }
 
@@ -313,8 +313,11 @@ struct StandardMessageBubble: View {
     }
 
     var body: some View {
-        // Split out any <sources> blocks so we can hide them behind a button
-        let split = message.displayText.extractSourcesBlocks()
+        // During streaming, avoid expensive full-text processing on every repaint.
+        // Use displayText (which strips hidden image context) even during streaming.
+        let split: (visible: String, sources: String?) = isStreaming
+            ? (message.displayText, nil)
+            : message.displayText.extractSourcesBlocks()
         let visibleText = split.visible
         let sourcesText = split.sources
 
@@ -379,12 +382,7 @@ struct StandardMessageBubble: View {
 
     @ViewBuilder
     private func renderMarkdownOrPlain(_ text: String, isSystem: Bool) -> some View {
-        // During streaming: show plain text — O(1), no LaTeX, no markdown parse
-        if isStreaming {
-            Text(text)
-                .font(.system(size: messageFontSize))
-                .foregroundStyle(isSystem ? .secondary : .primary)
-        } else if lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
+        if !isStreaming && lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
             // Cache hit
             Text(cachedAttributedString!)
                 .font(.system(size: messageFontSize))
@@ -399,9 +397,12 @@ struct StandardMessageBubble: View {
                         .font(.system(size: messageFontSize))
                         .foregroundStyle(isSystem ? .secondary : .primary)
                         .onAppear {
-                            cachedAttributedString = attributed
-                            lastRenderedText = text
-                            lastRenderedFontSize = messageFontSize
+                            // Cache stable rendered output (non-streaming only).
+                            if !isStreaming {
+                                cachedAttributedString = attributed
+                                lastRenderedText = text
+                                lastRenderedFontSize = messageFontSize
+                            }
                         }
                 } else {
                     Text(processedText.isEmpty ? " " : processedText)
@@ -493,6 +494,7 @@ struct ReasoningMessageBubble: View {
                     VStack(alignment: .leading, spacing: 8) {
                         if !finalText.isEmpty {
                             if isCurrentlyStreaming {
+                                // Fast path: skip LaTeX + markdown parsing during streaming to avoid per-frame stutter
                                 Text(finalText)
                                     .font(.system(size: messageFontSize))
                                     .foregroundStyle(.primary)

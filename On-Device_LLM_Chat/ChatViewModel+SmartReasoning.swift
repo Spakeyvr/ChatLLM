@@ -288,7 +288,7 @@ extension ChatViewModel {
     }
 
     // made internal so it can be called from extensions in other files
-    internal func updateMessageWithReasoningContent(_ message: Message, fullText: String) {
+    internal func updateMessageWithReasoningContent(_ message: Message, fullText: String, finalize: Bool = false) {
         // DEBUG: Log if we're updating with empty/whitespace-only content
         if fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             print("⚠️ updateMessageWithReasoningContent called with empty/whitespace-only text")
@@ -298,11 +298,15 @@ extension ChatViewModel {
             return // Don't update with empty content
         }
 
-        // 1) Strip any <search> scaffolding variants from the incoming text
-        let noSearchTags = stripSearchTags(fullText)
-
-        // 2) Clean glitches
-        let cleanedText = cleanGlitchedText(noSearchTags)
+        // 1) During streaming, keep updates lightweight to avoid UI lag on long outputs.
+        // Full cleanup is done on final flush.
+        let cleanedText: String
+        if finalize {
+            let noSearchTags = stripSearchTags(fullText)
+            cleanedText = cleanGlitchedText(noSearchTags)
+        } else {
+            cleanedText = fullText
+        }
 
         // 3) Preserve or extract any <sources> from either the existing message content or this update
         let existingCarrier = message.isReasoningMode ? (message.finalAnswer ?? message.text) : message.text

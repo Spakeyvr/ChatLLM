@@ -91,7 +91,7 @@ final class MLXModelManager: ObservableObject {
         contextLength: 262144,
         isAvailable: false,
         supportsReasoning: true,
-        supportsNativeImages: true,
+        supportsNativeImages: false,
         requiredProcessorClass: "Qwen3VLProcessor"
     )
 
