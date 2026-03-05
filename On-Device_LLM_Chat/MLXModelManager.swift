@@ -374,12 +374,22 @@ final class MLXModelManager: ObservableObject {
     func generateTextStream(
         messages: [Chat.Message],
         enableThinking: Bool,
+        hasImage: Bool = false,
         onToken: @escaping (String) -> Void
     ) async throws {
         guard let container else {
             throw GenerationError.modelNotLoaded
         }
         Memory.clearCache()
+        if hasImage {
+            // Drop the Metal buffer pool to zero before vision encoding.
+            // The vision encoder needs all the headroom it can get on top of the 2.5 GB model weights.
+            // Restore the normal limit after generation so text-only calls benefit from the pool again.
+            Memory.cacheLimit = 0
+        }
+        defer {
+            if hasImage { Memory.cacheLimit = 4 * 1024 * 1024 }
+        }
         let additionalContext: [String: any Sendable]? = enableThinking ? nil : ["enable_thinking": false]
         let processing = UserInput.Processing()
         let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)

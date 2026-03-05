@@ -145,7 +145,15 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Inserts the conversation into the model context if it hasn't been persisted yet.
+    /// Called before every save so draft conversations are transparently promoted on first message send.
+    private func insertIntoContextIfNeeded() {
+        guard conversation.modelContext == nil else { return }
+        context.insert(conversation)
+    }
+
     internal func immediateSave() {
+        insertIntoContextIfNeeded()
         pendingSaveTask?.cancel()
         pendingSaveTask = nil
         saveCount = 0
@@ -514,6 +522,7 @@ final class ChatViewModel: ObservableObject {
                                     try await manager.generateTextStream(
                                         messages: msgs,
                                         enableThinking: isReasoning,
+                                        hasImage: allowNativeImages,
                                         onToken: { token in continuation.yield(token) }
                                     )
                                     continuation.finish()

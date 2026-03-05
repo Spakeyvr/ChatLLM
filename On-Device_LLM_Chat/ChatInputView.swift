@@ -22,6 +22,9 @@ struct ComposerView: View {
     let onFileImporter: () -> Void
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    @Binding var isReasoningEnabled: Bool
+    @Binding var isSmartReasoningEnabled: Bool
+    var reasoningAvailable: Bool = false
 
     var body: some View {
         SimpleTextComposer(
@@ -36,7 +39,10 @@ struct ComposerView: View {
             onPhotosPicker: onPhotosPicker,
             onFileImporter: onFileImporter,
             forceSearch: $forceSearch,
-            searchAvailable: searchAvailable
+            searchAvailable: searchAvailable,
+            isReasoningEnabled: $isReasoningEnabled,
+            isSmartReasoningEnabled: $isSmartReasoningEnabled,
+            reasoningAvailable: reasoningAvailable
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(String(localized: "Message composer"))

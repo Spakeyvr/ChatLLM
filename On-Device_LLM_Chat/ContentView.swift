@@ -19,6 +19,7 @@ struct ContentView: View {
 
     @State private var selection: Conversation?
     @State private var currentViewModel: ChatViewModel?
+    @State private var draftConversation: Conversation? = nil
 
     @State private var searchText: String = ""
     @State private var debouncedSearchText: String = ""
@@ -122,11 +123,12 @@ struct ContentView: View {
     }
     
     private func handleSelectionChange(_ oldSelection: Conversation?, _ newSelection: Conversation?) {
-        // When selection changes, reset currentViewModel; it will be created by the .task(id:)
-        // Use ID comparison to avoid accessing potentially deleted objects
         _ = oldSelection?.id
         let newID = newSelection?.id
-        
+        // Entering draft mode: selection becomes nil but we want to keep the draft vm alive.
+        if newID == nil && draftConversation != nil { return }
+        // Navigating to a real conversation discards any open draft.
+        if newID != nil { draftConversation = nil }
         if let currentVM = currentViewModel, currentVM.conversation.id != newID {
             currentVM.cancelGeneration()
             currentViewModel = nil
@@ -134,6 +136,16 @@ struct ContentView: View {
     }
     
     private func handleConversationsChange(_ oldConversations: [Conversation], _ newConversations: [Conversation]) {
+        // When a draft conversation's first message is saved it gets inserted into the context,
+        // which triggers this handler. Detect that moment and promote the draft to a real selection.
+        if let draft = draftConversation,
+           newConversations.contains(where: { $0.id == draft.id }),
+           !oldConversations.contains(where: { $0.id == draft.id }) {
+            draftConversation = nil
+            selection = draft
+            return
+        }
+
         // Ensure selection is still valid after conversations change
         if let currentSelection = selection {
             // Check if current selection still exists by ID (safer than object comparison)
@@ -169,9 +181,13 @@ struct ContentView: View {
     // Extracted to reduce complexity in body
     @ViewBuilder
     private var detailContent: some View {
-        if let convo = selection {
+        if let draft = draftConversation, let vm = currentViewModel, vm.conversation.id == draft.id {
+            // Draft mode: show the chat UI before the conversation is persisted.
+            ChatView(viewModel: vm, onNewChat: { startDraftChat() })
+                .overlay(availabilityOverlay())
+        } else if let convo = selection {
             if let vm = currentViewModel, vm.conversation.id == convo.id {
-                ChatView(viewModel: vm)
+                ChatView(viewModel: vm, onNewChat: { startDraftChat() })
                     .overlay(availabilityOverlay())
             } else {
                 VStack(spacing: 16) {
@@ -201,7 +217,7 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
                 
                 Button("New Chat") {
-                    addConversation()
+                    startDraftChat()
                 }
                 .buttonStyle(.glassProminent)
                 .padding(.top)
@@ -445,7 +461,7 @@ struct ContentView: View {
 
                 Button {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        addConversation()
+                        startDraftChat()
                     }
                 } label: {
                     Image(systemName: "square.and.pencil")
@@ -476,6 +492,31 @@ struct ContentView: View {
         // Create new view model
         let generator: LLMGenerator = OnDeviceLLMGenerator()
         return ChatViewModel(generator: generator, context: modelContext, conversation: conversation)
+    }
+
+    private func startDraftChat() {
+        // Only one draft at a time — the button is disabled when a draft is already open.
+        guard draftConversation == nil else { return }
+        let haptic = UIImpactFeedbackGenerator(style: .medium)
+        haptic.impactOccurred()
+        Task { @MainActor in
+            currentViewModel?.cancelGeneration()
+            let convo = Conversation(title: String(localized: "New Chat"))
+            convo.reasoningMode = reasoningModeDefault
+            let trimmed = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                let sys = Message(role: .system, text: trimmed, order: 0, conversation: convo, isFinal: true)
+                convo.messages.append(sys)
+            }
+            // Set draft BEFORE clearing selection so handleSelectionChange preserves this vm.
+            draftConversation = convo
+            currentViewModel = createViewModel(for: convo)
+            selection = nil
+            if !searchText.isEmpty {
+                searchText = ""
+                isSearchFocused = false
+            }
+        }
     }
 
     private func addConversation() {

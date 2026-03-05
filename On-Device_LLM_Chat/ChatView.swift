@@ -19,6 +19,7 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @ObservedObject var viewModel: ChatViewModel
+    var onNewChat: (() -> Void)? = nil
 
     @State private var inputText: String = ""
     @State private var editingMessage: Message?
@@ -29,9 +30,6 @@ struct ChatView: View {
 
     // Search toggle state
     @State private var forceSearch: Bool = false
-
-    // Reasoning mode state
-    @State private var showReasoningSettings: Bool = false
 
     // Backend bridge for checking reasoning availability
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
@@ -163,12 +161,15 @@ struct ChatView: View {
                 )
             }
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                ToolbarButtonsView(
-                    isReasoningEnabled: viewModel.conversation.reasoningMode,
-                    isSmartReasoningEnabled: viewModel.conversation.smartReasoningMode,
-                    reasoningAvailable: modelBackendBridge.reasoningAvailable,
-                    onReasoningTap: { showReasoningSettings = true }
-                )
+                Button {
+                    onNewChat?()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(canStartNewChat ? .primary : .secondary)
+                }
+                .disabled(!canStartNewChat)
+                .accessibilityLabel(String(localized: "New Chat"))
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -232,30 +233,6 @@ struct ChatView: View {
                 },
                 onCancel: { showEditSheet = false }
             )
-        }
-        .sheet(isPresented: $showReasoningSettings) {
-            NavigationStack {
-                ReasoningModeSettings(
-                    isEnabled: Binding(
-                        get: { viewModel.conversation.reasoningMode },
-                        set: { newValue in
-                            viewModel.setReasoningMode(newValue)
-                        }
-                    ),
-                    isSmartEnabled: Binding(
-                        get: { viewModel.conversation.smartReasoningMode },
-                        set: { newValue in
-                            viewModel.setSmartReasoningMode(newValue)
-                        }
-                    ),
-                    reasoningAvailable: modelBackendBridge.reasoningAvailable,
-                    thinkingModeInfo: modelBackendBridge.getThinkingModeInfo(),
-                    onDismiss: { showReasoningSettings = false }
-                )
-                .navigationTitle(String(localized: "Reasoning Mode"))
-                .navigationBarTitleDisplayMode(.inline)
-            }
-            .presentationDetents([.medium])
         }
         .sheet(isPresented: $isSharePresented, onDismiss: {
             shareText = ""
@@ -409,8 +386,25 @@ struct ChatView: View {
                 isFileImporterPresented = true
             },
             forceSearch: $forceSearch,
-            searchAvailable: networkMonitor.isConnected && selectedImage == nil
+            searchAvailable: networkMonitor.isConnected && selectedImage == nil,
+            isReasoningEnabled: Binding(
+                get: { viewModel.conversation.reasoningMode },
+                set: { viewModel.setReasoningMode($0) }
+            ),
+            isSmartReasoningEnabled: Binding(
+                get: { viewModel.conversation.smartReasoningMode },
+                set: { viewModel.setSmartReasoningMode($0) }
+            ),
+            reasoningAvailable: modelBackendBridge.reasoningAvailable
         )
+    }
+
+    // MARK: - Computed State
+
+    /// True when the current conversation has at least one non-system message.
+    /// Used to gray out the New Chat button when already on an empty chat.
+    private var canStartNewChat: Bool {
+        viewModel.conversation.messages.contains { $0.role != .system }
     }
 
     // MARK: - Helper Methods

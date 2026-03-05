@@ -21,6 +21,9 @@ struct SimpleTextComposer: View {
     var onFileImporter: (() -> Void)?
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    @Binding var isReasoningEnabled: Bool
+    @Binding var isSmartReasoningEnabled: Bool
+    var reasoningAvailable: Bool = false
 
     @FocusState private var isTextFieldFocused: Bool
     @State private var showAddSheet = false
@@ -55,7 +58,10 @@ struct SimpleTextComposer: View {
                     onPhotoLibrary: { showAddSheet = false; onPhotosPicker?() },
                     onFile: { showAddSheet = false; onFileImporter?() },
                     forceSearch: $forceSearch,
-                    searchAvailable: searchAvailable
+                    searchAvailable: searchAvailable,
+                    isReasoningEnabled: $isReasoningEnabled,
+                    isSmartReasoningEnabled: $isSmartReasoningEnabled,
+                    reasoningAvailable: reasoningAvailable
                 )
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -176,6 +182,9 @@ private struct AddOptionsSheet: View {
     var onFile: () -> Void
     @Binding var forceSearch: Bool
     var searchAvailable: Bool
+    @Binding var isReasoningEnabled: Bool
+    @Binding var isSmartReasoningEnabled: Bool
+    var reasoningAvailable: Bool
 
     var body: some View {
         NavigationStack {
@@ -209,6 +218,56 @@ private struct AddOptionsSheet: View {
                     }
                     .disabled(!searchAvailable)
                     .tint(.blue)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+
+                    Divider()
+                        .padding(.horizontal, 20)
+
+                    Toggle(isOn: Binding(
+                        get: { isReasoningEnabled },
+                        set: { newValue in
+                            if newValue { isSmartReasoningEnabled = false }
+                            isReasoningEnabled = newValue
+                        }
+                    )) {
+                        Label {
+                            Text("Always Reason")
+                                .font(.body)
+                        } icon: {
+                            Image(systemName: "brain.head.profile")
+                                .font(.body)
+                                .frame(width: 28)
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .disabled(!reasoningAvailable || isSmartReasoningEnabled)
+                    .tint(.blue)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+
+                    Divider()
+                        .padding(.horizontal, 20)
+
+                    Toggle(isOn: Binding(
+                        get: { isSmartReasoningEnabled },
+                        set: { newValue in
+                            if newValue { isReasoningEnabled = false }
+                            isSmartReasoningEnabled = newValue
+                        }
+                    )) {
+                        Label {
+                            Text("Smart Reasoning")
+                                .font(.body)
+                        } icon: {
+                            Image(systemName: "sparkles")
+                                .font(.body)
+                                .frame(width: 28)
+                                .foregroundStyle(.purple)
+                        }
+                    }
+                    .disabled(!reasoningAvailable || isReasoningEnabled)
+                    .tint(.purple)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 14)
                 }
