@@ -205,67 +205,15 @@ struct MessageCellView: View {
     }
 }
 
-// MARK: - Enhanced Liquid Glass loading indicator
+// MARK: - Loading indicator reusing the shimmer style
 
 struct LoadingIndicatorView: View {
     var isModelLoading: Bool = false
-    @State private var isAnimating = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // Animated sparkles
-                Image(systemName: "sparkles")
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.purple, .blue],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .font(.footnote)
-                    .symbolEffect(.pulse, value: isAnimating)
-
-                Text(isModelLoading ? Strings.loading : Strings.thinking)
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background {
-                ZStack {
-                    // The "Glass" layer
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-
-                    // Subtle white rim light (Liquid effect)
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .white.opacity(0.5), location: 0),
-                                    .init(color: .white.opacity(0.1), location: 0.5),
-                                    .init(color: .white.opacity(0.0), location: 1)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                }
-                // Breathing shadow
-                .shadow(color: .blue.opacity(isAnimating ? 0.15 : 0), radius: 8, x: 0, y: 4)
-            }
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                    isAnimating = true
-                }
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 4)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        InlineThinkingView(text: isModelLoading ? Strings.loading : Strings.thinking, onTap: nil)
+            .padding(.vertical, 4)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 

@@ -11,6 +11,7 @@ import Combine
 // MARK: - Inline thinking indicator shown during streaming
 
 struct InlineThinkingView: View {
+    var text: String = "Thinking…"
     let onTap: (() -> Void)?
     @State private var phase: Int = 0
     @State private var shimmerOffset: CGFloat = -0.4
@@ -25,7 +26,7 @@ struct InlineThinkingView: View {
                 phase = (phase + 1) % 3
             }
 
-            Text("Thinking…")
+            Text(text)
                 .font(.subheadline)
                 .foregroundStyle(.gray)
                 .overlay {
@@ -39,7 +40,7 @@ struct InlineThinkingView: View {
                         endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
                     )
                     .mask {
-                        Text("Thinking…")
+                        Text(text)
                             .font(.subheadline)
                     }
                     .blendMode(.plusLighter)
