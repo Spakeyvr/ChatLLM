@@ -8,15 +8,23 @@
 import SwiftUI
 
 struct ModelSelectionView: View {
-    @StateObject private var modelManager = MLXModelManager()
+    @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingModelInfo = false
     @State private var selectedModelForInfo: MLXModelManager.MLXModelInfo?
 
+    private var modelManager: MLXModelManager? { modelBackendBridge.modelManager }
+
     var body: some View {
         NavigationStack {
-            listContent
+            Group {
+                if let modelManager {
+                    listContent(modelManager: modelManager)
+                } else {
+                    ProgressView()
+                }
+            }
                 .navigationTitle("Language Models")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -27,16 +35,16 @@ struct ModelSelectionView: View {
                     }
                 }
                 .overlay {
-                    if modelManager.isLoading {
+                    if modelManager?.isLoading == true {
                         LoadingOverlay()
                     }
                 }
                 .alert("Model Error", isPresented: errorBinding) {
                     Button("OK") {
-                        modelManager.loadError = nil
+                        modelManager?.loadError = nil
                     }
                 } message: {
-                    if let error = modelManager.loadError {
+                    if let error = modelManager?.loadError {
                         Text(error)
                     }
                 }
@@ -48,16 +56,16 @@ struct ModelSelectionView: View {
         }
     }
 
-    private var listContent: some View {
+    private func listContent(modelManager: MLXModelManager) -> some View {
         List {
-            currentModelSection
-            availableModelsSection
-            diagnosticsSection
+            currentModelSection(modelManager: modelManager)
+            availableModelsSection(modelManager: modelManager)
+            diagnosticsSection(modelManager: modelManager)
         }
     }
 
     @ViewBuilder
-    private var currentModelSection: some View {
+    private func currentModelSection(modelManager: MLXModelManager) -> some View {
         if let currentModel = modelManager.currentModel {
             Section {
                 HStack {
@@ -79,15 +87,15 @@ struct ModelSelectionView: View {
         }
     }
 
-    private var availableModelsSection: some View {
+    private func availableModelsSection(modelManager: MLXModelManager) -> some View {
         Section("Available Models") {
             ForEach(modelManager.availableModels) { model in
-                modelRow(for: model)
+                modelRow(for: model, modelManager: modelManager)
             }
         }
     }
 
-    private func modelRow(for model: MLXModelManager.MLXModelInfo) -> some View {
+    private func modelRow(for model: MLXModelManager.MLXModelInfo, modelManager: MLXModelManager) -> some View {
         ModelRow(
             model: model,
             modelManager: modelManager,
@@ -103,7 +111,7 @@ struct ModelSelectionView: View {
         }
     }
 
-    private var diagnosticsSection: some View {
+    private func diagnosticsSection(modelManager: MLXModelManager) -> some View {
         Section {
             Button {
                 modelManager.refreshModelAvailability()
@@ -139,19 +147,19 @@ struct ModelSelectionView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { modelManager.loadError != nil },
+            get: { modelManager?.loadError != nil },
             set: { _ in }
         )
     }
 
     private func selectModel(_ model: MLXModelManager.MLXModelInfo) {
         guard model.isAvailable else { return }
-        Task {
-            await modelManager.loadModel(model)
-        }
+        modelBackendBridge.selectModel(model.id, source: "model-selection-sheet")
+        modelBackendBridge.selectBackend(.mlx, source: "model-selection-sheet")
     }
 
     private func deleteModel(_ model: MLXModelManager.MLXModelInfo) {
+        guard let modelManager else { return }
         Task {
             do {
                 try modelManager.deleteModel(model)
@@ -172,6 +180,10 @@ struct ModelRow: View {
     let onSelect: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
+
+    private var availabilityIssue: String? {
+        modelManager.availabilityIssue(for: model)
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -208,6 +220,10 @@ struct ModelRow: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    Label(model.loadPolicy.packageDescription, systemImage: "square.stack.3d.up.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
                     if !model.isAvailable {
                         if modelManager.isDownloading {
                             VStack(alignment: .leading, spacing: 2) {
@@ -225,9 +241,14 @@ struct ModelRow: View {
                                     .buttonStyle(.plain)
                                 }
                             }
+                        } else if let availabilityIssue {
+                            Text(availabilityIssue)
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .lineLimit(3)
                         } else {
                             VStack(alignment: .leading, spacing: 2) {
-                                Button("Download (~3.9 GB)") {
+                                Button("Download (\(model.downloadSizeLabel))") {
                                     modelManager.startDownload(for: model)
                                 }
                                 .font(.caption2)
@@ -332,6 +353,10 @@ struct ModelInfoSheet: View {
                     InfoRow(label: "Context Length", value: "\(model.contextLength) tokens")
                     InfoRow(label: "Status", value: model.isAvailable ? "Available" : "Not Available")
                     InfoRow(label: "Reasoning", value: model.supportsReasoning ? "Supported" : "Not supported")
+                    InfoRow(label: "Package", value: model.loadPolicy.packageDescription)
+                    if let architectureHint = model.loadPolicy.architectureHint {
+                        InfoRow(label: "Architecture", value: architectureHint)
+                    }
                 }
 
                 Section("Description") {
@@ -419,6 +444,8 @@ struct LoadingOverlay: View {
                 localDirName: "Qwen3.5-4B-MLX-4bit",
                 hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
+                downloadSizeLabel: "3.03 GB",
+                loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
                 contextLength: 262144,
                 isAvailable: true,
@@ -440,6 +467,8 @@ struct LoadingOverlay: View {
                 localDirName: "Qwen3.5-4B-MLX-4bit",
                 hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
                 parameters: "4B (4-bit)",
+                downloadSizeLabel: "3.03 GB",
+                loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
                 contextLength: 262144,
                 isAvailable: true,
@@ -455,12 +484,14 @@ struct LoadingOverlay: View {
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-4bit",
+                id: "qwen3.5-2b-4bit",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-4bit",
-                hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
-                parameters: "4B (4-bit)",
-                description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
+                localDirName: "Qwen3.5-2B-MLX-4bit",
+                hfRepoId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+                parameters: "2B (4-bit)",
+                downloadSizeLabel: "1.75 GB",
+                loadPolicy: .qwenMultimodal,
+                description: "Qwen 3.5 2B multimodal model with native reasoning and image support",
                 contextLength: 262144,
                 isAvailable: false,
                 supportsReasoning: true
@@ -481,12 +512,14 @@ struct LoadingOverlay: View {
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-4bit",
+                id: "qwen3.5-2b-4bit",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-4bit",
-                hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
-                parameters: "4B (4-bit)",
-                description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
+                localDirName: "Qwen3.5-2B-MLX-4bit",
+                hfRepoId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+                parameters: "2B (4-bit)",
+                downloadSizeLabel: "1.75 GB",
+                loadPolicy: .qwenMultimodal,
+                description: "Qwen 3.5 2B multimodal model with native reasoning and image support",
                 contextLength: 262144,
                 isAvailable: true,
                 supportsReasoning: true

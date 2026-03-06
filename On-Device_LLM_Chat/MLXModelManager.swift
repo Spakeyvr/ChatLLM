@@ -7,23 +7,68 @@
 
 import Foundation
 import Combine
-import UIKit
 import MLX
 import MLXLMCommon
+import Tokenizers
+import OSLog
 
 // MARK: - MLXModelManager
 
 @MainActor
 final class MLXModelManager: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "MLXModelManager")
 
     // MARK: - Model Info
 
     struct MLXModelInfo: Identifiable {
+        enum LoadPolicy: Equatable {
+            case standard
+            case qwenMultimodal
+
+            var packageDescription: String {
+                switch self {
+                case .standard:
+                    return "Standard package"
+                case .qwenMultimodal:
+                    return "Full multimodal package"
+                }
+            }
+
+            var architectureHint: String? {
+                switch self {
+                case .standard:
+                    return nil
+                case .qwenMultimodal:
+                    return "Qwen3_5ForConditionalGeneration"
+                }
+            }
+
+            var simulatorUnsupportedReason: String? {
+                switch self {
+                case .standard:
+                    return nil
+                case .qwenMultimodal:
+                    return "Qwen multimodal MLX loading is unavailable on the simulator because the upstream MLX/Metal VLM initialization path crashes during load."
+                }
+            }
+
+            var defersAutomaticPrewarm: Bool {
+                switch self {
+                case .standard:
+                    return false
+                case .qwenMultimodal:
+                    return true
+                }
+            }
+        }
+
         let id: String
         let name: String
         let localDirName: String
         let hfRepoId: String
         let parameters: String
+        let downloadSizeLabel: String
+        let loadPolicy: LoadPolicy
         let description: String
         let contextLength: Int
         var isAvailable: Bool
@@ -37,6 +82,8 @@ final class MLXModelManager: ObservableObject {
             localDirName: String,
             hfRepoId: String,
             parameters: String,
+            downloadSizeLabel: String,
+            loadPolicy: LoadPolicy = .standard,
             description: String,
             contextLength: Int,
             isAvailable: Bool,
@@ -49,6 +96,8 @@ final class MLXModelManager: ObservableObject {
             self.localDirName = localDirName
             self.hfRepoId = hfRepoId
             self.parameters = parameters
+            self.downloadSizeLabel = downloadSizeLabel
+            self.loadPolicy = loadPolicy
             self.description = description
             self.contextLength = contextLength
             self.isAvailable = isAvailable
@@ -81,20 +130,44 @@ final class MLXModelManager: ObservableObject {
     private let downloader = ModelDownloader()
     private var downloaderTask: Task<Void, Never>?
     private var compatibilityErrors: [String: String] = [:]
+    private var toolTemplateSupportCache: [String: ToolTemplateSupport] = [:]
+    private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
+    private var activeLoadID: UUID?
+    private var deferredPrewarmModelID: String?
+    private var prewarmInFlightModelID: String?
 
-    private static let modelDefinition = MLXModelInfo(
-        id: "qwen3.5-4b-4bit",
-        name: "Qwen 3.5",
-        localDirName: "Qwen3.5-4B-MLX-4bit",
-        hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
-        parameters: "4B (4-bit)",
-        description: "Qwen 3.5 4B multimodal model with native reasoning and image support.",
-        contextLength: 262144,
-        isAvailable: false,
-        supportsReasoning: true,
-        supportsNativeImages: true,
-        requiredProcessorClass: "Qwen3VLProcessor"
-    )
+    private static let modelDefinitions: [MLXModelInfo] = [
+        MLXModelInfo(
+            id: "qwen3.5-4b-4bit",
+            name: "Qwen 3.5",
+            localDirName: "Qwen3.5-4B-MLX-4bit",
+            hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
+            parameters: "4B (4-bit)",
+            downloadSizeLabel: "3.03 GB",
+            loadPolicy: .qwenMultimodal,
+            description: "Qwen 3.5 4B multimodal model with native reasoning and image support.",
+            contextLength: 262144,
+            isAvailable: false,
+            supportsReasoning: true,
+            supportsNativeImages: true,
+            requiredProcessorClass: "Qwen3VLProcessor"
+        ),
+        MLXModelInfo(
+            id: "qwen3.5-2b-4bit",
+            name: "Qwen 3.5",
+            localDirName: "Qwen3.5-2B-MLX-4bit",
+            hfRepoId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+            parameters: "2B (4-bit)",
+            downloadSizeLabel: "1.75 GB",
+            loadPolicy: .qwenMultimodal,
+            description: "Qwen 3.5 2B multimodal model with native reasoning and image support.",
+            contextLength: 262144,
+            isAvailable: false,
+            supportsReasoning: true,
+            supportsNativeImages: true,
+            requiredProcessorClass: "Qwen3VLProcessor"
+        )
+    ]
 
     private let documentsDirectory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
 
@@ -102,6 +175,20 @@ final class MLXModelManager: ObservableObject {
         let isInstalled: Bool
         let isCompatible: Bool
         let compatibilityError: String?
+    }
+
+    private struct ModelPackageMetadata {
+        let architecture: String?
+        let processorClass: String?
+    }
+
+    struct MLXGenerationResult: Sendable {
+        let toolInvocationCount: Int
+    }
+
+    private enum ToolTemplateSupport: Equatable {
+        case supported
+        case unsupported(String)
     }
 
     // MARK: - Model Directory (Documents)
@@ -116,12 +203,31 @@ final class MLXModelManager: ObservableObject {
         let dir = documentsDirectory.appendingPathComponent("Models/\(info.localDirName)")
         let fm = FileManager.default
         guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
+            #if targetEnvironment(simulator)
+            if let simulatorUnsupportedReason = info.loadPolicy.simulatorUnsupportedReason {
+                return ModelInstallationStatus(
+                    isInstalled: false,
+                    isCompatible: false,
+                    compatibilityError: simulatorUnsupportedReason
+                )
+            }
+            #endif
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
         let contents = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
         guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else {
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
+
+        #if targetEnvironment(simulator)
+        if let simulatorUnsupportedReason = info.loadPolicy.simulatorUnsupportedReason {
+            return ModelInstallationStatus(
+                isInstalled: true,
+                isCompatible: false,
+                compatibilityError: simulatorUnsupportedReason
+            )
+        }
+        #endif
 
         guard info.supportsNativeImages else {
             return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
@@ -131,22 +237,7 @@ final class MLXModelManager: ObservableObject {
             return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
         }
 
-        let processorURLCandidates = [
-            dir.appendingPathComponent("preprocessor_config.json"),
-            dir.appendingPathComponent("processor_config.json")
-        ]
-
-        var detectedProcessorClass: String?
-        for url in processorURLCandidates {
-            guard let data = try? Data(contentsOf: url),
-                  let rawObject = try? JSONSerialization.jsonObject(with: data),
-                  let json = rawObject as? [String: Any],
-                  let processorClass = json["processor_class"] as? String else {
-                continue
-            }
-            detectedProcessorClass = processorClass
-            break
-        }
+        let detectedProcessorClass = packageMetadata(for: info)?.processorClass
 
         guard let detectedProcessorClass else {
             return ModelInstallationStatus(
@@ -178,47 +269,90 @@ final class MLXModelManager: ObservableObject {
         compatibilityErrors[info.id]
     }
 
+    func availabilityIssue(for info: MLXModelInfo) -> String? {
+        compatibilityError(for: info)
+    }
+
+    func packageArchitecture(for info: MLXModelInfo) -> String? {
+        packageMetadata(for: info)?.architecture
+    }
+
     // MARK: - Init
 
     init() {
-        var model = Self.modelDefinition
-        let status = installationStatus(for: model)
-        model.isAvailable = status.isInstalled && status.isCompatible
-        if let error = status.compatibilityError {
-            compatibilityErrors[model.id] = error
+        availableModels = Self.modelDefinitions.map { definition in
+            var model = definition
+            let status = installationStatus(for: model)
+            model.isAvailable = status.isInstalled && status.isCompatible
+            if let error = status.compatibilityError {
+                compatibilityErrors[model.id] = error
+            }
+            return model
         }
-        availableModels = [model]
     }
 
     // MARK: - Loading
 
-    func startLoading() {
-        guard let model = availableModels.first else {
+    func startLoading(modelID: String? = nil, source: String = "unknown") {
+        let preferredModel = modelID.flatMap { id in
+            availableModels.first(where: { $0.id == id })
+        }
+        guard let model = preferredModel ?? availableModels.first else {
             return
         }
         guard model.isAvailable else {
             loadError = compatibilityError(for: model)
             return
         }
-        cancelCurrentLoad()
-        load(model)
+
+        if currentModel?.id == model.id, container != nil, !isLoading {
+            logger.notice("MLX load request ignored: model already loaded id=\(model.id, privacy: .public) source=\(source, privacy: .public)")
+            return
+        }
+
+        if pendingModelToLoad?.id == model.id, isLoading {
+            logger.notice("MLX load request ignored: model already loading id=\(model.id, privacy: .public) source=\(source, privacy: .public)")
+            return
+        }
+
+        let loadID = UUID()
+        logger.notice("MLX load requested: id=\(model.id, privacy: .public) source=\(source, privacy: .public)")
+
+        if let architecture = packageArchitecture(for: model) {
+            logger.notice(
+                "MLX package metadata: id=\(model.id, privacy: .public) architecture=\(architecture, privacy: .public) package=\(model.loadPolicy.packageDescription, privacy: .public)"
+            )
+        }
+
+        cancelCurrentLoad(reason: "superseded by \(model.id)")
+        tearDownCurrentModel(reason: "preparing to load \(model.id)")
+        activeLoadID = loadID
+        load(model, loadID: loadID, source: source)
     }
 
-    func cancelCurrentLoad() {
+    func model(withID id: String) -> MLXModelInfo? {
+        availableModels.first(where: { $0.id == id })
+    }
+
+    func cancelCurrentLoad(reason: String = "cancelled") {
         loadTask?.cancel()
         loadTask = nil
+        logger.notice("MLX load cancelled: reason=\(reason, privacy: .public)")
         if isLoading {
             isLoading = false
             pendingModelToLoad = nil
         }
+        if activeLoadID != nil {
+            activeLoadID = nil
+        }
+        tearDownCurrentModel(reason: "cancelCurrentLoad(\(reason))")
     }
 
     func cancelAndLoad(_ model: MLXModelInfo) {
-        cancelCurrentLoad()
-        load(model)
+        startLoading(modelID: model.id, source: "manager.cancelAndLoad")
     }
 
-    private func load(_ model: MLXModelInfo) {
+    private func load(_ model: MLXModelInfo, loadID: UUID, source: String) {
         guard model.isAvailable, let modelURL = modelDirectoryURL(for: model) else {
             if let compatibilityError = compatibilityError(for: model) {
                 loadError = compatibilityError
@@ -234,35 +368,53 @@ final class MLXModelManager: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
+                self.logger.notice(
+                    "MLX container load start: id=\(model.id, privacy: .public) source=\(source, privacy: .public) path=\(modelURL.lastPathComponent, privacy: .public)"
+                )
                 let loaded = try await loadModelContainer(directory: modelURL)
                 guard !Task.isCancelled else { return }
+                guard self.activeLoadID == loadID else {
+                    self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
+                    return
+                }
                 await MainActor.run {
                     self.container = loaded
                     self.currentModel = model
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     Memory.cacheLimit = 4 * 1024 * 1024
+                    self.loadTask = nil
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
-                // Pre-warm the vision encoder immediately after model load.
-                // VLM encoder weights load lazily on first image query; doing it
-                // now (low memory pressure) prevents a concurrent spike when the
-                // user also has a large UIImage in memory.
-                if model.supportsNativeImages {
-                    await self.prewarmVisionEncoder()
+                self.logger.notice("MLX container load finished: id=\(model.id, privacy: .public)")
+                await MainActor.run {
+                    self.logToolTemplateSupport(for: model)
+                }
+                if model.loadPolicy.defersAutomaticPrewarm {
+                    self.deferredPrewarmModelID = model.id
+                    self.logger.notice("MLX prewarm deferred until first generation: id=\(model.id, privacy: .public)")
+                } else {
+                    await self.prewarmModelShaders(for: model, reason: "post-load")
                 }
             } catch is CancellationError {
+                guard self.activeLoadID == loadID else { return }
                 await MainActor.run {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
+                    self.loadTask = nil
                 }
+                self.logger.notice("MLX container load cancelled during execution: id=\(model.id, privacy: .public)")
             } catch {
+                guard self.activeLoadID == loadID else { return }
                 await MainActor.run {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
+                    self.loadTask = nil
                     self.loadError = "Failed to load model: \(error.localizedDescription)"
                 }
+                self.tearDownCurrentModel(reason: "load failure for \(model.id)")
                 print("❌ MLX model load error: \(error)")
+                self.logger.error("MLX container load failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -297,7 +449,9 @@ final class MLXModelManager: ObservableObject {
                     self.downloadProgress = 1.0
                     self.isDownloading = false
                     self.refreshModelAvailability()
-                    self.load(model)
+                }
+                await MainActor.run {
+                    self.startLoading(modelID: model.id, source: "download_complete")
                 }
                 print("✅ Model downloaded: \(model.displayName)")
             } catch is CancellationError {
@@ -331,42 +485,53 @@ final class MLXModelManager: ObservableObject {
         try? fm.removeItem(at: dir)
     }
 
-    // MARK: - Vision Encoder Pre-warming
+    // MARK: - Shader Pre-warming
 
-    /// Runs the vision encoder on a tiny dummy image immediately after model load.
-    /// This ensures encoder Metal weights are resident before the user sends a photo,
-    /// eliminating the concurrent spike of (encoder load + UIImage decode) that causes OOM.
-    private func prewarmVisionEncoder() async {
+    /// Runs a minimal text forward pass immediately after model load to pre-compile all LM Metal
+    /// shaders (SSM, full-attention, MoE layers). Without this the compiler spike hits on the
+    /// first real inference, when the device is also holding a user image in memory.
+    /// Skipped on the simulator — the Metal compute stack there can't handle a full LM forward
+    /// pass and triggers EXC_BAD_ACCESS.
+    private func prewarmModelShaders(for model: MLXModelInfo, reason: String) async {
+        #if targetEnvironment(simulator)
+        print("⚠️ Skipping LM shader pre-warm on simulator")
+        return
+        #else
         guard let container else { return }
-        print("🔥 Pre-warming VLM vision encoder...")
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vlm_prewarm_\(UUID().uuidString).jpg")
-        defer { try? FileManager.default.removeItem(at: tmpURL) }
-
-        do {
-            // 224×224 = 8×8 Qwen3 patches (28px each) — pre-compiles vision encoder
-            // + prefill Metal shaders at model-load time so first user image query
-            // hits cached shaders rather than compiling under memory pressure.
-            let prewarmData: Data = autoreleasepool {
-                let size = CGSize(width: 224, height: 224)
-                let renderer = UIGraphicsImageRenderer(size: size)
-                let img = renderer.image { ctx in
-                    UIColor.gray.setFill()
-                    ctx.fill(CGRect(origin: .zero, size: size))
-                }
-                return img.jpegData(compressionQuality: 0.8) ?? Data()
-            }
-            guard !prewarmData.isEmpty else { return }
-            try prewarmData.write(to: tmpURL)
-
-            let dummyMsg = Chat.Message.user("x", images: [.url(tmpURL)])
-            let userInput = UserInput(chat: [dummyMsg], processing: UserInput.Processing())
-            _ = try await container.prepare(input: userInput)
-            Memory.clearCache()
-            print("✅ VLM vision encoder pre-warmed")
-        } catch {
-            print("⚠️ VLM pre-warm failed (non-fatal): \(error.localizedDescription)")
+        guard currentModel?.id == model.id else { return }
+        if deferredPrewarmModelID != model.id && prewarmInFlightModelID == nil && reason != "post-load" {
+            return
         }
+        if prewarmInFlightModelID == model.id {
+            return
+        }
+        prewarmInFlightModelID = model.id
+        logger.notice("MLX prewarm start: id=\(model.id, privacy: .public) reason=\(reason, privacy: .public)")
+        print("🔥 Pre-warming LM Metal shaders...")
+        // Free every cached Metal buffer before shader compilation so the compilation
+        // spike has the maximum possible headroom on top of the ~3 GB model weights.
+        Memory.clearCache()
+        Memory.cacheLimit = 0
+        do {
+            let warmupMsg = Chat.Message.user("Hi")
+            let userInput = UserInput(chat: [warmupMsg], processing: UserInput.Processing())
+            let input = try await container.prepare(input: userInput)
+            let params = GenerateParameters(maxTokens: 1, temperature: 1.0, topP: 1.0)
+            let stream = try await container.generate(input: input, parameters: params)
+            for await _ in stream { }
+            Memory.clearCache()
+            Memory.cacheLimit = 4 * 1024 * 1024
+            deferredPrewarmModelID = nil
+            prewarmInFlightModelID = nil
+            print("✅ LM Metal shaders pre-warmed")
+            logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
+        } catch {
+            Memory.cacheLimit = 4 * 1024 * 1024
+            prewarmInFlightModelID = nil
+            print("⚠️ Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
+            logger.error("MLX prewarm failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+        #endif
     }
 
     // MARK: - Generation
@@ -374,42 +539,137 @@ final class MLXModelManager: ObservableObject {
     func generateTextStream(
         messages: [Chat.Message],
         enableThinking: Bool,
-        hasImage: Bool = false,
+        memoryConstrained: Bool = false,
+        tools: [MLXToolSpec] = [],
+        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)? = nil,
         onToken: @escaping (String) -> Void
-    ) async throws {
-        guard let container else {
+    ) async throws -> MLXGenerationResult {
+        guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
         }
+        if deferredPrewarmModelID == currentModel.id && !memoryConstrained {
+            await prewarmModelShaders(for: currentModel, reason: "first-generation")
+        }
+        logger.notice(
+            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
+        )
+        // Always free the Metal buffer pool before inference — on a device where the model
+        // alone consumes ~3 GB, every megabyte matters during the activation spike.
         Memory.clearCache()
-        if hasImage {
-            // Drop the Metal buffer pool to zero before vision encoding.
-            // The vision encoder needs all the headroom it can get on top of the 2.5 GB model weights.
-            // Restore the normal limit after generation so text-only calls benefit from the pool again.
-            Memory.cacheLimit = 0
-        }
+        Memory.cacheLimit = 0
+        _ = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         defer {
-            if hasImage { Memory.cacheLimit = 4 * 1024 * 1024 }
+            Memory.cacheLimit = 4 * 1024 * 1024
         }
+
+        let maxTokens: Int? = if !tools.isEmpty {
+            4096
+        } else if memoryConstrained {
+            1024
+        } else {
+            nil
+        }
+        let maxKVSize: Int? = if !tools.isEmpty {
+            8192
+        } else if memoryConstrained {
+            4096
+        } else {
+            nil
+        }
+        let params = enableThinking
+            ? GenerateParameters(maxTokens: maxTokens,
+                                 maxKVSize: maxKVSize,
+                                 temperature: 0.6, topP: 0.95)
+            : GenerateParameters(maxTokens: maxTokens,
+                                 maxKVSize: maxKVSize,
+                                 temperature: 0.7, topP: 0.8)
         let additionalContext: [String: any Sendable]? = enableThinking ? nil : ["enable_thinking": false]
         let processing = UserInput.Processing()
-        let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)
-        let input = try await container.prepare(input: userInput)
-        let params = enableThinking
-            ? GenerateParameters(temperature: 0.6, topP: 0.95)
-            : GenerateParameters(temperature: 0.7, topP: 0.8)
-        let stream = try await container.generate(input: input, parameters: params)
 
-        for await generation in stream {
-            if case .chunk(let text) = generation {
-                onToken(text)
+        if tools.isEmpty {
+            logger.notice("MLX generation using plain path (no tools)")
+            let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)
+            let input = try await container.prepare(input: userInput)
+            logger.notice("MLX plain path prepared input successfully")
+            let stream = try await container.generate(input: input, parameters: params)
+            for await generation in stream {
+                if case .chunk(let text) = generation {
+                    onToken(text)
+                }
             }
+            logger.notice("MLX plain path completed")
+            return MLXGenerationResult(toolInvocationCount: 0)
         }
+
+        try validateToolTemplateSupport(for: currentModel)
+        guard let lastMessage = messages.last else {
+            throw GenerationError.invalidChatHistory
+        }
+        logger.notice(
+            "MLX tool path enabled: last_role=\(lastMessage.role.rawValue, privacy: .public) last_chars=\(lastMessage.content.count, privacy: .public)"
+        )
+
+        do {
+            let preflightInput = UserInput(
+                chat: messages,
+                processing: processing,
+                tools: tools,
+                additionalContext: additionalContext
+            )
+            let prepared = try await container.prepare(input: preflightInput)
+            logger.notice(
+                "MLX tool preflight prepare succeeded: token_count=\(prepared.text.tokens.size, privacy: .public) has_image=\(prepared.image != nil, privacy: .public) has_video=\(prepared.video != nil, privacy: .public)"
+            )
+            Memory.clearCache()
+        } catch {
+            logger.error("MLX tool preflight prepare failed: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+
+        let invocationTracker = ToolInvocationTracker()
+        let session = ChatSession(
+            container,
+            history: Array(messages.dropLast()),
+            generateParameters: params,
+            processing: processing,
+            additionalContext: additionalContext,
+            tools: tools,
+            toolDispatch: { toolCall in
+                await invocationTracker.increment()
+                self.logger.notice("MLX dispatching tool call: name=\(toolCall.function.name, privacy: .public)")
+                // Free activation buffers from the previous generate step before
+                // running the tool — the model → tool → model cycle would otherwise
+                // hold two sets of activations simultaneously.
+                Memory.clearCache()
+                guard let toolDispatch else {
+                    throw GenerationError.missingToolDispatch
+                }
+                return try await toolDispatch(toolCall)
+            }
+        )
+        let stream = session.streamResponse(
+            to: lastMessage.content,
+            role: lastMessage.role,
+            images: lastMessage.images,
+            videos: lastMessage.videos
+        )
+        logger.notice("MLX tool path stream opened")
+
+        for try await generation in stream {
+            onToken(generation)
+        }
+
+        let toolInvocationCount = await invocationTracker.value
+        logger.notice("MLX tool path completed: tool_invocations=\(toolInvocationCount, privacy: .public)")
+        return MLXGenerationResult(toolInvocationCount: toolInvocationCount)
     }
 
     // MARK: - Diagnostics / Management
 
     func refreshModelAvailability() {
         compatibilityErrors = [:]
+        toolTemplateSupportCache = [:]
+        packageMetadataCache = [:]
         availableModels = availableModels.map { model in
             var updated = model
             let status = installationStatus(for: model)
@@ -423,9 +683,7 @@ final class MLXModelManager: ObservableObject {
 
     func deleteModel(_ model: MLXModelInfo) throws {
         if currentModel?.id == model.id {
-            currentModel = nil
-            container = nil
-            Memory.clearCache()
+            tearDownCurrentModel(reason: "delete \(model.id)")
         }
         let dir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
         do {
@@ -438,14 +696,12 @@ final class MLXModelManager: ObservableObject {
     }
 
     func loadModel(_ model: MLXModelInfo) async {
-        load(model)
+        startLoading(modelID: model.id, source: "manager.loadModel")
     }
 
     func unloadAllModels() {
-        cancelCurrentLoad()
-        container = nil
-        currentModel = nil
-        Memory.clearCache()
+        cancelCurrentLoad(reason: "unloadAllModels")
+        tearDownCurrentModel(reason: "unloadAllModels")
         print("🧹 Unloaded all MLX models")
     }
 
@@ -473,12 +729,150 @@ final class MLXModelManager: ObservableObject {
 
     enum GenerationError: LocalizedError {
         case modelNotLoaded
+        case invalidChatHistory
+        case missingToolDispatch
+        case unsupportedToolTemplate(String)
 
         var errorDescription: String? {
             switch self {
             case .modelNotLoaded:
                 return "No MLX model is loaded. Select the MLX backend and wait for the model to finish loading."
+            case .invalidChatHistory:
+                return "The MLX chat history is empty, so generation cannot start."
+            case .missingToolDispatch:
+                return "The model emitted a tool call, but no MLX tool dispatcher was configured."
+            case .unsupportedToolTemplate(let message):
+                return message
             }
         }
+    }
+
+    private actor ToolInvocationTracker {
+        private(set) var value = 0
+
+        func increment() {
+            value += 1
+        }
+    }
+
+    private func validateToolTemplateSupport(for model: MLXModelInfo) throws {
+        switch toolTemplateSupport(for: model) {
+        case .supported:
+            return
+        case .unsupported(let message):
+            throw GenerationError.unsupportedToolTemplate(message)
+        }
+    }
+
+    private func logToolTemplateSupport(for model: MLXModelInfo) {
+        switch toolTemplateSupport(for: model) {
+        case .supported:
+            print("✅ MLX tool template support confirmed for \(model.displayName)")
+        case .unsupported(let message):
+            print("⚠️ MLX tool template support unavailable: \(message)")
+        }
+    }
+
+    private func toolTemplateSupport(for model: MLXModelInfo) -> ToolTemplateSupport {
+        if let cached = toolTemplateSupportCache[model.id] {
+            return cached
+        }
+
+        guard let modelURL = modelDirectoryURL(for: model) else {
+            let result = ToolTemplateSupport.unsupported(
+                "Installed model '\(model.localDirName)' could not be inspected for tool support. Re-download the model package to restore the tokenizer chat template."
+            )
+            toolTemplateSupportCache[model.id] = result
+            return result
+        }
+
+        let candidateFiles = [
+            "tokenizer_config.json",
+            "tokenizer.json",
+            "chat_template.jinja",
+            "chat_template.json",
+            "processor_config.json",
+            "preprocessor_config.json"
+        ]
+
+        let combinedContents = candidateFiles.compactMap { fileName -> String? in
+            let url = modelURL.appendingPathComponent(fileName)
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return text
+        }.joined(separator: "\n")
+
+        let lowered = combinedContents.lowercased()
+        let hasToolsContext = lowered.contains("tools")
+        let hasToolRole = lowered.contains("\"tool\"") ||
+            lowered.contains("'tool'") ||
+            lowered.contains("role == 'tool'") ||
+            lowered.contains("role != 'tool'")
+        let hasToolCalls = lowered.contains("tool_call") || lowered.contains("tool_calls")
+
+        let result: ToolTemplateSupport
+        if hasToolsContext && (hasToolRole || hasToolCalls) {
+            result = .supported
+        } else {
+            result = .unsupported(
+                "Installed model '\(model.localDirName)' does not expose a tool-aware chat template. Re-download or update this Qwen 3.5 MLX model package to enable MLX tool calling."
+            )
+        }
+
+        toolTemplateSupportCache[model.id] = result
+        return result
+    }
+
+    private func packageMetadata(for info: MLXModelInfo) -> ModelPackageMetadata? {
+        if let cached = packageMetadataCache[info.id] {
+            return cached
+        }
+
+        guard let modelURL = modelDirectoryURL(for: info) else {
+            return nil
+        }
+
+        let configURL = modelURL.appendingPathComponent("config.json")
+        let configJSON = (
+            (try? Data(contentsOf: configURL))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        ) ?? [:]
+        let architecture = (configJSON["architectures"] as? [String])?.first
+
+        let processorURLCandidates = [
+            modelURL.appendingPathComponent("preprocessor_config.json"),
+            modelURL.appendingPathComponent("processor_config.json")
+        ]
+
+        var processorClass: String?
+        for url in processorURLCandidates {
+            guard let data = try? Data(contentsOf: url),
+                  let rawObject = try? JSONSerialization.jsonObject(with: data),
+                  let json = rawObject as? [String: Any],
+                  let detected = json["processor_class"] as? String else {
+                continue
+            }
+            processorClass = detected
+            break
+        }
+
+        let metadata = ModelPackageMetadata(architecture: architecture, processorClass: processorClass)
+        packageMetadataCache[info.id] = metadata
+        return metadata
+    }
+
+    private func tearDownCurrentModel(reason: String) {
+        if container != nil || currentModel != nil || deferredPrewarmModelID != nil || prewarmInFlightModelID != nil {
+            logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
+        }
+        container = nil
+        currentModel = nil
+        deferredPrewarmModelID = nil
+        prewarmInFlightModelID = nil
+        Memory.clearCache()
+        Memory.cacheLimit = 4 * 1024 * 1024
     }
 }

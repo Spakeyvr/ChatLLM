@@ -217,12 +217,14 @@ extension ChatViewModel {
     func buildQwenMessages(
         upToOrderExclusive maxOrderExclusive: Int,
         additionalInstruction: String? = nil,
-        includeLatestUserImages: Bool = true
+        includeLatestUserImages: Bool = true,
+        maxMessages: Int? = nil
     ) async throws -> [Chat.Message] {
         var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
         // Sliding window: cap context to avoid OOM from accumulated KV cache / token pressure.
-        if snapshots.count > Self.maxContextMessages {
-            snapshots = Array(snapshots.suffix(Self.maxContextMessages))
+        let limit = maxMessages ?? Self.maxContextMessages
+        if snapshots.count > limit {
+            snapshots = Array(snapshots.suffix(limit))
         }
         let latestUserOrder = snapshots
             .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

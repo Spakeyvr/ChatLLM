@@ -106,26 +106,37 @@ class ModelBackendBridge: ObservableObject {
 
         // Only load if the user previously chose this backend.
         if self.selectedBackend == .mlx {
-            manager.startLoading()
+            manager.startLoading(modelID: self.selectedModelID, source: "bridge.init")
         }
     }
 
     // MARK: - Backend Management
 
     /// Switch to a different backend
-    func selectBackend(_ backend: Backend) {
+    func selectBackend(_ backend: Backend, source: String = "unknown") {
         selectedBackend = backend
         UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
 
         if backend == .mlx {
-            modelManager?.startLoading()
+            let modelIDToLoad = selectedModelID ?? modelManager?.availableModels.first(where: \.isAvailable)?.id
+            modelManager?.startLoading(modelID: modelIDToLoad, source: source)
+        } else {
+            modelManager?.unloadAllModels()
         }
     }
 
     /// Select a specific model by ID
-    func selectModel(_ modelID: String) {
+    func selectModel(_ modelID: String, source: String = "unknown") {
+        if selectedModelID == modelID,
+           selectedBackend == .mlx,
+           modelManager?.currentModel?.id == modelID {
+            return
+        }
         selectedModelID = modelID
         UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
+        if selectedBackend == .mlx, let model = modelManager?.model(withID: modelID), model.isAvailable {
+            modelManager?.startLoading(modelID: model.id, source: source)
+        }
     }
 
     // MARK: - Model-Specific Features
@@ -155,6 +166,8 @@ class ModelBackendBridge: ObservableObject {
         switch modelID {
         case "qwen3.5-4b-4bit":
             return "Qwen 3.5 (4B)"
+        case "qwen3.5-2b-4bit":
+            return "Qwen 3.5 (2B)"
         default:
             return modelID
         }
@@ -193,7 +206,7 @@ class ModelBackendBridge: ObservableObject {
                 available: false,
                 implementation: .unavailable,
                 description: "Reasoning mode is only available with Qwen models.",
-                recommendation: "Ensure the Qwen 3.5 model is placed in Documents/Models/Qwen3.5-4B-MLX-4bit/."
+                recommendation: "Ensure a Qwen 3.5 MLX model is placed in Documents/Models/Qwen3.5-4B-MLX-4bit/ or Documents/Models/Qwen3.5-2B-MLX-4bit/."
             )
         }
     }
@@ -223,6 +236,11 @@ extension UserDefaults {
     var selectedCustomModelID: String? {
         get { string(forKey: "selectedCustomModelID") }
         set { set(newValue, forKey: "selectedCustomModelID") }
+    }
+
+    var disableToolCalls: Bool {
+        get { bool(forKey: "disableToolCalls") }
+        set { set(newValue, forKey: "disableToolCalls") }
     }
 }
 

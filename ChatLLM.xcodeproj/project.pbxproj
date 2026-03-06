@@ -646,7 +646,7 @@
 				3DAC54682EAC24760054484A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		3DAC54692EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_Chat" */ = {
 			isa = XCConfigurationList;
@@ -655,7 +655,7 @@
 				3DAC546B2EAC24760054484A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		3DAC546C2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatTests" */ = {
 			isa = XCConfigurationList;
@@ -664,7 +664,7 @@
 				3DAC546E2EAC24760054484A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		3DAC546F2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatUITests" */ = {
 			isa = XCConfigurationList;
@@ -673,7 +673,7 @@
 				3DAC54712EAC24760054484A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
 

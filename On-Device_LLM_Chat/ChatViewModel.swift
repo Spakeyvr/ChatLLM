@@ -17,7 +17,6 @@ import MLXLMCommon
 
 // Resolve ambiguities between MLXLMCommon and SwiftData/FoundationModels
 typealias ModelContext = SwiftData.ModelContext
-typealias Tool = FoundationModels.Tool
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -174,7 +173,7 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Chat flow
 
-    func send(userText: String, forceSearch: Bool = false) async {
+    func send(userText: String, forceSearch: Bool = false, disableToolCalls: Bool = false) async {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -221,8 +220,15 @@ final class ChatViewModel: ObservableObject {
 
         guard !Task.isCancelled else { return }
 
-        let searchInstruction = forceSearch ? "Please search for current information about this topic and then answer." : nil
-        await streamAssistant(into: assistantMsg, basedOnHistoryUpTo: assistantMsg.order, additionalUserInstruction: searchInstruction)
+        let searchInstruction = forceSearch
+            ? "You must call the webSearch tool before answering. Search for current information about this request first, then answer using the tool results."
+            : nil
+        await streamAssistant(
+            into: assistantMsg,
+            basedOnHistoryUpTo: assistantMsg.order,
+            additionalUserInstruction: searchInstruction,
+            disableWebSearch: disableToolCalls
+        )
 
         if needsAutoNaming && !Task.isCancelled {
             await generateChatTitle(fromUserMessage: trimmed)
@@ -417,6 +423,10 @@ final class ChatViewModel: ObservableObject {
         let previousText = assistantMessage.text
         let previousReasoning = assistantMessage.reasoning
         let previousFinal = assistantMessage.finalAnswer
+        let forceSearchRequired = assistantMessage.searchQuery != nil
+        let toolCallsDisabled = disableWebSearch || UserDefaults.standard.disableToolCalls
+        let promptBridge = ModelBackendBridge.shared
+        let shouldPreloadSearchForMLX = promptBridge.selectedBackend == .mlx && forceSearchRequired && !toolCallsDisabled
 
         guard let targetToReset = conversation.messages.first(where: { $0.id == targetID }),
               targetRole == .assistant else {
@@ -439,8 +449,37 @@ final class ChatViewModel: ObservableObject {
         conversation.lastUpdated = Date()
         immediateSave()
 
-        let webSearchAvailable = !disableWebSearch && searchService != nil
-        let promptBridge = ModelBackendBridge.shared
+        var preloadedSearchInvocations: [SearchInvocation] = []
+        var effectiveAdditionalInstruction = additionalUserInstruction
+        if shouldPreloadSearchForMLX, let query = assistantMessage.searchQuery, let service = searchService {
+            logger.notice("Preloading Tavily search for MLX backend: query=\(query, privacy: .public)")
+            do {
+                let preloadBridge = AppWebSearchToolBridge(searchService: service)
+                _ = try await preloadBridge.executeSearch(query: query)
+                preloadedSearchInvocations = preloadBridge.allInvocations
+                if let results = preloadedSearchInvocations.first?.results, !results.isEmpty {
+                    let preloadInstruction = """
+                    Use these web search results to answer the user's request. Do not call any tools.
+
+                    <sources>
+                    \(results)
+                    </sources>
+                    """
+                    if let existing = effectiveAdditionalInstruction, !existing.isEmpty {
+                        effectiveAdditionalInstruction = existing + "\n\n" + preloadInstruction
+                    } else {
+                        effectiveAdditionalInstruction = preloadInstruction
+                    }
+                }
+            } catch {
+                logger.error("MLX preloaded search failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        let webSearchAvailable = !shouldPreloadSearchForMLX && !toolCallsDisabled && forceSearchRequired && searchService != nil
+        logger.notice(
+            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
+        )
         // MLX path: structured messages passed to Qwen3VLProcessor which applies the Jinja template.
         // enable_thinking is controlled via additionalContext, not baked into the message text.
         var mlxMessages: [Chat.Message]? = nil
@@ -449,8 +488,9 @@ final class ChatViewModel: ObservableObject {
             do {
                 mlxMessages = try await buildQwenMessages(
                     upToOrderExclusive: order,
-                    additionalInstruction: additionalUserInstruction,
-                    includeLatestUserImages: allowNativeImages
+                    additionalInstruction: effectiveAdditionalInstruction,
+                    includeLatestUserImages: allowNativeImages,
+                    maxMessages: webSearchAvailable ? 10 : nil
                 )
             } catch {
                 targetToReset.generationError = "Failed to prepare image for native inference: \(error.localizedDescription)"
@@ -464,7 +504,7 @@ final class ChatViewModel: ObservableObject {
         } else {
             // Foundation Models: keep existing plain-text prompt format unchanged.
             builtPrompt = buildPrompt(upToOrderExclusive: order, currentReasoningActive: targetToReset.isReasoningMode, webSearchAvailable: webSearchAvailable)
-            if let instruction = additionalUserInstruction, !instruction.isEmpty {
+            if let instruction = effectiveAdditionalInstruction, !instruction.isEmpty {
                 builtPrompt += "\n\nUser: \(instruction)"
             }
             if targetToReset.isReasoningMode && !builtPrompt.contains("<thinking>") {
@@ -474,14 +514,36 @@ final class ChatViewModel: ObservableObject {
         conversation.lastUpdated = Date()
         immediateSave()
 
-        // Create native WebSearchTool if Tavily is available and web search is not disabled.
-        let webSearchTool: WebSearchTool?
-        if !disableWebSearch, let service = searchService {
-            webSearchTool = WebSearchTool(searchService: service)
+        let webSearchBridge: AppWebSearchToolBridge?
+        if webSearchAvailable, let service = searchService {
+            webSearchBridge = AppWebSearchToolBridge(searchService: service)
         } else {
-            webSearchTool = nil
+            webSearchBridge = nil
         }
-        let tools: [any Tool] = webSearchTool.map { [$0] } ?? []
+        let foundationModelTools: [any FoundationModelTool] = webSearchBridge.map { [$0.foundationModelTool] } ?? []
+        let mlxTools: [MLXToolSpec] = webSearchBridge.map { [$0.mlxToolSpec] } ?? []
+        logger.notice(
+            "streamAssistant tools prepared: foundation_tools=\(foundationModelTools.count, privacy: .public) mlx_tools=\(mlxTools.count, privacy: .public)"
+        )
+        let mlxToolDispatch: (@Sendable (MLXToolCall) async throws -> String)? = if let bridge = webSearchBridge {
+            { toolCall in
+                try await bridge.dispatchMLXToolCall(toolCall)
+            }
+        } else {
+            nil
+        }
+
+        if forceSearchRequired && webSearchBridge == nil && preloadedSearchInvocations.isEmpty {
+            targetToReset.generationError = "Web search was explicitly required for this response, but no search tool is configured. Add a Tavily API key or re-enable tool calls."
+            targetToReset.text = ""
+            targetToReset.finalAnswer = nil
+            targetToReset.reasoning = nil
+            targetToReset.markAsComplete()
+            conversation.lastUpdated = Date()
+            immediateSave()
+            streamingMessageID = nil
+            return .failedBeforeOutput
+        }
 
         let task = Task { @MainActor [weak self] in
             guard let self = self else { return }
@@ -506,6 +568,7 @@ final class ChatViewModel: ObservableObject {
             do {
                 let stream: AsyncThrowingStream<String, Error>
                 if promptBridge.selectedBackend == .mlx, let manager = promptBridge.modelManager {
+                    self.logger.notice("streamAssistant entering MLX generation path")
                     // Wait for any in-progress model load to finish before generating
                     while manager.isLoading && !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(200))
@@ -514,13 +577,16 @@ final class ChatViewModel: ObservableObject {
                     if manager.currentModel != nil {
                         let isReasoning = targetToReset.isReasoningMode
                         let msgs = mlxMessages ?? []
+                        let useMemoryConstrainedMLX = shouldPreloadSearchForMLX
                         stream = AsyncThrowingStream { continuation in
                             Task { @MainActor in
                                 do {
-                                    try await manager.generateTextStream(
+                                    _ = try await manager.generateTextStream(
                                         messages: msgs,
                                         enableThinking: isReasoning,
-                                        hasImage: allowNativeImages,
+                                        memoryConstrained: useMemoryConstrainedMLX,
+                                        tools: mlxTools,
+                                        toolDispatch: mlxToolDispatch,
                                         onToken: { token in continuation.yield(token) }
                                     )
                                     continuation.finish()
@@ -538,8 +604,9 @@ final class ChatViewModel: ObservableObject {
                         ])
                     }
                 } else {
+                    self.logger.notice("streamAssistant entering Foundation Models generation path")
                     stream = try await self.withTimeout(self.firstTokenTimeout) {
-                        try await self.generator.streamResponse(to: builtPrompt, tools: tools)
+                        try await self.generator.streamResponse(to: builtPrompt, tools: foundationModelTools)
                     }
                 }
                 var iterator = stream.makeAsyncIterator()
@@ -640,13 +707,14 @@ final class ChatViewModel: ObservableObject {
             }
 
             // Inject search sources from native tool (if the model called it)
-            if let invocations = webSearchTool?.allInvocations, !invocations.isEmpty {
+            let capturedInvocations = webSearchBridge?.allInvocations ?? preloadedSearchInvocations
+            if !capturedInvocations.isEmpty {
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
                     // Store all invocations on the message for per-search UI
-                    target.searchInvocations = invocations
+                    target.searchInvocations = capturedInvocations
 
                     // Build combined sources block for backward-compat text extraction
-                    let combinedResults = invocations.map { $0.results }.joined(separator: "\n\n")
+                    let combinedResults = capturedInvocations.map { $0.results }.joined(separator: "\n\n")
                     let sourcesBlock = "<sources>\n\(combinedResults)\n</sources>\n\n"
                     if target.isReasoningMode {
                         let existing = target.finalAnswer ?? ""
@@ -663,6 +731,16 @@ final class ChatViewModel: ObservableObject {
 
             // Finalization
             if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
+                let totalSearchInvocations = (webSearchBridge?.allInvocations.count ?? 0) + preloadedSearchInvocations.count
+                if forceSearchRequired && totalSearchInvocations == 0 {
+                    target.text = ""
+                    target.finalAnswer = nil
+                    target.reasoning = nil
+                    target.searchInvocations = nil
+                    target.generationError = "Search was explicitly required for this response, but the model did not call the webSearch tool."
+                    outcome = .failedBeforeOutput
+                }
+
                 let hasVisibleFinal: Bool = {
                     guard let final = target.finalAnswer else { return false }
                     let stripped = self.stripSourcesFromText(final)

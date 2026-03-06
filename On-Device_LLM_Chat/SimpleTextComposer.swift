@@ -21,6 +21,7 @@ struct SimpleTextComposer: View {
     var onFileImporter: (() -> Void)?
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    @Binding var disableToolCalls: Bool
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
@@ -59,6 +60,7 @@ struct SimpleTextComposer: View {
                     onFile: { showAddSheet = false; onFileImporter?() },
                     forceSearch: $forceSearch,
                     searchAvailable: searchAvailable,
+                    disableToolCalls: $disableToolCalls,
                     isReasoningEnabled: $isReasoningEnabled,
                     isSmartReasoningEnabled: $isSmartReasoningEnabled,
                     reasoningAvailable: reasoningAvailable
@@ -182,6 +184,7 @@ private struct AddOptionsSheet: View {
     var onFile: () -> Void
     @Binding var forceSearch: Bool
     var searchAvailable: Bool
+    @Binding var disableToolCalls: Bool
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool
@@ -206,6 +209,28 @@ private struct AddOptionsSheet: View {
 
                 // MARK: Toggle rows
                 VStack(spacing: 0) {
+                    Toggle(isOn: $disableToolCalls) {
+                        Label {
+                            Text("Disable Tool Calls")
+                                .font(.body)
+                        } icon: {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.body)
+                                .frame(width: 28)
+                        }
+                    }
+                    .tint(.orange)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .onChange(of: disableToolCalls) { _, isDisabled in
+                        if isDisabled {
+                            forceSearch = false
+                        }
+                    }
+
+                    Divider()
+                        .padding(.horizontal, 20)
+
                     Toggle(isOn: $forceSearch) {
                         Label {
                             Text("Web Search")
@@ -216,10 +241,10 @@ private struct AddOptionsSheet: View {
                                 .frame(width: 28)
                         }
                     }
-                    .disabled(!searchAvailable)
+                    .disabled(!searchAvailable || disableToolCalls)
                     .tint(.blue)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 8)
 
                     Divider()
                         .padding(.horizontal, 20)
@@ -244,10 +269,8 @@ private struct AddOptionsSheet: View {
                     .disabled(!reasoningAvailable || isSmartReasoningEnabled)
                     .tint(.blue)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 8)
 
-                    Divider()
-                        .padding(.horizontal, 20)
 
                     Toggle(isOn: Binding(
                         get: { isSmartReasoningEnabled },
@@ -269,7 +292,10 @@ private struct AddOptionsSheet: View {
                     .disabled(!reasoningAvailable || isReasoningEnabled)
                     .tint(.purple)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 8)
+                    
+                    Divider()
+                        .padding(.horizontal, 20)
                 }
 
                 Spacer()

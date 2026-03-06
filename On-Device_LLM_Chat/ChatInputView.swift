@@ -22,6 +22,7 @@ struct ComposerView: View {
     let onFileImporter: () -> Void
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    @Binding var disableToolCalls: Bool
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
@@ -40,6 +41,7 @@ struct ComposerView: View {
             onFileImporter: onFileImporter,
             forceSearch: $forceSearch,
             searchAvailable: searchAvailable,
+            disableToolCalls: $disableToolCalls,
             isReasoningEnabled: $isReasoningEnabled,
             isSmartReasoningEnabled: $isSmartReasoningEnabled,
             reasoningAvailable: reasoningAvailable
@@ -88,9 +90,7 @@ struct NavigationTitleView: View {
             Menu {
                 // Apple Foundation
                 Button {
-                    selectedBackend = "foundationModels"
-                    modelBackendBridge.selectBackend(.foundationModels)
-                    modelManager?.cancelCurrentLoad()
+                    modelBackendBridge.selectBackend(.foundationModels, source: "chat-input.foundation")
                 } label: {
                     Text("Apple Foundation")
                     if selectedBackend == "foundationModels" {
@@ -102,10 +102,8 @@ struct NavigationTitleView: View {
                 ForEach(modelManager?.availableModels ?? [], id: \.id) { model in
                     if model.isAvailable {
                         Button {
-                            selectedBackend = "mlx"
-                            modelBackendBridge.selectedBackend = .mlx
-                            modelBackendBridge.selectModel(model.id)
-                            modelManager?.cancelAndLoad(model)
+                            modelBackendBridge.selectModel(model.id, source: "chat-input.model")
+                            modelBackendBridge.selectBackend(.mlx, source: "chat-input.model")
                         } label: {
                             HStack {
                                 Text("\(model.name) (\(model.parameters))")

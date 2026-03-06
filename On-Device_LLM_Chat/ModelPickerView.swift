@@ -15,7 +15,7 @@ struct ModelPickerView: View {
     var body: some View {
         Menu {
             Button {
-                selectedBackend = "foundationModels"
+                ModelBackendBridge.shared.selectBackend(.foundationModels, source: "nav-picker.foundation")
             } label: {
                 HStack {
                     Text("Apple Foundation")
@@ -25,17 +25,15 @@ struct ModelPickerView: View {
                 }
             }
 
-            // Qwen 3.5 (MLX)
             let bridge = ModelBackendBridge.shared
-            if let qwenModel = bridge.modelManager?.availableModels.first(where: { $0.isAvailable }) {
+            ForEach(bridge.modelManager?.availableModels.filter(\.isAvailable) ?? [], id: \.id) { model in
                 Button {
-                    selectedBackend = "mlx"
-                    bridge.selectBackend(.mlx)
-                    bridge.selectModel(qwenModel.id)
+                    bridge.selectModel(model.id, source: "nav-picker.model")
+                    bridge.selectBackend(.mlx, source: "nav-picker.model")
                 } label: {
                     HStack {
-                        Text(qwenModel.name)
-                        if selectedBackend == "mlx" && bridge.modelManager?.currentModel?.id == qwenModel.id {
+                        Text("\(model.name) (\(model.parameters))")
+                        if selectedBackend == "mlx" && bridge.selectedModelID == model.id {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -64,7 +62,7 @@ struct ModelPickerView: View {
     private var displayName: String {
         if selectedBackend == "mlx",
            let model = ModelBackendBridge.shared.modelManager?.currentModel {
-            return model.name
+            return "\(model.name) (\(model.parameters))"
         }
         return "Apple Foundation"
     }

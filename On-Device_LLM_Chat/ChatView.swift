@@ -30,6 +30,7 @@ struct ChatView: View {
 
     // Search toggle state
     @State private var forceSearch: Bool = false
+    @AppStorage("disableToolCalls") private var disableToolCalls: Bool = false
 
     // Backend bridge for checking reasoning availability
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
@@ -342,6 +343,11 @@ struct ChatView: View {
                 forceSearch = false
             }
         }
+        .onChange(of: disableToolCalls) { _, isDisabled in
+            if isDisabled && forceSearch {
+                forceSearch = false
+            }
+        }
         // In-app browser: intercept link taps and present SafariView
         .environment(\.openURL, OpenURLAction { url in
             activeURL = url
@@ -384,6 +390,7 @@ struct ChatView: View {
             },
             forceSearch: $forceSearch,
             searchAvailable: networkMonitor.isConnected && selectedImage == nil,
+            disableToolCalls: $disableToolCalls,
             isReasoningEnabled: Binding(
                 get: { viewModel.conversation.reasoningMode },
                 set: { viewModel.setReasoningMode($0) }
@@ -436,13 +443,18 @@ struct ChatView: View {
         guard !viewModel.isGenerating, !textToSend.isEmpty else { return }
 
         let shouldSearch = forceSearch
+        let shouldDisableToolCalls = disableToolCalls
 
         // Clear input immediately for snappy feel, then send
         inputText = ""
         forceSearch = false
 
         Task {
-            await viewModel.send(userText: textToSend, forceSearch: shouldSearch)
+            await viewModel.send(
+                userText: textToSend,
+                forceSearch: shouldSearch,
+                disableToolCalls: shouldDisableToolCalls
+            )
         }
     }
 

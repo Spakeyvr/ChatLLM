@@ -10,8 +10,8 @@ import FoundationModels
 
 protocol LLMGenerator {
     func isAvailable() -> Bool
-    func respond(to prompt: String, tools: [any Tool]) async throws -> String
-    func streamResponse(to prompt: String, tools: [any Tool]) async throws -> AsyncThrowingStream<String, Error>
+    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String
+    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
     func cleanupForRegeneration()
 }
 
@@ -65,7 +65,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                message.contains("violates")
     }
 
-    func respond(to prompt: String, tools: [any Tool]) async throws -> String {
+    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
@@ -81,7 +81,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         }
     }
 
-    func streamResponse(to prompt: String, tools: [any Tool]) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
