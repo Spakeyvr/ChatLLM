@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var selection: Conversation?
     @State private var currentViewModel: ChatViewModel?
     @State private var draftConversation: Conversation? = nil
+    @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
 
     @State private var searchText: String = ""
     @State private var debouncedSearchText: String = ""
@@ -59,6 +60,15 @@ struct ContentView: View {
             .onChange(of: selection, handleSelectionChange)
             .onChange(of: conversations, handleConversationsChange)
             .onChange(of: errorMessage, handleErrorMessageChange)
+            .onChange(of: preferredCompactColumn) { _, newColumn in
+                // When user presses Back on iPhone from a draft chat, discard the stale draft so
+                // the next "New Chat" tap is not blocked by the guard in startDraftChat().
+                if newColumn == .sidebar, draftConversation != nil, selection == nil {
+                    draftConversation = nil
+                    currentViewModel?.cancelGeneration()
+                    currentViewModel = nil
+                }
+            }
             .deleteAllChatsAlert(
                 isPresented: $showDeleteAllAlert,
                 hasSelection: selection != nil,
@@ -101,7 +111,7 @@ struct ContentView: View {
     
     // Split the NavigationSplitView out of body to reduce complexity
     private var splitView: some View {
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
             sidebar
         } detail: {
             detailContent
@@ -512,6 +522,8 @@ struct ContentView: View {
             draftConversation = convo
             currentViewModel = createViewModel(for: convo)
             selection = nil
+            // Push detail column on compact (iPhone) so the draft chat is immediately visible.
+            preferredCompactColumn = .detail
             if !searchText.isEmpty {
                 searchText = ""
                 isSearchFocused = false

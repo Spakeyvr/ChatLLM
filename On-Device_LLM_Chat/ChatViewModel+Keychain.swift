@@ -68,11 +68,15 @@ extension ChatViewModel {
 
     // MARK: - Keychain Helpers (Private)
     func saveKeychainValue(_ value: String, service: String, account: String) {
+        guard let valueData = value.data(using: .utf8) else {
+            logger.error("❌ Failed to encode Keychain value as UTF-8")
+            return
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String: value.data(using: .utf8)!,
+            kSecValueData as String: valueData,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         SecItemDelete(query as CFDictionary)  // Delete first to avoid duplicate-item error

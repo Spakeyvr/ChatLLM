@@ -96,7 +96,7 @@ final class MLXModelManager: ObservableObject {
         requiredProcessorClass: "Qwen3VLProcessor"
     )
 
-    private let documentsDirectory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    private let documentsDirectory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
 
     private struct ModelInstallationStatus {
         let isInstalled: Bool
@@ -194,7 +194,6 @@ final class MLXModelManager: ObservableObject {
 
     func startLoading() {
         guard let model = availableModels.first else {
-            loadError = nil
             return
         }
         guard model.isAvailable else {
@@ -329,6 +328,7 @@ final class MLXModelManager: ObservableObject {
         for item in items where item.pathExtension == "download" {
             try? fm.removeItem(at: item)
         }
+        try? fm.removeItem(at: dir)
     }
 
     // MARK: - Vision Encoder Pre-warming

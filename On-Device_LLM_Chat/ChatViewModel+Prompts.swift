@@ -9,7 +9,8 @@ import Foundation
 import MLXLMCommon
 import os.log
 
-private let _sourcesRegex = try? NSRegularExpression(
+// swiftlint:disable:next force_try
+private let _sourcesRegex = try! NSRegularExpression(
     pattern: #"<sources>(.*?)</sources>"#,
     options: [.dotMatchesLineSeparators, .caseInsensitive])
 
@@ -34,7 +35,7 @@ extension ChatViewModel {
     private func messageSnapshots(upToOrderExclusive maxOrderExclusive: Int) -> [MessageSnapshot] {
         conversation.messages
             .filter { $0.order < maxOrderExclusive && $0.order >= 0 }
-            .sorted { $0.order < $1.order }
+            .sortedByOrder
             .map { message in
                 let attachmentSnapshots = message.attachments.map { attachment in
                     AttachmentSnapshot(type: attachment.type, actualFileURL: attachment.actualFileURL)
@@ -72,9 +73,17 @@ extension ChatViewModel {
 
     // MARK: - Prompt Builder
 
+    // Maximum number of messages (user + assistant combined) to include in the prompt context.
+    // Older messages are silently dropped to prevent OOM on long conversations.
+    private static let maxContextMessages = 30
+
     func buildPrompt(upToOrderExclusive maxOrderExclusive: Int, currentReasoningActive: Bool? = nil, webSearchAvailable: Bool = false) -> String {
         // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
-        let snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
+        var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
+        // Sliding window: keep only the most recent N messages to cap context size.
+        if snapshots.count > Self.maxContextMessages {
+            snapshots = Array(snapshots.suffix(Self.maxContextMessages))
+        }
 
         // Determine whether this response should use reasoning mode.
         // When explicitly passed (e.g. regeneration), honour that value;
@@ -102,8 +111,6 @@ extension ChatViewModel {
             }
 
             switch msg.role {
-            case .system:
-                return nil
             case .user:
                 return "User: \(msg.text)"
             case .assistant:
@@ -120,6 +127,8 @@ extension ChatViewModel {
                     let cleanText = stripSourcesFromText(msg.text)
                     return "Assistant: \(cleanText)"
                 }
+            default:
+                return nil
             }
         }
 
@@ -142,10 +151,9 @@ extension ChatViewModel {
 
     /// Helper to strip <sources>...</sources> blocks from text to avoid prompt bloat
     func stripSourcesFromText(_ text: String) -> String {
-        guard let re = _sourcesRegex else { return text }
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
-        return re.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        return _sourcesRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -211,7 +219,11 @@ extension ChatViewModel {
         additionalInstruction: String? = nil,
         includeLatestUserImages: Bool = true
     ) async throws -> [Chat.Message] {
-        let snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
+        var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
+        // Sliding window: cap context to avoid OOM from accumulated KV cache / token pressure.
+        if snapshots.count > Self.maxContextMessages {
+            snapshots = Array(snapshots.suffix(Self.maxContextMessages))
+        }
         let latestUserOrder = snapshots
             .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map(\.order)

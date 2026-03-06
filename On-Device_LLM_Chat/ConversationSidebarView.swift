@@ -22,19 +22,10 @@ private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?t
 struct ConversationRow: View {
     let conversation: Conversation
 
-    // CRITICAL FIX: Eagerly resolve message preview to avoid SwiftData fault errors during deletion
-    // This prevents "detached from context without resolving attribute faults" errors
     private var messagePreview: MessagePreview {
-        // Eagerly access and snapshot properties before they might be deleted
-        let nonSystemMessages = conversation.messages.compactMap { msg -> (order: Int, role: MessageRole, text: String)? in
-            // Force fault resolution by accessing properties
-            let role = msg.role
-            let order = msg.order
-            let text = msg.text
-
-            guard role != .system else { return nil }
-            return (order: order, role: role, text: text)
-        }
+        let nonSystemMessages = conversation.messages.lazy
+            .filter { $0.role != .system }
+            .map { (order: $0.order, role: $0.role, text: $0.text) }
 
         if let last = nonSystemMessages.max(by: { $0.order < $1.order }) {
             // Strip <sources>…</sources> blocks and <thinking>…</thinking> from the preview

@@ -63,8 +63,7 @@ struct NavigationTitleView: View {
 
     @State private var showModelManagement = false
 
-    // modelBackendBridge.modelManager is always set in ModelBackendBridge.init
-    private var modelManager: MLXModelManager { modelBackendBridge.modelManager! }
+    private var modelManager: MLXModelManager? { modelBackendBridge.modelManager }
 
     private var isLoading: Bool {
         modelBackendBridge.modelManager?.isLoading ?? false
@@ -91,7 +90,7 @@ struct NavigationTitleView: View {
                 Button {
                     selectedBackend = "foundationModels"
                     modelBackendBridge.selectBackend(.foundationModels)
-                    modelManager.cancelCurrentLoad()
+                    modelManager?.cancelCurrentLoad()
                 } label: {
                     Text("Apple Foundation")
                     if selectedBackend == "foundationModels" {
@@ -100,13 +99,13 @@ struct NavigationTitleView: View {
                 }
 
                 // MLX Models
-                ForEach(modelManager.availableModels, id: \.id) { model in
+                ForEach(modelManager?.availableModels ?? [], id: \.id) { model in
                     if model.isAvailable {
                         Button {
                             selectedBackend = "mlx"
                             modelBackendBridge.selectedBackend = .mlx
                             modelBackendBridge.selectModel(model.id)
-                            modelManager.cancelAndLoad(model)
+                            modelManager?.cancelAndLoad(model)
                         } label: {
                             HStack {
                                 Text("\(model.name) (\(model.parameters))")
@@ -138,10 +137,12 @@ struct NavigationTitleView: View {
             }
             .menuOrder(.fixed)
             .sheet(isPresented: $showModelManagement) {
-                if #available(iOS 16.0, *) {
-                    ModelManagementView(modelManager: modelManager)
-                } else {
-                    Text("Model management requires iOS 16+")
+                if let mm = modelManager {
+                    if #available(iOS 16.0, *) {
+                        ModelManagementView(modelManager: mm)
+                    } else {
+                        Text("Model management requires iOS 16+")
+                    }
                 }
             }
         }

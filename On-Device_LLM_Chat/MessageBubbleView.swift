@@ -53,22 +53,19 @@ extension String {
         let fullRange = NSRange(location: 0, length: ns.length)
 
         var sourcesParts: [String] = []
-        var mutable = self
 
-        // Find all matches from start; remove them from visible and collect content
+        // Find all matches; collect content forward then remove tags backward
         let matches = regex.matches(in: self, options: [], range: fullRange)
-        // Remove from the end to keep index validity
+        for match in matches where match.numberOfRanges >= 2 {
+            let content = ns.substring(with: match.range(at: 1))
+            if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sourcesParts.append(content)
+            }
+        }
+        var mutable = self
         for match in matches.reversed() {
-            if match.numberOfRanges >= 2 {
-                let contentRange = match.range(at: 1)
-                let fullTagRange = match.range(at: 0)
-                let content = ns.substring(with: contentRange)
-                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    sourcesParts.insert(content, at: 0)
-                }
-                if let swiftRange = Range(fullTagRange, in: mutable) {
-                    mutable.removeSubrange(swiftRange)
-                }
+            if let swiftRange = Range(match.range(at: 0), in: mutable) {
+                mutable.removeSubrange(swiftRange)
             }
         }
 
@@ -198,7 +195,7 @@ struct MessageCellView: View {
         // Find the user message immediately before this assistant message
         let userMessage = viewModel.conversation.messages
             .filter { $0.role == .user && $0.order < message.order }
-            .sorted { $0.order < $1.order }
+            .sortedByOrder
             .last
 
         return userMessage?.attachments.contains(where: { $0.type == .image }) ?? false

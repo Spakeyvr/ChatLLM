@@ -94,11 +94,11 @@ final class Message {
     @Transient
     var reasoningSteps: [ReasoningStep]? {
         get {
-            guard let json = reasoningStepsJSON,
-                  let data = json.data(using: .utf8) else {
-                return nil
-            }
-            return try? JSONDecoder().decode([ReasoningStep].self, from: data)
+            guard let json = reasoningStepsJSON else { return nil }
+            if json == _cachedReasoningStepsJSON { return _cachedReasoningSteps }
+            _cachedReasoningStepsJSON = json
+            _cachedReasoningSteps = try? JSONDecoder().decode([ReasoningStep].self, from: Data(json.utf8))
+            return _cachedReasoningSteps
         }
         set {
             if let steps = newValue,
@@ -108,6 +108,8 @@ final class Message {
             } else {
                 reasoningStepsJSON = nil
             }
+            _cachedReasoningStepsJSON = nil
+            _cachedReasoningSteps = nil
         }
     }
     
@@ -115,11 +117,11 @@ final class Message {
     @Transient
     var searchInvocations: [SearchInvocation]? {
         get {
-            guard let json = searchInvocationsJSON,
-                  let data = json.data(using: .utf8) else {
-                return nil
-            }
-            return try? JSONDecoder().decode([SearchInvocation].self, from: data)
+            guard let json = searchInvocationsJSON else { return nil }
+            if json == _cachedSearchInvocationsJSON { return _cachedSearchInvocations }
+            _cachedSearchInvocationsJSON = json
+            _cachedSearchInvocations = try? JSONDecoder().decode([SearchInvocation].self, from: Data(json.utf8))
+            return _cachedSearchInvocations
         }
         set {
             if let invocations = newValue, !invocations.isEmpty,
@@ -131,6 +133,8 @@ final class Message {
             } else {
                 searchInvocationsJSON = nil
             }
+            _cachedSearchInvocationsJSON = nil
+            _cachedSearchInvocations = nil
         }
     }
 
@@ -145,6 +149,12 @@ final class Message {
     private var _cachedDisplayText: String?
     private var _cachedContentLength: Int?
     private var _lastTextHash: Int?
+
+    // Cached decoded values for JSON-backed computed properties (not persisted)
+    @Transient private var _cachedReasoningSteps: [ReasoningStep]?
+    @Transient private var _cachedReasoningStepsJSON: String?
+    @Transient private var _cachedSearchInvocations: [SearchInvocation]?
+    @Transient private var _cachedSearchInvocationsJSON: String?
     
     /// Quick role checks without enum comparison overhead
     var isUser: Bool { role.isUser }

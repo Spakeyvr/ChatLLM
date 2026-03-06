@@ -124,7 +124,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        guard pendingSaveTask == nil || pendingSaveTask!.isCancelled else {
+        guard pendingSaveTask?.isCancelled != false else {
             return // Task already scheduled, let it complete
         }
 
@@ -471,7 +471,6 @@ final class ChatViewModel: ObservableObject {
                 builtPrompt += "\n\nAssistant: <thinking>"
             }
         }
-        targetToReset.promptSnapshot = builtPrompt
         conversation.lastUpdated = Date()
         immediateSave()
 
@@ -506,8 +505,7 @@ final class ChatViewModel: ObservableObject {
 
             do {
                 let stream: AsyncThrowingStream<String, Error>
-                let bridge = ModelBackendBridge.shared
-                if bridge.selectedBackend == .mlx, let manager = bridge.modelManager {
+                if promptBridge.selectedBackend == .mlx, let manager = promptBridge.modelManager {
                     // Wait for any in-progress model load to finish before generating
                     while manager.isLoading && !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(200))

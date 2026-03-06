@@ -118,7 +118,7 @@ extension ChatViewModel {
         // CRITICAL FIX (Bug 2): Use updatedOrder (post-renumber) instead of stale messageOrder
         let precedingUserMessage = conversation.messages
             .filter { $0.role == .user && $0.order < updatedOrder }
-            .sorted { $0.order < $1.order }
+            .sortedByOrder
             .last
 
         let shouldUseReasoning: Bool
@@ -224,12 +224,16 @@ extension ChatViewModel {
             return
         }
 
-        conversation.messages[index].isReasoningMode = shouldUseReasoning
-        conversation.messages[index].promptSnapshot = nil
+        guard let targetMessage = conversation.messages.first(where: { $0.id == messageID }) else {
+            print("❌ Target message disappeared after reasoning evaluation!")
+            return
+        }
+        targetMessage.isReasoningMode = shouldUseReasoning
+        targetMessage.promptSnapshot = nil
         conversation.lastUpdated = Date()
         immediateSave()
 
-        let msg = conversation.messages[index]
+        let msg = targetMessage
         // Do NOT insert a new user message; the instruction is passed transiently only.
         await streamAssistant(into: msg, basedOnHistoryUpTo: msg.order, additionalUserInstruction: trimmed)
     }
@@ -240,12 +244,12 @@ extension ChatViewModel {
             return
         }
         isRegenerating = true
+        defer { isRegenerating = false }
 
         await waitForStreamToFinish()
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             print("⚠️ Edit and regenerate failed: message not found")
-            isRegenerating = false
             return
         }
         // Force SwiftData fault resolution before async boundaries
@@ -254,13 +258,11 @@ extension ChatViewModel {
 
         guard messageRole == .user else {
             print("⚠️ Edit and regenerate failed: message is not a user message")
-            isRegenerating = false
             return
         }
 
         guard !Task.isCancelled else {
             print("⚠️ Edit and regenerate failed: task was cancelled")
-            isRegenerating = false
             return
         }
 
@@ -291,7 +293,6 @@ extension ChatViewModel {
             // Look up by ID after renumbering; index is stale.
             guard let assistant = conversation.messages.first(where: { $0.id == targetID }) else {
                 print("❌ Edit and regenerate failed: Assistant message disappeared after renumbering")
-                isRegenerating = false
                 return
             }
             assistant.promptSnapshot = nil
@@ -304,7 +305,7 @@ extension ChatViewModel {
     
             let precedingUserMessage = conversation.messages
                 .filter { $0.role == .user && $0.order < updatedOrder }
-                .sorted { $0.order < $1.order }
+                .sortedByOrder
                 .last
 
             let shouldUseReasoning: Bool
@@ -324,7 +325,6 @@ extension ChatViewModel {
 
             guard !Task.isCancelled else {
                 print("⚠️ Edit and regenerate cancelled after reasoning evaluation")
-                isRegenerating = false
                 return
             }
 
@@ -335,8 +335,6 @@ extension ChatViewModel {
             await streamAssistant(into: assistant, basedOnHistoryUpTo: assistant.order)
             print("✅ Edit and regeneration completed")
         }
-
-        isRegenerating = false
     }
 
     func deleteMessageAndMaybeTrim(_ message: Message) async {

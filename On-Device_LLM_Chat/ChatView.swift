@@ -62,15 +62,12 @@ struct ChatView: View {
     // In-app browser state
     @State private var activeURL: URL?
 
-    // Logging - lazy to avoid startup overhead
-    private var logger: Logger {
-        Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatView", category: "ChatView")
-    }
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatView", category: "ChatView")
 
     // Pure computed property — no side effects, no @State mutations during body evaluation.
     // Sorting a typical message list (~10–50 items) is negligible; SwiftUI diffs the result.
     private var sortedMessages: [Message] {
-        viewModel.conversation.messages.sorted { $0.order < $1.order }
+        viewModel.conversation.messages.sortedByOrder
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 

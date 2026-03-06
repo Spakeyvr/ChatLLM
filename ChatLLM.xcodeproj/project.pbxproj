@@ -245,7 +245,6 @@
 			packageReferences = (
 				3D242DD72EAEA63600AE350C /* XCRemoteSwiftPackageReference "swift-async-algorithms" */,
 				3DD829772EB155B300D2EE7F /* XCRemoteSwiftPackageReference "swift-collections" */,
-				3D75FC252EC3AB98008937DD /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				3D1342282EF6F07500AB678F /* XCRemoteSwiftPackageReference "swift-transformers" */,
 				E51958AD2F57224B0037AEFD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 			);
@@ -693,14 +692,6 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.0.4;
-			};
-		};
-		3D75FC252EC3AB98008937DD /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.9.20;
 			};
 		};
 		3DD829772EB155B300D2EE7F /* XCRemoteSwiftPackageReference "swift-collections" */ = {
