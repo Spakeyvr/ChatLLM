@@ -44,30 +44,6 @@ extension ChatViewModel {
             }
         }
 
-        let paragraphs = cleaned.components(separatedBy: "\n\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        if paragraphs.count > 1 {
-            var seenParagraphs: Set<String> = []
-            var uniqueParagraphs: [String] = []
-
-            for paragraph in paragraphs {
-                let normalized = paragraph.lowercased()
-                if !seenParagraphs.contains(normalized) {
-                    seenParagraphs.insert(normalized)
-                    uniqueParagraphs.append(paragraph)
-                } else {
-                    print("🧹 Removing duplicate paragraph: '\(String(paragraph.prefix(50)))...'")
-                }
-            }
-
-            if uniqueParagraphs.count < paragraphs.count {
-                cleaned = uniqueParagraphs.joined(separator: "\n\n")
-                print("🧹 Removed \(paragraphs.count - uniqueParagraphs.count) duplicate paragraph(s)")
-            }
-        }
-
         // Remove stray leading Markdown-only lines like "**", "*", "---", or "###"
         if let re = _leadingMarkdownRegex {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
