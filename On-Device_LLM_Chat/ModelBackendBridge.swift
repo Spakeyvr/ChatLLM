@@ -242,6 +242,11 @@ extension UserDefaults {
         }
     }
 
+    var mlxEnableKVCacheQuantization: Bool {
+        get { bool(forKey: "mlxEnableKVCacheQuantization") }
+        set { set(newValue, forKey: "mlxEnableKVCacheQuantization") }
+    }
+
     var selectedLLMBackend: String {
         get { string(forKey: "selectedLLMBackend") ?? ModelBackendBridge.Backend.foundationModels.rawValue }
         set { set(newValue, forKey: "selectedLLMBackend") }

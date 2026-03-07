@@ -8,6 +8,7 @@
 import Testing
 import Foundation
 import MLXLMCommon
+import SwiftUI
 @testable import On_Device_LLM_Chat
 
 @MainActor
@@ -157,6 +158,181 @@ struct On_Device_LLM_ChatTests {
         #expect(response.contains("\(MLXModelManager.maxToolInvocationsPerResponse)"))
     }
 
+    @Test func kvQuantizationConfigurationIsDisabledWhenSettingIsOff() {
+        let config = MLXModelManager.kvQuantizationConfiguration(
+            isEnabled: false,
+            hasTools: false,
+            memoryConstrained: false,
+            maxKVSize: nil
+        )
+
+        #expect(config == nil)
+    }
+
+    @Test func kvQuantizationConfigurationUsesExpectedDefaultsOnNormalPath() {
+        let config = MLXModelManager.kvQuantizationConfiguration(
+            isEnabled: true,
+            hasTools: false,
+            memoryConstrained: false,
+            maxKVSize: nil
+        )
+
+        #expect(config?.bits == 8)
+        #expect(config?.groupSize == 64)
+        #expect(config?.startStep == 256)
+    }
+
+    @Test func kvQuantizationConfigurationIsEnabledForToolRunsWhenWindowingIsDisabled() {
+        let config = MLXModelManager.kvQuantizationConfiguration(
+            isEnabled: true,
+            hasTools: true,
+            memoryConstrained: false,
+            maxKVSize: nil
+        )
+
+        #expect(config?.bits == 8)
+        #expect(config?.groupSize == 64)
+        #expect(config?.startStep == 256)
+    }
+
+    @Test func kvQuantizationConfigurationIsDisabledForMemoryConstrainedRuns() {
+        let config = MLXModelManager.kvQuantizationConfiguration(
+            isEnabled: true,
+            hasTools: false,
+            memoryConstrained: true,
+            maxKVSize: nil
+        )
+
+        #expect(config == nil)
+    }
+
+    @Test func kvQuantizationConfigurationIsDisabledWhenMaxKVSizeIsSet() {
+        let config = MLXModelManager.kvQuantizationConfiguration(
+            isEnabled: true,
+            hasTools: false,
+            memoryConstrained: false,
+            maxKVSize: 4096
+        )
+
+        #expect(config == nil)
+    }
+
+    @Test func effectiveMaxKVSizePreservesLegacyToolCapWithoutQuantization() {
+        let maxKVSize = MLXModelManager.effectiveMaxKVSize(
+            isEnabled: false,
+            hasTools: true,
+            memoryConstrained: false
+        )
+
+        #expect(maxKVSize == 8192)
+    }
+
+    @Test func effectiveMaxKVSizeDropsToolCapWhenQuantizationIsEnabled() {
+        let maxKVSize = MLXModelManager.effectiveMaxKVSize(
+            isEnabled: true,
+            hasTools: true,
+            memoryConstrained: false
+        )
+
+        #expect(maxKVSize == nil)
+    }
+
+    @Test func generationConfigurationUsesQuantizedToolCacheStrategy() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            hasTools: true,
+            memoryConstrained: false,
+            configuredMaxOutputTokens: 2048
+        )
+
+        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxKVSize == nil)
+        #expect(configuration.kvQuantization?.bits == 8)
+        #expect(configuration.usesQuantizedToolCacheStrategy)
+    }
+
+    @Test func generationConfigurationFallsBackToLegacyToolCacheWhenQuantizationIsOff() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: false,
+            hasTools: true,
+            memoryConstrained: false,
+            configuredMaxOutputTokens: 2048
+        )
+
+        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxKVSize == 8192)
+        #expect(configuration.kvQuantization == nil)
+        #expect(!configuration.usesQuantizedToolCacheStrategy)
+    }
+
+    @Test func settingsSheetDescribesToolRunKVQuantizationSupport() {
+        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("Tool-enabled runs switch"))
+        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("automatically fall back"))
+        #expect(SettingsSheet.mlxKVCacheAccessibilityHint.contains("including tool runs"))
+    }
+
+    @Test func resetSettingsRestoresKVQuantizationDefault() {
+        UserDefaults.standard.mlxEnableKVCacheQuantization = true
+
+        let settings = SettingsSheet(
+            defaultSystemPrompt: .constant("System prompt"),
+            appAppearance: .constant("dark"),
+            appLanguage: .constant("en"),
+            hasChats: false,
+            canDeleteAllExceptCurrent: false,
+            onDeleteAll: {},
+            onDeleteAllExceptCurrent: {},
+            onExportChats: {}
+        )
+
+        settings.resetSettings()
+
+        #expect(UserDefaults.standard.mlxEnableKVCacheQuantization == false)
+    }
+
+    @Test func resetSettingsRestoresDeveloperModeDefault() {
+        UserDefaults.standard.set(true, forKey: "developerModeEnabled")
+
+        let settings = SettingsSheet(
+            defaultSystemPrompt: .constant("System prompt"),
+            appAppearance: .constant("dark"),
+            appLanguage: .constant("en"),
+            hasChats: false,
+            canDeleteAllExceptCurrent: false,
+            onDeleteAll: {},
+            onDeleteAllExceptCurrent: {},
+            onExportChats: {}
+        )
+
+        settings.resetSettings()
+
+        #expect(UserDefaults.standard.bool(forKey: "developerModeEnabled") == false)
+    }
+
+    @Test func resetForRegenerationClearsDeveloperMetadata() {
+        let conversation = Conversation(title: "Test")
+        let message = Message(
+            role: .assistant,
+            text: "Visible",
+            order: 1,
+            conversation: conversation,
+            isFinal: true,
+            rawText: "<thinking>raw</thinking>",
+            generationBackend: "MLX",
+            generationModelName: "Qwen",
+            generationStartedAt: Date(timeIntervalSince1970: 10),
+            generationCompletedAt: Date(timeIntervalSince1970: 12)
+        )
+
+        message.resetForRegeneration()
+
+        #expect(message.rawText == nil)
+        #expect(message.generationBackend == nil)
+        #expect(message.generationModelName == nil)
+        #expect(message.generationStartedAt == nil)
+        #expect(message.generationCompletedAt == nil)
+    }
+
     @Test func searchInvocationMergePreservesAnchorsAcrossFinalization() {
         let preservedID = UUID()
         let newID = UUID()
@@ -226,6 +402,24 @@ struct On_Device_LLM_ChatTests {
         - Adds more concurrency fixes
         - Available now
         """)
+    }
+
+    @Test func streamingChunkMergePreservesSingleCharacterNumericChunks() {
+        let merged = ChatViewModel.mergedStreamingChunk(
+            currentText: "10",
+            newText: "0"
+        )
+
+        #expect(merged == "100")
+    }
+
+    @Test func streamingChunkMergeStillCollapsesRealPrefixOverlap() {
+        let merged = ChatViewModel.mergedStreamingChunk(
+            currentText: "Hello wor",
+            newText: "world"
+        )
+
+        #expect(merged == "Hello world")
     }
 
     @Test func webSearchBridgeReturnsRecoverableErrorForMissingQueryArgument() async throws {

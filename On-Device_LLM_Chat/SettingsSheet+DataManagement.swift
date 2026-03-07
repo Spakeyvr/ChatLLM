@@ -120,8 +120,10 @@ extension SettingsSheet {
         reasoningModeDefault = false
         messageFontSize = 16.0
         mlxMaxOutputTokens = 1024
+        mlxEnableKVCacheQuantization = false
         autoDeleteOldChats = false
         autoDeleteDays = 30
+        developerModeEnabled = false
 
         // Vision Framework defaults
         visionConfidenceThreshold = 0.5

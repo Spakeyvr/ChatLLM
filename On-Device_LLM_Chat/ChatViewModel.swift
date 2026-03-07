@@ -768,6 +768,24 @@ final class ChatViewModel: ObservableObject {
         var lastModelWrite: Date = .distantPast
         var lastRenderedLength = 0
         let activeChunkTimeout = target.isReasoningMode ? reasoningChunkTimeout : chunkTimeout
+        let generationStartedAt = Date()
+        let backendLabel: String
+        let modelName: String?
+
+        switch preparation.backendRequest {
+        case .mlx(let manager, _, _, _, _):
+            backendLabel = "MLX"
+            modelName = manager.currentModel?.displayName
+        case .foundation:
+            backendLabel = "Apple Intelligence"
+            modelName = "Foundation Models"
+        }
+
+        target.beginGenerationCapture(
+            backend: backendLabel,
+            modelName: modelName,
+            startedAt: generationStartedAt
+        )
 
         @MainActor
         func renderIfThrottled() {
@@ -797,6 +815,9 @@ final class ChatViewModel: ObservableObject {
                     result.outcome = result.wroteAny ? .failedAfterPartialOutput : .failedBeforeOutput
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                         liveTarget.generationError = timeout.localizedDescription
+                        if result.wroteAny {
+                            liveTarget.completeGenerationCapture(rawText: result.cumulativeText)
+                        }
                         liveTarget.markAsComplete()
                         conversation.lastUpdated = Date()
                         scheduleCoalescedSave()
@@ -823,6 +844,7 @@ final class ChatViewModel: ObservableObject {
                let finalTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                 syncLiveSearchInvocations(into: finalTarget, from: preparation.webSearchBridge)
                 updateMessageWithReasoningContent(finalTarget, fullText: result.cumulativeText, finalize: true)
+                finalTarget.completeGenerationCapture(rawText: result.cumulativeText)
                 conversation.lastUpdated = Date()
                 scheduleCoalescedSave()
             }
@@ -850,6 +872,9 @@ final class ChatViewModel: ObservableObject {
                 liveTarget.generationError = message
                 if result.cumulativeText.isEmpty {
                     liveTarget.text = ""
+                }
+                if !result.cumulativeText.isEmpty {
+                    liveTarget.completeGenerationCapture(rawText: result.cumulativeText)
                 }
                 liveTarget.markAsComplete()
                 result.wroteAny = true
@@ -905,6 +930,41 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    internal static func mergedStreamingChunk(currentText: String, newText: String) -> String? {
+        if currentText.contains(newText) && newText.count > 10 {
+            return nil
+        }
+        if !currentText.isEmpty &&
+            newText.hasPrefix(currentText) &&
+            newText.count > currentText.count {
+            return newText
+        }
+        if !newText.isEmpty && newText.count > 10 && currentText.hasPrefix(newText) {
+            return nil
+        }
+
+        var overlapLength = 0
+        if !currentText.isEmpty {
+            let maxCheckLength = min(100, min(currentText.count, newText.count))
+            for length in stride(from: maxCheckLength, through: 3, by: -1) {
+                if currentText.suffix(length) == newText.prefix(length) {
+                    overlapLength = length
+                    break
+                }
+            }
+        }
+
+        let delta = String(newText.dropFirst(overlapLength))
+        if !delta.isEmpty {
+            return currentText + delta
+        }
+        if overlapLength == 0 && !newText.isEmpty {
+            return currentText + newText
+        }
+
+        return nil
+    }
+
     private func appendStreamingChunk(_ newText: String, into result: inout StreamConsumptionResult) -> Bool {
         if !result.cumulativeText.isEmpty && newText.count > 50 {
             let combinedTest = result.cumulativeText + newText
@@ -918,39 +978,11 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        if result.cumulativeText.contains(newText) && newText.count > 10 {
-            return false
-        }
-        if !result.cumulativeText.isEmpty &&
-            newText.hasPrefix(result.cumulativeText) &&
-            newText.count > result.cumulativeText.count {
-            result.cumulativeText = newText
-            result.wroteAny = true
-            return true
-        }
-        if !newText.isEmpty && newText.count > 10 && result.cumulativeText.hasPrefix(newText) {
-            return false
-        }
-
-        var overlapLength = 0
-        if !result.cumulativeText.isEmpty {
-            let maxCheckLength = min(100, min(result.cumulativeText.count, newText.count))
-            for length in stride(from: maxCheckLength, through: 1, by: -1) {
-                if result.cumulativeText.suffix(length) == newText.prefix(length) {
-                    overlapLength = length
-                    break
-                }
-            }
-        }
-
-        let delta = String(newText.dropFirst(overlapLength))
-        if !delta.isEmpty {
-            result.cumulativeText += delta
-            result.wroteAny = true
-            return true
-        }
-        if overlapLength == 0 && !newText.isEmpty {
-            result.cumulativeText += newText
+        if let mergedText = Self.mergedStreamingChunk(
+            currentText: result.cumulativeText,
+            newText: newText
+        ) {
+            result.cumulativeText = mergedText
             result.wroteAny = true
             return true
         }

@@ -103,6 +103,8 @@ struct MessageCellView: View {
     @ObservedObject var viewModel: ChatViewModel
     let onEdit: (Message) -> Void
     let onShare: (String) -> Void
+    @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
+    @State private var showDeveloperSheet = false
 
     private var isCurrentlyStreaming: Bool {
         viewModel.isGenerating && viewModel.streamingMessageID == message.id
@@ -179,12 +181,19 @@ struct MessageCellView: View {
                             messageID: message.id,
                             instruction: String(localized: "Please answer again using a formal tone.")
                         )
+                    },
+                    developerModeEnabled: developerModeEnabled && message.role == .assistant,
+                    onDeveloper: {
+                        showDeveloperSheet = true
                     }
                 )
                 .padding(.leading, 12)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 .animation(.easeInOut(duration: 0.2), value: message.isFinal)
             }
+        }
+        .sheet(isPresented: $showDeveloperSheet) {
+            DeveloperMessageSheet(message: message)
         }
     }
 
@@ -585,7 +594,7 @@ struct SourcesSheetView: View {
                                     .foregroundStyle(.secondary)
                             } icon: {
                                 Image(systemName: "magnifyingglass")
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(.primary)
                             }
 
                             Text(query)
@@ -596,13 +605,9 @@ struct SourcesSheetView: View {
                         }
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(.blue.opacity(0.1))
-                        }
                         .overlay {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(.blue.opacity(0.2), lineWidth: 1)
+                                .strokeBorder(.secondary.opacity(0.2), lineWidth: 1)
                         }
                     }
 
@@ -631,6 +636,114 @@ struct SourcesSheetView: View {
         .sheet(item: $activeURL) { url in
             SafariView(url: url)
                 .ignoresSafeArea()
+        }
+    }
+}
+
+// MARK: - Developer diagnostics
+
+private struct DeveloperMessageSheet: View {
+    let message: Message
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    private var rawText: String {
+        let raw = message.developerRawText
+        return raw.isEmpty ? String(localized: "No raw output captured for this message.") : raw
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(String(localized: "Stats"))
+                            .font(.headline)
+
+                        DeveloperStatRow(label: String(localized: "Backend"), value: message.generationBackend ?? "Unknown")
+
+                        if let generationModelName = message.generationModelName, !generationModelName.isEmpty {
+                            DeveloperStatRow(label: String(localized: "Model"), value: generationModelName)
+                        }
+
+                        if let startedAt = message.generationStartedAt {
+                            DeveloperStatRow(
+                                label: String(localized: "Started"),
+                                value: Self.dateFormatter.string(from: startedAt)
+                            )
+                        }
+
+                        if let completedAt = message.generationCompletedAt {
+                            DeveloperStatRow(
+                                label: String(localized: "Finished"),
+                                value: Self.dateFormatter.string(from: completedAt)
+                            )
+                        }
+
+                        if let duration = message.generationDuration {
+                            DeveloperStatRow(label: String(localized: "Duration"), value: String(format: "%.2fs", duration))
+                        }
+
+                        if let estimatedOutputTokenCount = message.estimatedOutputTokenCount {
+                            DeveloperStatRow(label: String(localized: "Est. output tokens"), value: "\(estimatedOutputTokenCount)")
+                        }
+
+                        if let estimatedTokensPerSecond = message.estimatedTokensPerSecond {
+                            DeveloperStatRow(label: String(localized: "Est. tokens/sec"), value: String(format: "%.2f", estimatedTokensPerSecond))
+                        }
+
+                        DeveloperStatRow(label: String(localized: "Raw chars"), value: "\(message.developerRawText.count)")
+                        DeveloperStatRow(label: String(localized: "Visible chars"), value: "\(message.displayText.count)")
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(String(localized: "Raw Output"))
+                            .font(.headline)
+
+                        Text(rawText)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.primary.opacity(0.06))
+                            )
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle(String(localized: "Developer"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.fraction(0.5), .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct DeveloperStatRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .multilineTextAlignment(.trailing)
+                .font(.system(.body, design: .monospaced))
         }
     }
 }
@@ -792,6 +905,8 @@ struct AssistantActionsBar: View {
     var onTryAgain: () -> Void
     var onConcise: () -> Void
     var onFormal: () -> Void
+    var developerModeEnabled: Bool
+    var onDeveloper: () -> Void
 
     // State for fade-in animation
     @State private var isVisible = false
@@ -818,6 +933,16 @@ struct AssistantActionsBar: View {
                 // Removed .menuStyle(.borderlessButton) – flaky in scrollable cells
                 .disabled(!canAct)
                 .accessibilityLabel(String(localized: "Regenerate"))
+            }
+
+            if developerModeEnabled {
+                Button(action: onDeveloper) {
+                    Image(systemName: "hammer")
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canAct)
+                .accessibilityLabel(String(localized: "Developer"))
             }
 
             Spacer()

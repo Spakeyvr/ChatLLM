@@ -82,6 +82,11 @@ final class Message {
     var finalAnswer: String?
     var promptSnapshot: String?
     var searchQuery: String?  // Stores the user's query when web search was used
+    var rawText: String?
+    var generationBackend: String?
+    var generationModelName: String?
+    var generationStartedAt: Date?
+    var generationCompletedAt: Date?
     @Transient var generationError: String?  // ephemeral; not persisted
 
     // All web search invocations stored as JSON for SwiftData compatibility
@@ -275,7 +280,12 @@ final class Message {
         finalAnswer: String? = nil,
         isReasoningMode: Bool = false,
         reasoningSteps: [ReasoningStep]? = nil,
-        searchQuery: String? = nil
+        searchQuery: String? = nil,
+        rawText: String? = nil,
+        generationBackend: String? = nil,
+        generationModelName: String? = nil,
+        generationStartedAt: Date? = nil,
+        generationCompletedAt: Date? = nil
     ) {
         self.id = id
         self.order = order
@@ -288,6 +298,11 @@ final class Message {
         self.finalAnswer = finalAnswer
         self.promptSnapshot = promptSnapshot
         self.searchQuery = searchQuery
+        self.rawText = rawText
+        self.generationBackend = generationBackend
+        self.generationModelName = generationModelName
+        self.generationStartedAt = generationStartedAt
+        self.generationCompletedAt = generationCompletedAt
         self.conversation = conversation
         self.attachments = attachments
         self.reasoningSteps = reasoningSteps
@@ -331,6 +346,49 @@ final class Message {
 // MARK: - Performance Extensions
 
 extension Message {
+    var developerRawText: String {
+        if let rawText, !rawText.isEmpty {
+            return rawText
+        }
+        if isReasoningMode {
+            return finalAnswer ?? text
+        }
+        return text
+    }
+
+    var generationDuration: TimeInterval? {
+        guard let generationStartedAt, let generationCompletedAt else { return nil }
+        let duration = generationCompletedAt.timeIntervalSince(generationStartedAt)
+        return duration > 0 ? duration : nil
+    }
+
+    var estimatedOutputTokenCount: Int? {
+        let raw = developerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        // A lightweight fallback for developer diagnostics when the backend does not expose true token counts.
+        return max(1, Int(ceil(Double(raw.count) / 4.0)))
+    }
+
+    var estimatedTokensPerSecond: Double? {
+        guard let duration = generationDuration,
+              let estimatedOutputTokenCount,
+              duration > 0 else { return nil }
+        return Double(estimatedOutputTokenCount) / duration
+    }
+
+    func beginGenerationCapture(backend: String, modelName: String?, startedAt: Date = Date()) {
+        rawText = nil
+        generationBackend = backend
+        generationModelName = modelName
+        generationStartedAt = startedAt
+        generationCompletedAt = nil
+    }
+
+    func completeGenerationCapture(rawText: String, completedAt: Date = Date()) {
+        self.rawText = rawText
+        generationCompletedAt = completedAt
+    }
+
     /// Efficient bulk text update for streaming with conditional invalidation
     func updateStreamingContent(_ newText: String, reasoning: String? = nil, finalAnswer: String? = nil) {
         // Only invalidate cache if content actually changed
@@ -382,9 +440,14 @@ extension Message {
         // Only clear if needed
         let needsReset = !self.text.isEmpty ||
                         self.reasoning != nil ||
-                        self.finalAnswer != nil ||
-                        self.isFinal ||
-                        self.generationError != nil
+            self.finalAnswer != nil ||
+            self.isFinal ||
+            self.generationError != nil ||
+            self.rawText != nil ||
+            self.generationBackend != nil ||
+            self.generationModelName != nil ||
+            self.generationStartedAt != nil ||
+            self.generationCompletedAt != nil
 
         if needsReset {
             invalidateCache()
@@ -393,6 +456,11 @@ extension Message {
             self.finalAnswer = nil
             self.isFinal = false
             self.generationError = nil
+            self.rawText = nil
+            self.generationBackend = nil
+            self.generationModelName = nil
+            self.generationStartedAt = nil
+            self.generationCompletedAt = nil
         }
         
         return savedSources

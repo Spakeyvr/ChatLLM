@@ -136,6 +136,15 @@ final class MLXModelManager: ObservableObject {
     private var activeLoadID: UUID?
     private var deferredPrewarmModelID: String?
     private var prewarmInFlightModelID: String?
+    private var memoryMaintenanceTimer: Timer?
+
+    private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
+    private static let memoryMaintenanceInterval: TimeInterval = 3
+    private static let kvQuantizationBits = 8
+    private static let kvQuantizationGroupSize = 64
+    private static let kvQuantizationWarmupStep = 256
+    private static let toolMaxKVSize = 8192
+    private static let memoryConstrainedMaxKVSize = 4096
 
     private static let modelDefinitions: [MLXModelInfo] = [
         MLXModelInfo(
@@ -157,7 +166,7 @@ final class MLXModelManager: ObservableObject {
             id: "qwen3.5-2b-4bit",
             name: "Qwen 3.5",
             localDirName: "Qwen3.5-2B-MLX-4bit",
-            hfRepoId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+            hfRepoId: "mlx-community/Qwen3.5-2B-4bit",
             parameters: "2B (4-bit)",
             downloadSizeLabel: "1.75 GB",
             loadPolicy: .qwenMultimodal,
@@ -186,6 +195,19 @@ final class MLXModelManager: ObservableObject {
 
     struct MLXGenerationResult: Sendable {
         let toolInvocationCount: Int
+    }
+
+    struct KVQuantizationConfiguration: Equatable, Sendable {
+        let bits: Int
+        let groupSize: Int
+        let startStep: Int
+    }
+
+    struct GenerationConfiguration: Equatable, Sendable {
+        let maxTokens: Int?
+        let maxKVSize: Int?
+        let kvQuantization: KVQuantizationConfiguration?
+        let usesQuantizedToolCacheStrategy: Bool
     }
 
     private enum ToolTemplateSupport: Equatable {
@@ -353,6 +375,7 @@ final class MLXModelManager: ObservableObject {
         if activeLoadID != nil {
             activeLoadID = nil
         }
+        stopMemoryMaintenanceTimer()
         if tearDownModel {
             tearDownCurrentModel(reason: "cancelCurrentLoad(\(reason))")
         }
@@ -378,6 +401,10 @@ final class MLXModelManager: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
+                await MainActor.run {
+                    self.prepareMemoryForModelLoadTransition()
+                }
+                await Task.yield()
                 self.logger.notice(
                     "MLX container load start: id=\(model.id, privacy: .public) source=\(source, privacy: .public) path=\(modelURL.lastPathComponent, privacy: .public)"
                 )
@@ -397,6 +424,7 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.applySteadyStateMemoryCachePolicy()
+                    self.startMemoryMaintenanceTimer()
                     self.loadTask = nil
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
@@ -591,19 +619,19 @@ final class MLXModelManager: ObservableObject {
         }
 
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokens
-        let maxTokens: Int? = if !tools.isEmpty {
-            4096
-        } else if memoryConstrained {
-            min(configuredMaxOutputTokens, 1024)
-        } else {
-            configuredMaxOutputTokens
-        }
-        let maxKVSize: Int? = if !tools.isEmpty {
-            8192
-        } else if memoryConstrained {
-            4096
-        } else {
-            nil
+        let generationConfiguration = Self.generationConfiguration(
+            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
+            hasTools: !tools.isEmpty,
+            memoryConstrained: memoryConstrained,
+            configuredMaxOutputTokens: configuredMaxOutputTokens
+        )
+        let maxTokens = generationConfiguration.maxTokens
+        let maxKVSize = generationConfiguration.maxKVSize
+        let kvQuantization = generationConfiguration.kvQuantization
+        if !tools.isEmpty && UserDefaults.standard.mlxEnableKVCacheQuantization {
+            logger.notice(
+                "MLX tool KV cache request: quantization_requested=true strategy=\(generationConfiguration.usesQuantizedToolCacheStrategy ? "quantized_unbounded" : "legacy_capped", privacy: .public) max_kv_size=\(String(describing: maxKVSize), privacy: .public)"
+            )
         }
         let params: GenerateParameters
         if enableThinking && currentModel.id == "qwen3.5-2b-4bit" {
@@ -611,6 +639,9 @@ final class MLXModelManager: ObservableObject {
             params = GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 1.0,
                 topP: 0.95
             )
@@ -618,6 +649,9 @@ final class MLXModelManager: ObservableObject {
             params = GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 0.6,
                 topP: 0.95
             )
@@ -625,8 +659,16 @@ final class MLXModelManager: ObservableObject {
             params = GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 0.7,
                 topP: 0.8
+            )
+        }
+        if !tools.isEmpty {
+            logger.notice(
+                "MLX tool KV cache active: quantized=\(kvQuantization != nil, privacy: .public) max_kv_size=\(String(describing: maxKVSize), privacy: .public)"
             )
         }
         let additionalContext: [String: any Sendable]? = ["enable_thinking": enableThinking]
@@ -659,36 +701,60 @@ final class MLXModelManager: ObservableObject {
         )
 
         do {
-            let preflightInput = UserInput(
-                chat: messages,
+            let result = try await runToolGeneration(
+                container: container,
+                messages: messages,
                 processing: processing,
+                additionalContext: additionalContext,
                 tools: tools,
-                additionalContext: additionalContext
+                params: params,
+                suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+                toolDispatch: toolDispatch,
+                onToken: onToken
             )
-            let prepared = try await container.prepare(input: preflightInput)
-            logger.notice(
-                "MLX tool preflight prepare succeeded: token_count=\(prepared.text.tokens.size, privacy: .public) has_image=\(prepared.image != nil, privacy: .public) has_video=\(prepared.video != nil, privacy: .public)"
-            )
-            cleanupMemoryAfterToolPreflight()
+            logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
+            return result
         } catch {
-            logger.error("MLX tool preflight prepare failed: \(error.localizedDescription, privacy: .public)")
-            cleanupMemoryAfterGenerationError()
-            throw error
-        }
+            guard generationConfiguration.usesQuantizedToolCacheStrategy else {
+                logger.error("MLX tool path failed: \(error.localizedDescription, privacy: .public)")
+                cleanupMemoryAfterGenerationError()
+                throw error
+            }
 
-        let result = try await generateToolTextStream(
-            container: container,
-            messages: messages,
-            processing: processing,
-            additionalContext: additionalContext,
-            tools: tools,
-            params: params,
-            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
-            toolDispatch: toolDispatch,
-            onToken: onToken
-        )
-        logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
-        return result
+            logger.error(
+                "MLX quantized tool KV cache strategy failed; retrying with legacy capped cache: error=\(error.localizedDescription, privacy: .public)"
+            )
+            cleanupMemoryAfterGenerationError()
+            let fallbackConfiguration = Self.generationConfiguration(
+                isEnabled: false,
+                hasTools: true,
+                memoryConstrained: memoryConstrained,
+                configuredMaxOutputTokens: configuredMaxOutputTokens
+            )
+            let fallbackParams = Self.makeGenerateParameters(
+                maxTokens: fallbackConfiguration.maxTokens,
+                maxKVSize: fallbackConfiguration.maxKVSize,
+                kvQuantization: fallbackConfiguration.kvQuantization,
+                enableThinking: enableThinking,
+                currentModelID: currentModel.id
+            )
+            logger.notice(
+                "MLX tool KV cache fallback active: quantized=false max_kv_size=\(String(describing: fallbackConfiguration.maxKVSize), privacy: .public)"
+            )
+            let result = try await runToolGeneration(
+                container: container,
+                messages: messages,
+                processing: processing,
+                additionalContext: additionalContext,
+                tools: tools,
+                params: fallbackParams,
+                suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+                toolDispatch: toolDispatch,
+                onToken: onToken
+            )
+            logger.notice("MLX tool path completed after KV fallback: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
+            return result
+        }
     }
 
     // MARK: - Diagnostics / Management
@@ -784,6 +850,152 @@ final class MLXModelManager: ObservableObject {
         "[tool internal error: limit reached after \(maximum) tool invocations for this response. Do not call tools again. Continue with the available information already available.]"
     }
 
+    internal static func generationConfiguration(
+        isEnabled: Bool,
+        hasTools: Bool,
+        memoryConstrained: Bool,
+        configuredMaxOutputTokens: Int
+    ) -> GenerationConfiguration {
+        let usesQuantizedToolCacheStrategy = isEnabled && hasTools && !memoryConstrained
+        let maxTokens: Int? = if hasTools {
+            4096
+        } else if memoryConstrained {
+            min(configuredMaxOutputTokens, 1024)
+        } else {
+            configuredMaxOutputTokens
+        }
+        let maxKVSize = effectiveMaxKVSize(
+            isEnabled: isEnabled,
+            hasTools: hasTools,
+            memoryConstrained: memoryConstrained
+        )
+        return GenerationConfiguration(
+            maxTokens: maxTokens,
+            maxKVSize: maxKVSize,
+            kvQuantization: kvQuantizationConfiguration(
+                isEnabled: isEnabled,
+                hasTools: hasTools,
+                memoryConstrained: memoryConstrained,
+                maxKVSize: maxKVSize
+            ),
+            usesQuantizedToolCacheStrategy: usesQuantizedToolCacheStrategy
+        )
+    }
+
+    internal static func effectiveMaxKVSize(
+        isEnabled: Bool,
+        hasTools: Bool,
+        memoryConstrained: Bool
+    ) -> Int? {
+        if hasTools {
+            return isEnabled && !memoryConstrained ? nil : toolMaxKVSize
+        }
+
+        if memoryConstrained {
+            return memoryConstrainedMaxKVSize
+        }
+
+        return nil
+    }
+
+    internal static func kvQuantizationConfiguration(
+        isEnabled: Bool,
+        hasTools: Bool,
+        memoryConstrained: Bool,
+        maxKVSize: Int?
+    ) -> KVQuantizationConfiguration? {
+        guard isEnabled, !memoryConstrained, maxKVSize == nil else {
+            return nil
+        }
+
+        return KVQuantizationConfiguration(
+            bits: kvQuantizationBits,
+            groupSize: kvQuantizationGroupSize,
+            startStep: kvQuantizationWarmupStep
+        )
+    }
+
+    private static func makeGenerateParameters(
+        maxTokens: Int?,
+        maxKVSize: Int?,
+        kvQuantization: KVQuantizationConfiguration?,
+        enableThinking: Bool,
+        currentModelID: String
+    ) -> GenerateParameters {
+        if enableThinking && currentModelID == "qwen3.5-2b-4bit" {
+            return GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                temperature: 1.0,
+                topP: 0.95
+            )
+        } else if enableThinking {
+            return GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                temperature: 0.6,
+                topP: 0.95
+            )
+        } else {
+            return GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                kvBits: kvQuantization?.bits,
+                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                temperature: 0.7,
+                topP: 0.8
+            )
+        }
+    }
+
+    private func runToolGeneration(
+        container: ModelContainer,
+        messages: [Chat.Message],
+        processing: UserInput.Processing,
+        additionalContext: [String: any Sendable]?,
+        tools: [MLXToolSpec],
+        params: GenerateParameters,
+        suppressWrappedXMLToolMarkup: Bool,
+        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
+        onToken: @escaping (String) -> Void
+    ) async throws -> MLXGenerationResult {
+        do {
+            let preflightInput = UserInput(
+                chat: messages,
+                processing: processing,
+                tools: tools,
+                additionalContext: additionalContext
+            )
+            let prepared = try await container.prepare(input: preflightInput)
+            logger.notice(
+                "MLX tool preflight prepare succeeded: token_count=\(prepared.text.tokens.size, privacy: .public) has_image=\(prepared.image != nil, privacy: .public) has_video=\(prepared.video != nil, privacy: .public)"
+            )
+            cleanupMemoryAfterToolPreflight()
+        } catch {
+            logger.error("MLX tool preflight prepare failed: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+
+        return try await generateToolTextStream(
+            container: container,
+            messages: messages,
+            processing: processing,
+            additionalContext: additionalContext,
+            tools: tools,
+            params: params,
+            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+            toolDispatch: toolDispatch,
+            onToken: onToken
+        )
+    }
+
     private func generateToolTextStream(
         container: ModelContainer,
         messages: [Chat.Message],
@@ -802,6 +1014,7 @@ final class MLXModelManager: ObservableObject {
         var activeTools = tools
 
         while true {
+            cleanupMemoryBeforeToolStreamIteration()
             var userInput = UserInput(
                 messages: rawMessages,
                 images: conversationImages,
@@ -883,6 +1096,7 @@ final class MLXModelManager: ObservableObject {
                 toolCall: emittedToolCall
             ))
             rawMessages.append(Self.toolResponseMessage(toolResult))
+            cleanupMemoryAfterToolRoundTrip()
         }
     }
 
@@ -1167,16 +1381,16 @@ final class MLXModelManager: ObservableObject {
         Memory.clearCache()
         Memory.cacheLimit = 0
         Memory.clearCache()
-        Memory.cacheLimit = 4 * 1024 * 1024
+        Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
+        URLCache.shared.removeAllCachedResponses()
     }
 
     private func applySteadyStateMemoryCachePolicy() {
-        Memory.cacheLimit = 4 * 1024 * 1024
+        Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
     }
 
     private func prepareMemoryForPrewarm() {
-        Memory.clearCache()
-        Memory.cacheLimit = 0
+        aggressivelyFreeMemory(reason: "prewarm.prepare")
     }
 
     private func cleanupMemoryAfterPrewarm() {
@@ -1184,8 +1398,7 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func prepareMemoryForGeneration() {
-        Memory.clearCache()
-        Memory.cacheLimit = 0
+        aggressivelyFreeMemory(reason: "generation.prepare")
     }
 
     private func cleanupMemoryAfterGeneration() {
@@ -1197,21 +1410,34 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func cleanupMemoryAfterToolPreflight() {
-        Memory.clearCache()
+        aggressivelyFreeMemory(reason: "tool.preflight.cleanup")
     }
 
     private func cleanupMemoryBeforeToolDispatch() {
-        Memory.clearCache()
+        aggressivelyFreeMemory(reason: "tool.dispatch.prepare")
     }
 
     private func cleanupMemoryAfterLoadInterruption() {
         resetMemoryCaches()
     }
 
+    private func prepareMemoryForModelLoadTransition() {
+        aggressivelyFreeMemory(reason: "model.load.transition")
+    }
+
+    private func cleanupMemoryBeforeToolStreamIteration() {
+        aggressivelyFreeMemory(reason: "tool.iteration.prepare")
+    }
+
+    private func cleanupMemoryAfterToolRoundTrip() {
+        aggressivelyFreeMemory(reason: "tool.roundtrip.cleanup")
+    }
+
     private func tearDownCurrentModel(reason: String) {
         if container != nil || currentModel != nil || deferredPrewarmModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
         }
+        stopMemoryMaintenanceTimer()
         container = nil
         currentModel = nil
         deferredPrewarmModelID = nil
@@ -1221,6 +1447,39 @@ final class MLXModelManager: ObservableObject {
 
     private func cleanupMemoryAfterUnload() {
         resetMemoryCaches()
+    }
+
+    private func aggressivelyFreeMemory(reason: String) {
+        logger.notice("MLX memory cleanup: reason=\(reason, privacy: .public)")
+        Memory.clearCache()
+        Memory.cacheLimit = 0
+        Memory.clearCache()
+        URLCache.shared.removeAllCachedResponses()
+    }
+
+    private func startMemoryMaintenanceTimer() {
+        stopMemoryMaintenanceTimer()
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.memoryMaintenanceInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.performPeriodicMemoryMaintenance()
+            }
+        }
+        timer.tolerance = 1
+        memoryMaintenanceTimer = timer
+    }
+
+    private func stopMemoryMaintenanceTimer() {
+        memoryMaintenanceTimer?.invalidate()
+        memoryMaintenanceTimer = nil
+    }
+
+    private func performPeriodicMemoryMaintenance() {
+        guard currentModel != nil || isLoading else {
+            stopMemoryMaintenanceTimer()
+            return
+        }
+        aggressivelyFreeMemory(reason: "periodic.maintenance")
+        applySteadyStateMemoryCachePolicy()
     }
 }
 

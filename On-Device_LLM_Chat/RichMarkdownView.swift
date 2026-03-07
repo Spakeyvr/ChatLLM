@@ -86,6 +86,9 @@ enum RichTextFeatureDetector {
 
     static func requiresAdvancedRendering(_ text: String) -> Bool {
         guard !text.isEmpty else { return false }
+        if text.range(of: #"\n\s*\n"#, options: [.regularExpression]) != nil {
+            return true
+        }
         if text.contains("\\begin{") || text.contains("\\end{") {
             return true
         }

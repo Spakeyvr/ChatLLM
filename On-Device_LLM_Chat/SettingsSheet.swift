@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct SettingsSheet: View {
+    static let mlxKVCacheInfoMessage = String(localized: "Reduces memory use for long on-device MLX chats by quantizing the KV cache to 8-bit after an initial warmup. Tool-enabled runs switch to a quantization-compatible cache strategy when possible and automatically fall back if unsupported. This may slightly change quality or latency, and memory-constrained runs still skip KV quantization.")
+    static let mlxKVCacheAccessibilityHint = String(localized: "Reduces memory use for long MLX chats, including tool runs when supported. Memory-constrained runs still skip KV quantization.")
+
     @Binding var defaultSystemPrompt: String
     @Binding var appAppearance: String   // "system" | "light" | "dark"
     @Binding var appLanguage: String     // "en" | "de" | "es"
@@ -23,8 +26,10 @@ struct SettingsSheet: View {
     @AppStorage("reasoningModeDefault") var reasoningModeDefault: Bool = false
     @AppStorage("messageFontSize") var messageFontSize: Double = 16.0 // 12-22 range
     @AppStorage("mlxMaxOutputTokens") var mlxMaxOutputTokens: Int = 1024
+    @AppStorage("mlxEnableKVCacheQuantization") var mlxEnableKVCacheQuantization: Bool = false
     @AppStorage("autoDeleteOldChats") var autoDeleteOldChats: Bool = false
     @AppStorage("autoDeleteDays") var autoDeleteDays: Int = 30 // 7, 14, 30, 60, 90
+    @AppStorage("developerModeEnabled") var developerModeEnabled: Bool = false
 
     // Vision Framework settings
     @AppStorage("visionConfidenceThreshold") var visionConfidenceThreshold: Double = 0.5
@@ -152,6 +157,28 @@ struct SettingsSheet: View {
                         maxOutputTokensSlider
                     }
                     .padding(.vertical, 4)
+
+                    Toggle(isOn: $mlxEnableKVCacheQuantization) {
+                        HStack(spacing: 6) {
+                            Label(String(localized: "8-Bit KV Cache (MLX Only)"), systemImage: "memorychip")
+                            InfoButton(
+                                title: String(localized: "8-Bit KV Cache (MLX Only)"),
+                                message: Self.mlxKVCacheInfoMessage
+                            )
+                        }
+                    }
+                    .accessibilityHint(Self.mlxKVCacheAccessibilityHint)
+
+                    Toggle(isOn: $developerModeEnabled) {
+                        HStack(spacing: 6) {
+                            Label(String(localized: "Developer Mode"), systemImage: "hammer")
+                            InfoButton(
+                                title: String(localized: "Developer Mode"),
+                                message: String(localized: "Shows an extra developer action under assistant messages with raw output and generation diagnostics.")
+                            )
+                        }
+                    }
+                    .accessibilityHint(String(localized: "Shows raw output and generation diagnostics for assistant messages."))
                 }
                 
                 // MARK: Display
