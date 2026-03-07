@@ -301,3 +301,16 @@ actor ImageStore {
         }
     }
 }
+
+enum DiskBackedImageLoader {
+    static func loadImage(at url: URL) async -> UIImage? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        return await Task.detached(priority: .userInitiated) {
+            autoreleasepool {
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return UIImage(data: data)
+            }
+        }.value
+    }
+}

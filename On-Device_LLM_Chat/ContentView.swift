@@ -123,6 +123,7 @@ struct ContentView: View {
     private func handleOnAppear() {
         // Clean up old chats if auto-delete is enabled
         performAutoDeleteIfNeeded()
+        scheduleAttachmentStorageCleanup()
         
         // Only auto-select on regular width (split view visible).
         if horizontalSizeClass == .regular,
@@ -200,6 +201,23 @@ struct ContentView: View {
         }
 
         return nil
+    }
+
+    private func referencedAttachmentURLs(excludingConversationIDs excludedConversationIDs: Set<UUID> = []) -> Set<URL> {
+        Set(
+            conversations
+                .filter { !excludedConversationIDs.contains($0.id) }
+                .flatMap(\.messages)
+                .flatMap(\.attachments)
+                .map(\.actualFileURL)
+        )
+    }
+
+    private func scheduleAttachmentStorageCleanup(excludingConversationIDs excludedConversationIDs: Set<UUID> = []) {
+        let referencedURLs = referencedAttachmentURLs(excludingConversationIDs: excludedConversationIDs)
+        Task {
+            try? await ImageStore.shared.cleanupOrphanedFiles(referencedURLs: referencedURLs)
+        }
     }
     
     // Extracted to reduce complexity in body
@@ -544,55 +562,6 @@ struct ContentView: View {
         }
     }
 
-    private func addConversation() {
-        // Provide haptic feedback for creating new conversation
-        let haptic = UIImpactFeedbackGenerator(style: .medium)
-        haptic.impactOccurred()
-        
-        // Perform operation asynchronously to avoid blocking UI
-        Task { @MainActor in
-            // Cancel any ongoing operations before creating new conversation
-            currentViewModel?.cancelGeneration()
-            
-            // Start all new chats with the title "New Chat"
-            let convo = Conversation(title: String(localized: "New Chat"))
-            
-            // Apply reasoning mode default
-            convo.reasoningMode = reasoningModeDefault
-            
-            // Apply default system prompt to new chats if set
-            let trimmed = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                let sys = Message(role: .system, text: trimmed, order: 0, conversation: convo, isFinal: true)
-                convo.messages.append(sys)
-            }
-            
-            modelContext.insert(convo)
-            
-            do {
-                try modelContext.save()
-                // Success haptic
-                let successHaptic = UINotificationFeedbackGenerator()
-                successHaptic.notificationOccurred(.success)
-                
-                // Update selection immediately - this is safe here since we're in a button action
-                self.selection = convo
-                // Clear search when creating new conversation for better UX
-                if !searchText.isEmpty {
-                    searchText = ""
-                    isSearchFocused = false
-                }
-            } catch {
-                print("Failed to save new conversation: \(error)")
-                // Error haptic
-                let errorHaptic = UINotificationFeedbackGenerator()
-                errorHaptic.notificationOccurred(.error)
-                // Show error to user instead of silent failure
-                errorMessage = "Failed to create new conversation. Please try again."
-            }
-        }
-    }
-
     private func rename(_ conversation: Conversation) {
         // Ensure the conversation still exists and is not being modified
         guard conversations.contains(where: { $0.id == conversation.id }),
@@ -662,6 +631,7 @@ struct ContentView: View {
         }
         
         guard !toDelete.isEmpty else { return }
+        let excludedConversationIDs = Set(toDelete.map(\.id))
         
         // CRITICAL FIX: Eagerly resolve all properties before deletion to avoid SwiftData fault errors
         // Force resolution of message properties that might be accessed during UI updates
@@ -706,6 +676,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             // Success haptic for deletion
             let successHaptic = UINotificationFeedbackGenerator()
             successHaptic.notificationOccurred(.success)
@@ -734,6 +705,7 @@ struct ContentView: View {
         
         // Ensure we're not trying to delete a conversation that's already been deleted
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
+        let excludedConversationIDs: Set<UUID> = [conversationID]
         
         // Haptic feedback for deletion
         let haptic = UIImpactFeedbackGenerator(style: .medium)
@@ -760,6 +732,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             // Success haptic for deletion
             let successHaptic = UINotificationFeedbackGenerator()
             successHaptic.notificationOccurred(.success)
@@ -791,6 +764,7 @@ struct ContentView: View {
         
         // Create a copy of the conversations array to avoid modification during iteration
         let conversationsToDelete = Array(conversations)
+        let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         
         // Delete everything
         for convo in conversationsToDelete {
@@ -799,6 +773,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             // Success haptic for bulk deletion
             let successHaptic = UINotificationFeedbackGenerator()
             successHaptic.notificationOccurred(.success)
@@ -827,6 +802,7 @@ struct ContentView: View {
         
         let conversationsToDelete = conversations.filter { $0.id != current.id }
         guard !conversationsToDelete.isEmpty else { return }
+        let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         
         // Cancel operations in view model if it's for a conversation being deleted
         if let currentVM = currentViewModel,
@@ -841,6 +817,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             // Success haptic for bulk deletion
             let successHaptic = UINotificationFeedbackGenerator()
             successHaptic.notificationOccurred(.success)
@@ -931,6 +908,7 @@ struct ContentView: View {
         }
         
         guard !conversationsToDelete.isEmpty else { return }
+        let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         
         // Cancel operations for conversations being deleted
         for convo in conversationsToDelete {
@@ -956,6 +934,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             print("Auto-deleted \(conversationsToDelete.count) conversations older than \(autoDeleteDays) days")
         } catch {
             print("Failed to auto-delete old conversations: \(error)")

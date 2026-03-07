@@ -387,7 +387,7 @@ final class MLXModelManager: ObservableObject {
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
                     await MainActor.run {
-                        self.resetMemoryCaches()
+                        self.cleanupMemoryAfterLoadInterruption()
                     }
                     return
                 }
@@ -396,7 +396,7 @@ final class MLXModelManager: ObservableObject {
                     self.currentModel = model
                     self.isLoading = false
                     self.pendingModelToLoad = nil
-                    Memory.cacheLimit = 4 * 1024 * 1024
+                    self.applySteadyStateMemoryCachePolicy()
                     self.loadTask = nil
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
@@ -416,7 +416,7 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.loadTask = nil
-                    self.resetMemoryCaches()
+                    self.cleanupMemoryAfterLoadInterruption()
                 }
                 self.logger.notice("MLX container load cancelled during execution: id=\(model.id, privacy: .public)")
             } catch {
@@ -525,8 +525,7 @@ final class MLXModelManager: ObservableObject {
         print("🔥 Pre-warming LM Metal shaders...")
         // Free every cached Metal buffer before shader compilation so the compilation
         // spike has the maximum possible headroom on top of the ~3 GB model weights.
-        Memory.clearCache()
-        Memory.cacheLimit = 0
+        prepareMemoryForPrewarm()
         do {
             let warmupMsg = Chat.Message.user("Hi")
             let userInput = UserInput(chat: [warmupMsg], processing: UserInput.Processing())
@@ -538,17 +537,17 @@ final class MLXModelManager: ObservableObject {
                     throw CancellationError()
                 }
             }
-            resetMemoryCaches()
+            cleanupMemoryAfterPrewarm()
             deferredPrewarmModelID = nil
             prewarmInFlightModelID = nil
             print("✅ LM Metal shaders pre-warmed")
             logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
         } catch is CancellationError {
-            resetMemoryCaches()
+            cleanupMemoryAfterPrewarm()
             prewarmInFlightModelID = nil
             logger.notice("MLX prewarm cancelled: id=\(model.id, privacy: .public)")
         } catch {
-            resetMemoryCaches()
+            cleanupMemoryAfterPrewarm()
             prewarmInFlightModelID = nil
             print("⚠️ Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
             logger.error("MLX prewarm failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -585,11 +584,10 @@ final class MLXModelManager: ObservableObject {
         }
         // Always free the Metal buffer pool before inference — on a device where the model
         // alone consumes ~3 GB, every megabyte matters during the activation spike.
-        Memory.clearCache()
-        Memory.cacheLimit = 0
+        prepareMemoryForGeneration()
         _ = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         defer {
-            resetMemoryCaches()
+            cleanupMemoryAfterGeneration()
         }
 
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokens
@@ -671,9 +669,10 @@ final class MLXModelManager: ObservableObject {
             logger.notice(
                 "MLX tool preflight prepare succeeded: token_count=\(prepared.text.tokens.size, privacy: .public) has_image=\(prepared.image != nil, privacy: .public) has_video=\(prepared.video != nil, privacy: .public)"
             )
-            Memory.clearCache()
+            cleanupMemoryAfterToolPreflight()
         } catch {
             logger.error("MLX tool preflight prepare failed: \(error.localizedDescription, privacy: .public)")
+            cleanupMemoryAfterGenerationError()
             throw error
         }
 
@@ -858,7 +857,7 @@ final class MLXModelManager: ObservableObject {
 
             toolInvocationCount += 1
             logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
-            Memory.clearCache()
+            cleanupMemoryBeforeToolDispatch()
             let toolResult: String
             if toolInvocationCount > Self.maxToolInvocationsPerResponse {
                 logger.error(
@@ -1171,6 +1170,44 @@ final class MLXModelManager: ObservableObject {
         Memory.cacheLimit = 4 * 1024 * 1024
     }
 
+    private func applySteadyStateMemoryCachePolicy() {
+        Memory.cacheLimit = 4 * 1024 * 1024
+    }
+
+    private func prepareMemoryForPrewarm() {
+        Memory.clearCache()
+        Memory.cacheLimit = 0
+    }
+
+    private func cleanupMemoryAfterPrewarm() {
+        resetMemoryCaches()
+    }
+
+    private func prepareMemoryForGeneration() {
+        Memory.clearCache()
+        Memory.cacheLimit = 0
+    }
+
+    private func cleanupMemoryAfterGeneration() {
+        resetMemoryCaches()
+    }
+
+    private func cleanupMemoryAfterGenerationError() {
+        resetMemoryCaches()
+    }
+
+    private func cleanupMemoryAfterToolPreflight() {
+        Memory.clearCache()
+    }
+
+    private func cleanupMemoryBeforeToolDispatch() {
+        Memory.clearCache()
+    }
+
+    private func cleanupMemoryAfterLoadInterruption() {
+        resetMemoryCaches()
+    }
+
     private func tearDownCurrentModel(reason: String) {
         if container != nil || currentModel != nil || deferredPrewarmModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
@@ -1179,6 +1216,10 @@ final class MLXModelManager: ObservableObject {
         currentModel = nil
         deferredPrewarmModelID = nil
         prewarmInFlightModelID = nil
+        cleanupMemoryAfterUnload()
+    }
+
+    private func cleanupMemoryAfterUnload() {
         resetMemoryCaches()
     }
 }

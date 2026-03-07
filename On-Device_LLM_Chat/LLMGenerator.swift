@@ -12,7 +12,6 @@ protocol LLMGenerator {
     func isAvailable() -> Bool
     func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String
     func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
-    func cleanupForRegeneration()
 }
 
 extension LLMGenerator {
@@ -120,9 +119,5 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                 }
             }
         }
-    }
-
-    func cleanupForRegeneration() {
-        // Session is created fresh per call; no shared state to clean up.
     }
 }

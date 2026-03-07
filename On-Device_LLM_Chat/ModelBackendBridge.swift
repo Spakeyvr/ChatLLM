@@ -219,46 +219,6 @@ class ModelBackendBridge: ObservableObject {
         if smartReasoningMode && messageReasoningMode { return true }
         return false
     }
-
-    // MARK: - Model Information
-
-    func getThinkingModeInfo() -> ThinkingModeInfo {
-        if reasoningAvailable && selectedBackend == .mlx {
-            return ThinkingModeInfo(
-                available: true,
-                implementation: .native,
-                description: "This Qwen model has built-in thinking capabilities that can be enabled via reasoning mode.",
-                recommendation: "Enable 'Smart Reasoning' to automatically use thinking for complex questions, or 'Manual Reasoning' to use it for all responses."
-            )
-        } else if selectedBackend == .foundationModels {
-            return ThinkingModeInfo(
-                available: false,
-                implementation: .unavailable,
-                description: "Apple Foundation Models do not support reasoning mode. Switch to MLX Models (Qwen 3.5) to enable this feature.",
-                recommendation: "To use reasoning mode, switch to MLX Models backend and ensure the Qwen 3.5 model is placed in Documents/Models/."
-            )
-        } else {
-            return ThinkingModeInfo(
-                available: false,
-                implementation: .unavailable,
-                description: "Reasoning mode is only available with Qwen models.",
-                recommendation: "Ensure a Qwen 3.5 MLX model is placed in Documents/Models/Qwen3.5-4B-MLX-4bit/ or Documents/Models/Qwen3.5-2B-MLX-4bit/."
-            )
-        }
-    }
-
-    struct ThinkingModeInfo {
-        let available: Bool
-        let implementation: Implementation
-        let description: String
-        let recommendation: String
-
-        enum Implementation {
-            case native
-            case promptBased
-            case unavailable
-        }
-    }
 }
 
 // MARK: - UserDefaults Extension

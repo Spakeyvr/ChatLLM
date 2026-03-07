@@ -151,19 +151,14 @@ final class MessageAttachment {
         
         // Use actualFileURL which handles both old absolute paths and new relative paths
         let imageURL = actualFileURL
-        
-        // Perform file I/O on a background task
-        return await Task.detached(priority: .userInitiated) {
-            // Try to load from the reconstructed path
-            if let data = try? Data(contentsOf: imageURL),
-               let image = UIImage(data: data) {
-                return image
-            } else {
-                print("⚠️ Failed to load image from: \(imageURL.path)")
-                print("   File exists: \(FileManager.default.fileExists(atPath: imageURL.path))")
-                return nil
-            }
-        }.value
+
+        if let image = await DiskBackedImageLoader.loadImage(at: imageURL) {
+            return image
+        }
+
+        print("⚠️ Failed to load image from: \(imageURL.path)")
+        print("   File exists: \(FileManager.default.fileExists(atPath: imageURL.path))")
+        return nil
     }
     
     /// Get detailed detection information for display
@@ -182,54 +177,6 @@ final class MessageAttachment {
         } else {
             return "No objects detected"
         }
-    }
-}
-
-// MARK: - Migration Utilities
-
-extension MessageAttachment {
-    /// Diagnose why an image might not be loading
-    func diagnoseImageIssue() -> String {
-        var issues: [String] = []
-        
-        // Check stored URL
-        issues.append("Stored URL: \(fileURL.path)")
-        
-        // Check reconstructed URL
-        let url = actualFileURL
-        issues.append("Actual URL: \(url.path)")
-        
-        // Check if file exists
-        let fileExists = FileManager.default.fileExists(atPath: url.path)
-        issues.append("File exists: \(fileExists)")
-        
-        // Check if we can get file size
-        if fileExists {
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attrs[.size] as? Int {
-                issues.append("File size: \(size) bytes")
-            }
-        }
-        
-        // Check Attachments directory
-        if let docsURL = try? FileManager.default.url(
-            for: .documentDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        ) {
-            let attachmentsDir = docsURL.appendingPathComponent("Attachments", isDirectory: true)
-            let dirExists = FileManager.default.fileExists(atPath: attachmentsDir.path)
-            issues.append("Attachments directory exists: \(dirExists)")
-            
-            if dirExists {
-                if let files = try? FileManager.default.contentsOfDirectory(atPath: attachmentsDir.path) {
-                    issues.append("Files in Attachments: \(files.count)")
-                }
-            }
-        }
-        
-        return issues.joined(separator: "\n")
     }
 }
 
