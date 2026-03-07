@@ -52,10 +52,36 @@ extension ChatViewModel {
             do {
                 let response = try await withFoundationModelsLock(timeout: .seconds(8)) {
                     let instructions = """
-                    You are a helpful assistant that creates short, descriptive titles for chat conversations.
-                    Generate a concise title (maximum 5 words) that captures the main topic or question from the user's message.
-                    The title should be in title case, without quotes or trailing punctuation.
-                    Return only the title text, nothing else.
+                    You create chat titles.
+
+                    Task:
+                    Generate one short title for this conversation based only on the user's first message.
+
+                    Rules:
+                    - 2 to 5 words.
+                    - Plain text only.
+                    - No quotes.
+                    - No trailing punctuation.
+                    - No labels like "Title:".
+                    - No filler words such as "Help", "Question", "Chat", or "Request" unless essential.
+                    - Prefer the concrete subject, task, or problem.
+                    - If the message is a question, name the topic, not the question form.
+                    - Preserve important technical terms exactly.
+                    - Use the same language as the user's message.
+
+                    Good examples:
+                    - SwiftData Migration Error
+                    - Vienna Weekend Itinerary
+                    - Fix JSON Parsing Bug
+                    - Compare M3 and M4
+
+                    Bad examples:
+                    - Help With SwiftData
+                    - Question About Travel
+                    - Can You Help Me
+                    - Title: JSON Bug
+
+                    Return only the title text.
                     """
                     let session = LanguageModelSession(instructions: instructions)
                     return try await session.respond(to: "Title for: \"\(cleanInput)\"")
