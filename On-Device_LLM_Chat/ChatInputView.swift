@@ -102,8 +102,7 @@ struct NavigationTitleView: View {
                 ForEach(modelManager?.availableModels ?? [], id: \.id) { model in
                     if model.isAvailable {
                         Button {
-                            modelBackendBridge.selectModel(model.id, source: "chat-input.model")
-                            modelBackendBridge.selectBackend(.mlx, source: "chat-input.model")
+                            modelBackendBridge.switchToMLXModel(model.id, source: "chat-input.model")
                         } label: {
                             HStack {
                                 Text("\(model.name) (\(model.parameters))")

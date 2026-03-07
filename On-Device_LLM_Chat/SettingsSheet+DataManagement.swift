@@ -119,6 +119,7 @@ extension SettingsSheet {
         enableHaptics = true
         reasoningModeDefault = false
         messageFontSize = 16.0
+        mlxMaxOutputTokens = 1024
         autoDeleteOldChats = false
         autoDeleteDays = 30
 

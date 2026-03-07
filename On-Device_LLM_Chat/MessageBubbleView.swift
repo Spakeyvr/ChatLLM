@@ -327,33 +327,39 @@ struct StandardMessageBubble: View {
 
     @ViewBuilder
     private func renderMarkdownOrPlain(_ text: String, isSystem: Bool) -> some View {
-        if !isStreaming && lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
+        if !isStreaming && !RichTextFeatureDetector.requiresAdvancedRendering(text) &&
+            lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
             // Cache hit
             Text(cachedAttributedString!)
                 .font(.system(size: messageFontSize))
                 .foregroundStyle(isSystem ? .secondary : .primary)
         } else {
-            // Pre-process LaTeX math notation before markdown rendering
-            let processedText = LatexProcessor.process(text)
-            // Render and cache
-            Group {
-                if let attributed = try? AttributedString(markdown: processedText, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                    Text(attributed)
-                        .font(.system(size: messageFontSize))
-                        .foregroundStyle(isSystem ? .secondary : .primary)
-                        .onAppear {
-                            // Cache stable rendered output (non-streaming only).
-                            if !isStreaming {
-                                cachedAttributedString = attributed
-                                lastRenderedText = text
-                                lastRenderedFontSize = messageFontSize
+            if !RichTextFeatureDetector.requiresAdvancedRendering(text) {
+                let processedText = LatexProcessor.process(text)
+                Group {
+                    if let attributed = try? AttributedString(markdown: processedText) {
+                        Text(attributed)
+                            .font(.system(size: messageFontSize))
+                            .foregroundStyle(isSystem ? .secondary : .primary)
+                            .onAppear {
+                                if !isStreaming {
+                                    cachedAttributedString = attributed
+                                    lastRenderedText = text
+                                    lastRenderedFontSize = messageFontSize
+                                }
                             }
-                        }
-                } else {
-                    Text(processedText.isEmpty ? " " : processedText)
-                        .font(.system(size: messageFontSize))
-                        .foregroundStyle(isSystem ? .secondary : .primary)
+                    } else {
+                        Text(processedText.isEmpty ? " " : processedText)
+                            .font(.system(size: messageFontSize))
+                            .foregroundStyle(isSystem ? .secondary : .primary)
+                    }
                 }
+            } else {
+                RichMarkdownView(
+                    text: text,
+                    fontSize: messageFontSize,
+                    textTone: isSystem ? .secondary : .primary
+                )
             }
         }
     }
@@ -447,22 +453,10 @@ struct ReasoningMessageBubble: View {
                                     .lineLimit(nil)
                                     .fixedSize(horizontal: false, vertical: true)
                             } else {
-                                let processedFinal = LatexProcessor.process(finalText)
-                                if let attributed = try? AttributedString(markdown: processedFinal, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                                    Text(attributed)
-                                        .font(.system(size: messageFontSize))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .lineLimit(nil)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                } else {
-                                    Text(processedFinal)
-                                        .font(.system(size: messageFontSize))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .lineLimit(nil)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
+                                RichMarkdownView(text: finalText, fontSize: messageFontSize)
+                                    .textSelection(.enabled)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
 
@@ -614,20 +608,12 @@ struct SourcesSheetView: View {
 
                     // Sources content
                     VStack(alignment: .leading, spacing: 12) {
-                        if let attributed = try? AttributedString(
-                            markdown: sourcesText,
-                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                        ) {
-                            Text(attributed)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text(sourcesText)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        RichMarkdownView(
+                            text: sourcesText,
+                            fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
+                            forceAdvancedRenderer: true
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding()

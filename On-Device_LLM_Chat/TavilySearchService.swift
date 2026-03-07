@@ -61,6 +61,27 @@ extension TavilySearchResponse {
     }
 }
 
+private struct TavilyAPIErrorResponse: Decodable, Sendable {
+    let detail: String?
+    let message: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case detail
+        case message
+        case error
+    }
+}
+
+extension TavilyAPIErrorResponse {
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        self.message = try container.decodeIfPresent(String.self, forKey: .message)
+        self.error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 /// Errors
 enum TavilySearchError: LocalizedError {
     case invalidQuery
@@ -95,18 +116,20 @@ actor TavilySearchService {
     }
     
     func search(query: String, maxResults: Int = 5, searchDepth: String = "basic") async throws -> String {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
             throw TavilySearchError.invalidQuery
         }
         
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         
         // IMPORTANT: Do NOT ask Tavily for an AI summary. We only want raw citations.
         let body: [String: Any] = [
-            "api_key": apiKey,
-            "query": query,
+            "query": trimmedQuery,
             "search_depth": searchDepth,
             "max_results": maxResults,
             "include_answer": false  // Disable AI summary
@@ -115,9 +138,20 @@ actor TavilySearchService {
         
         let (data, response) = try await session.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw TavilySearchError.networkError(NSError(domain: "Tavily", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TavilySearchError.networkError(
+                NSError(domain: "Tavily", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+            )
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = parseErrorMessage(from: data) ?? "Tavily request failed with status \(httpResponse.statusCode)"
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw TavilySearchError.invalidAPIKey
+            }
+            throw TavilySearchError.networkError(
+                NSError(domain: "Tavily", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            )
         }
         
         let decoder = JSONDecoder()
@@ -128,7 +162,7 @@ actor TavilySearchService {
             throw TavilySearchError.noResults
         }
         
-        return formatResults(result, query: query)
+        return formatResults(result, query: trimmedQuery)
     }
     
     private func formatResults(_ response: TavilySearchResponse, query: String) -> String {
@@ -150,5 +184,12 @@ actor TavilySearchService {
         while lines.last?.isEmpty == true { _ = lines.popLast() }
         return lines.joined(separator: "\n")
     }
-}
 
+    private func parseErrorMessage(from data: Data) -> String? {
+        guard !data.isEmpty else { return nil }
+        if let decoded = try? JSONDecoder().decode(TavilyAPIErrorResponse.self, from: data) {
+            return decoded.detail ?? decoded.message ?? decoded.error
+        }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

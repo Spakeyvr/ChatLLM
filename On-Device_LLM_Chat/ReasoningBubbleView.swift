@@ -98,23 +98,15 @@ struct CoTStepView: View {
                         .foregroundStyle(.primary)
                 }
 
-                if let attributed = try? AttributedString(markdown: step.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                    Text(attributed)
-                        .font(.system(size: messageFontSize * 0.85))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
-                } else {
-                    Text(step.content)
-                        .font(.system(size: messageFontSize * 0.85))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
-                }
+                RichMarkdownView(
+                    text: step.content,
+                    fontSize: messageFontSize * 0.85,
+                    textTone: .secondary
+                )
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
             }
             .padding(.vertical, 8)
             .padding(.trailing, 16)
@@ -143,46 +135,95 @@ struct StepByStepReasoningSheet: View {
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
 
+    private enum TimelineItem: Identifiable {
+        case reasoningChunk(Int, String)
+        case search(SearchInvocation)
+
+        var id: String {
+            switch self {
+            case .reasoningChunk(let index, _):
+                return "reasoning-\(index)"
+            case .search(let invocation):
+                return "search-\(invocation.id.uuidString)"
+            }
+        }
+    }
+
+    private var timelineItems: [TimelineItem] {
+        let chunks = reasoningChunks
+        let searches = (searchInvocations ?? []).sorted { lhs, rhs in
+            if lhs.anchorStepNumber == rhs.anchorStepNumber {
+                return lhs.timestamp < rhs.timestamp
+            }
+            return (lhs.anchorStepNumber ?? 0) < (rhs.anchorStepNumber ?? 0)
+        }
+
+        guard !chunks.isEmpty else {
+            return searches.map(TimelineItem.search)
+        }
+
+        var items: [TimelineItem] = []
+
+        let leadingSearches = searches.filter { ($0.anchorStepNumber ?? 0) <= 0 }
+        items.append(contentsOf: leadingSearches.map(TimelineItem.search))
+
+        for (index, chunk) in chunks.enumerated() {
+            items.append(.reasoningChunk(chunk.index, chunk.text))
+            let anchoredSearches = searches.filter { $0.anchorStepNumber == index + 1 }
+            items.append(contentsOf: anchoredSearches.map(TimelineItem.search))
+        }
+
+        let trailingSearches = searches.filter { ($0.anchorStepNumber ?? 0) > chunks.count }
+        items.append(contentsOf: trailingSearches.map(TimelineItem.search))
+
+        return items
+    }
+
+    private var reasoningChunks: [(index: Int, text: String)] {
+        let trimmed = reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let chunks = trimmed
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if chunks.isEmpty {
+            return [(0, trimmed)]
+        }
+
+        return Array(chunks.enumerated()).map { ($0.offset, $0.element) }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Search cards at the top — clearly separated from reasoning
-                    if let invocations = searchInvocations, !invocations.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label {
-                                Text("\(invocations.count) Web Search\(invocations.count == 1 ? "" : "es") Performed")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                            } icon: {
-                                Image(systemName: "globe.americas.fill")
-                                    .foregroundStyle(.teal)
-                            }
-
-                            SearchInvocationsList(invocations: invocations) { invocation in
-                                selectedInvocation = invocation
+                    if !timelineItems.isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(Array(timelineItems.enumerated()), id: \.element.id) { index, item in
+                                switch item {
+                                case .reasoningChunk(_, let text):
+                                    RawReasoningChunkView(
+                                        text: text,
+                                        isLast: index == timelineItems.count - 1
+                                    )
+                                case .search(let invocation):
+                                    SearchStepCard(invocation: invocation) {
+                                        selectedInvocation = invocation
+                                    }
+                                    .padding(.bottom, index == timelineItems.count - 1 ? 0 : 20)
+                                }
                             }
                         }
-                        .padding(.bottom, 20)
-                    }
-
-                    if !reasoning.isEmpty {
-                        let processed = LatexProcessor.process(reasoning)
+                    } else if !reasoning.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
-                            if let attributed = try? AttributedString(markdown: processed,
-                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                                Text(attributed)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                Text(processed)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                            RichMarkdownView(
+                                text: reasoning,
+                                fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
+                                forceAdvancedRenderer: true
+                            )
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .padding()
                         .background {
@@ -211,6 +252,25 @@ struct StepByStepReasoningSheet: View {
                 searchQuery: invocation.query
             )
         }
+    }
+}
+
+struct RawReasoningChunkView: View {
+    let text: String
+    let isLast: Bool
+    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RichMarkdownView(
+                text: text,
+                fontSize: messageFontSize,
+                forceAdvancedRenderer: true
+            )
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.bottom, isLast ? 0 : 20)
     }
 }
 
@@ -266,23 +326,11 @@ struct StepCard: View {
                     .fixedSize()
 
                 VStack(alignment: .leading, spacing: 0) {
-                    if let attributed = try? AttributedString(markdown: step.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                        Text(attributed)
-                            .font(.system(size: messageFontSize))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .multilineTextAlignment(.leading)
-                    } else {
-                        Text(step.content)
-                            .font(.system(size: messageFontSize))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .multilineTextAlignment(.leading)
-                    }
+                    RichMarkdownView(text: step.content, fontSize: messageFontSize)
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -301,7 +349,11 @@ struct SearchStepCard: View {
         let lines = invocation.results.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        let count = lines.filter { $0.hasPrefix("Title:") || $0.hasPrefix("- ") }.count
+        let count = lines.filter {
+            $0.hasPrefix("Title:") ||
+            $0.hasPrefix("- ") ||
+            $0.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil
+        }.count
         if count > 0 {
             return "\(count) result\(count == 1 ? "" : "s") found"
         }
@@ -311,58 +363,48 @@ struct SearchStepCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.teal.opacity(0.25))
-                        .frame(width: 36, height: 36)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .padding(.top, 2)
 
-                    Image(systemName: "globe.americas.fill")
-                        .font(.system(size: 17))
-                        .foregroundStyle(.teal)
-                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Searched the web")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text("Web Search")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.teal)
-                            .textCase(.uppercase)
-                            .tracking(0.4)
+                        Spacer(minLength: 0)
 
-                        Spacer()
-
-                        Text("View results")
-                            .font(.caption2)
-                            .foregroundStyle(.teal)
-
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.teal)
+                        Text("Open")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
 
                     Text(invocation.query)
                         .font(.subheadline)
-                        .fontWeight(.medium)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
 
                     Text(resultSnippet)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.teal.opacity(0.08))
+                    .fill(.thinMaterial)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.teal.opacity(0.5), lineWidth: 1.5)
+                    .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)

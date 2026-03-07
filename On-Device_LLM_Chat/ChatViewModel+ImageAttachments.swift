@@ -64,10 +64,16 @@ extension ChatViewModel {
         detections: [DetectedObject]?,
         analysisResult: VisionAnalysisResult?
     ) async {
-        // Reasoning mode is forced off for native VLM queries.
-        // Chain-of-thought generates thousands of tokens that grow the KV cache
-        // well beyond iPhone memory limits when combined with visual tokens.
-        let shouldUseReasoning = false
+        let shouldUseReasoning: Bool
+        do {
+            shouldUseReasoning = try await shouldUseReasoningForPrompt(userPrompt)
+        } catch let reasoningError as ReasoningEvaluationError {
+            print("Error determining reasoning mode for native image query, using fallback: \(reasoningError.localizedDescription)")
+            shouldUseReasoning = reasoningError.fallbackResult
+        } catch {
+            print("Unexpected error determining reasoning mode for native image query: \(error)")
+            shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
+        }
 
         guard !Task.isCancelled else { return }
 

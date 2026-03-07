@@ -154,8 +154,7 @@ struct ModelSelectionView: View {
 
     private func selectModel(_ model: MLXModelManager.MLXModelInfo) {
         guard model.isAvailable else { return }
-        modelBackendBridge.selectModel(model.id, source: "model-selection-sheet")
-        modelBackendBridge.selectBackend(.mlx, source: "model-selection-sheet")
+        modelBackendBridge.switchToMLXModel(model.id, source: "model-selection-sheet")
     }
 
     private func deleteModel(_ model: MLXModelManager.MLXModelInfo) {

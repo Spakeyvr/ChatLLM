@@ -228,9 +228,6 @@ private struct AddOptionsSheet: View {
                         }
                     }
 
-                    Divider()
-                        .padding(.horizontal, 20)
-
                     Toggle(isOn: $forceSearch) {
                         Label {
                             Text("Web Search")

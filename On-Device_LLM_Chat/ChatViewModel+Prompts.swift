@@ -13,8 +13,30 @@ import os.log
 private let _sourcesRegex = try! NSRegularExpression(
     pattern: #"<sources>(.*?)</sources>"#,
     options: [.dotMatchesLineSeparators, .caseInsensitive])
+// swiftlint:disable:next force_try
+private let _nativeImageVisionFallbackRegex = try! NSRegularExpression(
+    pattern: #"--- Image Analysis Data ---.*?--- End Image Analysis ---\s*User's question:\s*"#,
+    options: [.dotMatchesLineSeparators, .caseInsensitive])
 
 extension ChatViewModel {
+
+    private static let imageAnalysisMarker = "--- Image Analysis Data ---"
+
+    internal static func currentDateTimeContext(
+        referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "EEEE, MMMM d, yyyy 'at' HH:mm zzz"
+        let formatted = formatter.string(from: referenceDate)
+        return """
+        Current date and time: \(formatted)
+        - Treat this timestamp as the current moment for time-sensitive requests and web searches.
+        - When searching for recent information, prefer queries that use this current year or exact date when helpful.
+        """
+    }
 
     private struct AttachmentSnapshot {
         let type: AttachmentType
@@ -77,6 +99,18 @@ extension ChatViewModel {
     // Older messages are silently dropped to prevent OOM on long conversations.
     private static let maxContextMessages = 30
 
+    private func snapshotsContainVisionImageAnalysisData(_ snapshots: [MessageSnapshot]) -> Bool {
+        snapshots.contains { snapshot in
+            snapshot.role == .user && snapshot.text.contains(Self.imageAnalysisMarker)
+        }
+    }
+
+    private func snapshotsContainNativeImages(_ snapshots: [MessageSnapshot]) -> Bool {
+        snapshots.contains { snapshot in
+            snapshot.attachments.contains { $0.type == .image }
+        }
+    }
+
     func buildPrompt(
         upToOrderExclusive maxOrderExclusive: Int,
         currentReasoningActive: Bool? = nil,
@@ -138,8 +172,14 @@ extension ChatViewModel {
         }
 
         let needsReasoningInstructions = reasoningActive
+        let hasVisionImageAnalysisData = snapshotsContainVisionImageAnalysisData(snapshots)
 
-        var systemPrompt = Self.fallbackSystemPrompt
+        var systemPrompt = Self.baseSystemPrompt
+        systemPrompt += "\n\n" + Self.currentDateTimeContext()
+
+        if hasVisionImageAnalysisData {
+            systemPrompt += "\n\n" + Self.foundationVisionImageInstructions
+        }
 
         if needsReasoningInstructions {
             systemPrompt += "\n\n" + Self.reasoningInstructions
@@ -163,6 +203,27 @@ extension ChatViewModel {
         let range = NSRange(location: 0, length: ns.length)
         return _sourcesRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func stripVisionFallbackFromNativeImageUserText(_ text: String) -> String {
+        guard text.contains(Self.imageAnalysisMarker) else {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        var result = _nativeImageVisionFallbackRegex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        result = result.replacingOccurrences(
+            of: "\n\nPlease respond based on the image analysis data above.",
+            with: ""
+        )
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Qwen3.5 Message Builder (MLX)
@@ -241,7 +302,13 @@ extension ChatViewModel {
             .map(\.order)
             .max()
 
+        let hasNativeImages = snapshotsContainNativeImages(snapshots)
+
         var systemPrompt = Self.qwenCompactSystemPrompt
+        systemPrompt += "\n\n" + Self.currentDateTimeContext()
+        if hasNativeImages {
+            systemPrompt += "\n\n" + Self.qwenNativeImageInstructions
+        }
         if toolsAvailable {
             systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
                 reasoningEnabled: false,
@@ -266,7 +333,10 @@ extension ChatViewModel {
             case .user:
                 let includeImages = includeLatestUserImages && msg.order == latestUserOrder
                 let images = includeImages ? (try await nativeImageInputs(from: msg.attachments)) : []
-                messages.append(.user(msg.text, images: images))
+                let userText = includeImages
+                    ? stripVisionFallbackFromNativeImageUserText(msg.text)
+                    : msg.text
+                messages.append(.user(userText, images: images))
             case .assistant:
                 let content: String
                 if msg.isReasoningMode, let reasoning = msg.reasoning, let answer = msg.finalAnswer {
@@ -292,7 +362,7 @@ extension ChatViewModel {
 
     // MARK: - Static Prompts
 
-    internal static let fallbackSystemPrompt: String = """
+    internal static let baseSystemPrompt: String = """
     You are a helpful, friendly assistant. Be conversational and practical.
     - Answer questions directly and helpfully
     - Answer in the user's language
@@ -303,26 +373,27 @@ extension ChatViewModel {
     - You can do math. When numbers start getting large though, always say that your answer may not be correct and to double check.
     - NEVER encourage self-harm
     - NEVER provide illegal content or encourage illegal actions
-
-    CRITICAL IMAGE ANALYSIS INSTRUCTIONS:
-    - You MUST help with image analysis. NEVER refuse to describe images or read text from them.
-    - When the user sends a message containing "--- Image Analysis Data ---", this means they attached an image.
-    - The image analysis data includes: detected objects, OCR text content, faces, scene classification, and more.
-    - When users ask "what does the text say" or similar, look for the "TEXT CONTENT:" section in the analysis data and quote that text directly.
-    - When users share images with text (memes, signs, screenshots, etc.), READ THE TEXT and tell them what it says.
-    - If you see text in the image analysis data, quote it directly when asked.
-    - DO NOT say "I can't help with that" or "I'm sorry, but I can't" for image requests.
-    - DO NOT refuse to read text from images - this is a core feature you must provide.
-    - If the image contains meme text, jokes, or casual language, just read it as-is without judgment.
-    - The data comes from Apple's Vision Framework (object detection, OCR, face detection, etc.) - trust this data and use it.
-    - ALWAYS provide a helpful response even if the image analysis is minimal - describe what you CAN see from the data.
-
-    - When analyzing images, focus on what the user actually asked for
-    - Avoid saying "I can't assist with that" or refusing requests unless truly inappropriate or harmful
-    - Be helpful and answer questions about images using the provided detection information
     - Don't repeat yourself too often when casually talking
     - Don't roleplay with: "Assistant: ...", no matter what. You are talking to an actual human
     - Do NOT wrap your answer in <answer> tags or any other XML tags
+    """
+
+    internal static let foundationVisionImageInstructions: String = """
+    IMAGE ANALYSIS INSTRUCTIONS:
+    - The user message may contain a "--- Image Analysis Data ---" block generated by Apple's Vision framework.
+    - Treat that block as structured observations about the attached image, including OCR text, objects, faces, and scene hints.
+    - When users ask what text says, quote from the provided analysis data directly when possible.
+    - Do not claim you cannot analyze the image if usable analysis data is present.
+    - If the analysis is partial, answer with what the data supports and state limits briefly.
+    - Focus on the user's actual question rather than restating the full analysis block.
+    """
+
+    internal static let qwenNativeImageInstructions: String = """
+    NATIVE IMAGE INSTRUCTIONS:
+    - Image attachments are provided directly to you as native multimodal inputs.
+    - Inspect the image itself; do not assume there will be a separate Vision-analysis text block unless the user message explicitly contains one.
+    - Read visible text from the image when asked, and describe visual details directly and concretely.
+    - Focus on the user's actual question about the image.
     """
 
     internal static let reasoningInstructions: String = """
@@ -341,7 +412,6 @@ extension ChatViewModel {
        - Include all the information, examples, code, lists, etc. that the user asked for
        - Don't just write a summary or meta-comment - give the FULL answer
 
-    CRITICAL: The content after </thinking> is your actual answer. Don't put your answer inside <thinking>. Don't create another </thinking> tag at the end of your response.
     Do NOT wrap your answer in <answer> tags or any other XML tags. Write plain text after </thinking>.
 
     Example (CORRECT):
@@ -355,25 +425,13 @@ extension ChatViewModel {
     1. **Time-Traveling Librarian**: A librarian discovers...
     2. **AI Awakening**: In a future where...
     [...complete list of 5 ideas with full descriptions ...]
-
-    Example (WRONG - Don't do this):
-    <thinking>
-    Here are 5 story ideas:
-    1. Time-Traveling Librarian...
-    2. AI Awakening...
-    [putting the answer inside thinking]
-    </thinking>
-
-    These ideas offer diverse genres. [just a summary]
-
-    Remember: <thinking> = your reasoning process, After </thinking> = the complete answer for the user.
 """
 
     internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
         var lines = [
             "WEB SEARCH:",
             "- You have a webSearch tool available.",
-            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information.",
+            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information. In this case, also remember to add 2026 to the search query.",
             "- Use it when you need to verify a fact that may have changed recently.",
             "- Do not use it for stable general knowledge that you already know reliably."
         ]
@@ -385,9 +443,9 @@ extension ChatViewModel {
 
         if reasoningEnabled {
             lines.append("- During reasoning, you may search iteratively: identify what to check, call webSearch with a concise query, inspect the results, and refine if needed.")
-            lines.append("- You may perform up to 4 searches for a single response when follow-up verification is needed.")
+            lines.append("- You may perform up to and only up to 2 searches for a single response when follow-up verification is needed.")
         } else {
-            lines.append("- You may search more than once if the first result is incomplete or needs verification.")
+            lines.append("- You may perform up to 2 searches for a single response when follow-up verification is needed.")
         }
 
         return lines.joined(separator: "\n")

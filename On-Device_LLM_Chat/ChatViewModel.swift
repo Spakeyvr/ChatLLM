@@ -13,7 +13,7 @@ import UIKit
 import FoundationModels
 import Security  // For Keychain
 import os.log
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 
 // Resolve ambiguities between MLXLMCommon and SwiftData/FoundationModels
 typealias ModelContext = SwiftData.ModelContext
@@ -37,6 +37,7 @@ final class ChatViewModel: ObservableObject {
     // Tavily search service (user-configurable)
     var searchService: TavilySearchService?
     private var keyChangeCancellable: AnyCancellable?
+    private var modelPipelineResetCancellable: AnyCancellable?
 
     // Thread-safe order calculation to prevent race conditions
     internal var nextOrder: Int {
@@ -56,7 +57,8 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Timeouts
     // Give the first token longer (model load/warm-up), then enforce a tighter per-chunk timeout.
     private let firstTokenTimeout: Duration = .seconds(30)
-    private let chunkTimeout: Duration = .seconds(10)
+    private let chunkTimeout: Duration = .seconds(20)
+    private let reasoningChunkTimeout: Duration = .seconds(30)
 
     // Keychain constants for Tavily API key storage
     let tavilyKeyService = "com.yourapp.tavily"  // Replace with your app's bundle ID
@@ -100,12 +102,20 @@ final class ChatViewModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.loadTavilyAPIKey()
             }
+
+        modelPipelineResetCancellable = NotificationCenter.default.publisher(for: .modelPipelineWillReset)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.cancelGeneration()
+                }
+            }
     }
 
     deinit {
         pendingSaveTask?.cancel()
         currentStreamTask?.cancel()
         keyChangeCancellable?.cancel()
+        modelPipelineResetCancellable?.cancel()
     }
 
     // MARK: - Coalesced Save
@@ -162,6 +172,58 @@ final class ChatViewModel: ObservableObject {
         } catch {
             print("Failed to immediately save context: \(error)")
         }
+    }
+
+    internal static func mergeSearchInvocations(
+        _ liveInvocations: [SearchInvocation],
+        preservingAnchorsFrom existingInvocations: [SearchInvocation],
+        currentChunkCount: Int
+    ) -> [SearchInvocation] {
+        guard !liveInvocations.isEmpty else { return [] }
+
+        let existingByID = Dictionary(uniqueKeysWithValues: existingInvocations.map { ($0.id, $0) })
+
+        return liveInvocations.map { invocation in
+            if let existing = existingByID[invocation.id] {
+                var merged = invocation
+                merged.anchorStepNumber = existing.anchorStepNumber ?? invocation.anchorStepNumber
+                return merged
+            }
+
+            var anchored = invocation
+            if anchored.anchorStepNumber == nil {
+                anchored.anchorStepNumber = max(0, currentChunkCount)
+            }
+            return anchored
+        }
+    }
+
+    private func syncLiveSearchInvocations(into message: Message, from bridge: AppWebSearchToolBridge?) {
+        guard let bridge else { return }
+        let liveInvocations = bridge.allInvocations
+        guard !liveInvocations.isEmpty else { return }
+
+        let currentChunkCount = reasoningChunkCount(for: message.reasoning)
+        let merged = Self.mergeSearchInvocations(
+            liveInvocations,
+            preservingAnchorsFrom: message.searchInvocations ?? [],
+            currentChunkCount: currentChunkCount
+        )
+
+        message.searchInvocations = merged
+    }
+
+    private func reasoningChunkCount(for reasoning: String?) -> Int {
+        guard let reasoning else { return 0 }
+        let trimmed = reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+
+        let chunks = trimmed
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return max(1, chunks.count)
     }
 
     // MARK: - Public controls
@@ -548,12 +610,14 @@ final class ChatViewModel: ObservableObject {
             var lastModelWrite: Date = .distantPast
             var lastRenderedLength = 0
             var outcome: StreamOutcome = .succeeded
+            let activeChunkTimeout = targetToReset.isReasoningMode ? self.reasoningChunkTimeout : self.chunkTimeout
 
             // Shared throttle helper — captures local streaming vars by reference
             @MainActor func renderIfThrottled(target: Message) {
                 let hasEnoughDelta = lastRenderedLength == 0 || (cumulativeSoFar.count - lastRenderedLength) >= 24
                 let now = Date()
                 guard now.timeIntervalSince(lastModelWrite) >= 0.12 && hasEnoughDelta else { return }
+                self.syncLiveSearchInvocations(into: target, from: webSearchBridge)
                 self.updateMessageWithReasoningContent(target, fullText: cumulativeSoFar, finalize: false)
                 lastModelWrite = now
                 lastRenderedLength = cumulativeSoFar.count
@@ -574,7 +638,7 @@ final class ChatViewModel: ObservableObject {
                         let isReasoning = targetToReset.isReasoningMode
                         let msgs = mlxMessages ?? []
                         let useMemoryConstrainedMLX = false
-                        stream = AsyncThrowingStream { continuation in
+                        stream = TaskBackedAsyncThrowingStream.make { continuation in
                             Task { @MainActor in
                                 do {
                                     let result = try await manager.generateTextStream(
@@ -588,6 +652,8 @@ final class ChatViewModel: ObservableObject {
                                     self.logger.notice(
                                         "streamAssistant MLX generation finished: tool_invocations=\(result.toolInvocationCount, privacy: .public) question_preview=\(questionLogPreview, privacy: .public)"
                                     )
+                                    continuation.finish()
+                                } catch is CancellationError {
                                     continuation.finish()
                                 } catch {
                                     continuation.finish(throwing: error)
@@ -613,7 +679,7 @@ final class ChatViewModel: ObservableObject {
                 while !Task.isCancelled {
                     let nextChunk: String?
                     do {
-                        nextChunk = try await self.withTimeout(wroteAny ? self.chunkTimeout : self.firstTokenTimeout) {
+                        nextChunk = try await self.withTimeout(wroteAny ? activeChunkTimeout : self.firstTokenTimeout) {
                             try await iterator.next()
                         }
                     } catch let timeout as GenerationTimeoutError {
@@ -684,6 +750,7 @@ final class ChatViewModel: ObservableObject {
 
                 // Final unconditional flush to ensure last tokens are written
                 if wroteAny, let finalTarget = self.conversation.messages.first(where: { $0.id == targetID }) {
+                    self.syncLiveSearchInvocations(into: finalTarget, from: webSearchBridge)
                     self.updateMessageWithReasoningContent(finalTarget, fullText: cumulativeSoFar, finalize: true)
                     self.conversation.lastUpdated = Date()
                     self.scheduleCoalescedSave()
@@ -724,11 +791,17 @@ final class ChatViewModel: ObservableObject {
             )
             if !capturedInvocations.isEmpty {
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
+                    let storedInvocations = Self.mergeSearchInvocations(
+                        capturedInvocations,
+                        preservingAnchorsFrom: target.searchInvocations ?? [],
+                        currentChunkCount: self.reasoningChunkCount(for: target.reasoning)
+                    )
+
                     // Store all invocations on the message for per-search UI
-                    target.searchInvocations = capturedInvocations
+                    target.searchInvocations = storedInvocations
 
                     // Build combined sources block for backward-compat text extraction
-                    let combinedResults = capturedInvocations.map { $0.results }.joined(separator: "\n\n")
+                    let combinedResults = storedInvocations.map { $0.results }.joined(separator: "\n\n")
                     let sourcesBlock = "<sources>\n\(combinedResults)\n</sources>\n\n"
                     if target.isReasoningMode {
                         let existing = target.finalAnswer ?? ""

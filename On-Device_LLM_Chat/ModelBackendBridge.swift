@@ -114,29 +114,65 @@ class ModelBackendBridge: ObservableObject {
 
     /// Switch to a different backend
     func selectBackend(_ backend: Backend, source: String = "unknown") {
-        selectedBackend = backend
-        UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
-
-        if backend == .mlx {
-            let modelIDToLoad = selectedModelID ?? modelManager?.availableModels.first(where: \.isAvailable)?.id
-            modelManager?.startLoading(modelID: modelIDToLoad, source: source)
-        } else {
+        switch backend {
+        case .foundationModels:
+            let shouldResetPipelines =
+                selectedBackend != .foundationModels ||
+                modelManager?.currentModel != nil ||
+                modelManager?.isLoading == true
+            selectedBackend = .foundationModels
+            UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+            guard shouldResetPipelines else { return }
+            notifyPipelineReset(reason: "backend.foundationModels")
             modelManager?.unloadAllModels()
+        case .mlx:
+            let modelIDToLoad = selectedModelID ?? modelManager?.availableModels.first(where: \.isAvailable)?.id
+            guard let modelIDToLoad else {
+                selectedBackend = .mlx
+                UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+                return
+            }
+            switchToMLXModel(modelIDToLoad, source: source)
         }
     }
 
     /// Select a specific model by ID
     func selectModel(_ modelID: String, source: String = "unknown") {
-        if selectedModelID == modelID,
-           selectedBackend == .mlx,
-           modelManager?.currentModel?.id == modelID {
+        if selectedBackend == .mlx {
+            switchToMLXModel(modelID, source: source)
             return
         }
+
         selectedModelID = modelID
         UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
-        if selectedBackend == .mlx, let model = modelManager?.model(withID: modelID), model.isAvailable {
-            modelManager?.startLoading(modelID: model.id, source: source)
+    }
+
+    func switchToMLXModel(_ modelID: String, source: String = "unknown") {
+        selectedModelID = modelID
+        selectedBackend = .mlx
+        UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
+        UserDefaults.standard.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
+
+        guard let manager = modelManager,
+              let model = manager.model(withID: modelID),
+              model.isAvailable else {
+            return
         }
+
+        let isAlreadyLoaded = manager.currentModel?.id == modelID && !manager.isLoading
+        let isAlreadyPending = manager.pendingModelToLoad?.id == modelID && manager.isLoading
+        guard !isAlreadyLoaded, !isAlreadyPending else { return }
+
+        notifyPipelineReset(reason: "backend.mlx.\(modelID)")
+        manager.startLoading(modelID: modelID, source: source)
+    }
+
+    private func notifyPipelineReset(reason: String) {
+        NotificationCenter.default.post(
+            name: .modelPipelineWillReset,
+            object: self,
+            userInfo: ["reason": reason]
+        )
     }
 
     // MARK: - Model-Specific Features
@@ -227,7 +263,25 @@ class ModelBackendBridge: ObservableObject {
 
 // MARK: - UserDefaults Extension
 
+extension Notification.Name {
+    static let modelPipelineWillReset = Notification.Name("ModelPipelineWillReset")
+}
+
 extension UserDefaults {
+    var mlxMaxOutputTokens: Int {
+        get {
+            let storedValue = integer(forKey: "mlxMaxOutputTokens")
+            if storedValue == 0 {
+                return 1024
+            }
+            return min(max(storedValue, 512), 1024)
+        }
+        set {
+            let clampedValue = min(max(newValue, 512), 1024)
+            set(clampedValue, forKey: "mlxMaxOutputTokens")
+        }
+    }
+
     var selectedLLMBackend: String {
         get { string(forKey: "selectedLLMBackend") ?? ModelBackendBridge.Backend.foundationModels.rawValue }
         set { set(newValue, forKey: "selectedLLMBackend") }

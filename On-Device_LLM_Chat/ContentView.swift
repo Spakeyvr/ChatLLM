@@ -187,12 +187,25 @@ struct ContentView: View {
     private func handleErrorMessageChange(_ old: String?, _ new: String?) {
         isErrorAlertPresented = (new != nil)
     }
+
+    private var activeChatViewModel: ChatViewModel? {
+        guard let vm = currentViewModel else { return nil }
+
+        if let draft = draftConversation, vm.conversation.id == draft.id {
+            return vm
+        }
+
+        if let convo = selection, vm.conversation.id == convo.id {
+            return vm
+        }
+
+        return nil
+    }
     
     // Extracted to reduce complexity in body
     @ViewBuilder
     private var detailContent: some View {
-        if let draft = draftConversation, let vm = currentViewModel, vm.conversation.id == draft.id {
-            // Draft mode: show the chat UI before the conversation is persisted.
+        if let vm = activeChatViewModel {
             ChatView(viewModel: vm, onNewChat: { startDraftChat() })
                 .overlay(availabilityOverlay())
         } else if let convo = selection {

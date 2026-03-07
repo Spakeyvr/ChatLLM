@@ -18,6 +18,15 @@ extension ChatViewModel {
 
     // MARK: - Web Search Helpers
 
+    internal static func timeSensitiveYearTokens(referenceDate: Date = Date()) -> [String] {
+        let currentYear = Calendar.current.component(.year, from: referenceDate)
+        return [
+            String(currentYear - 1),
+            String(currentYear),
+            String(currentYear + 1)
+        ]
+    }
+
     // Cached regex patterns for stripping legacy search tags from stored messages.
     static let searchPatterns: [NSRegularExpression] = {
         let patterns = [
@@ -40,7 +49,7 @@ extension ChatViewModel {
         let timeSpecificKeywords = [
             "today", "yesterday", "this week", "this month", "this year", "now", "currently",
             "latest", "newest", "most recent", "just released", "breaking", "live",
-            "2024", "2025"
+            "this quarter"
         ]
 
         let contextualKeywords = [
@@ -72,7 +81,8 @@ extension ChatViewModel {
             }
         }
 
-        if timeSpecificKeywords.contains(where: { q.contains($0) }) {
+        if timeSpecificKeywords.contains(where: { q.contains($0) }) ||
+            Self.timeSensitiveYearTokens().contains(where: { q.contains($0) }) {
             return true
         }
 

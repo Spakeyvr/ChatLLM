@@ -28,8 +28,7 @@ struct ModelPickerView: View {
             let bridge = ModelBackendBridge.shared
             ForEach(bridge.modelManager?.availableModels.filter(\.isAvailable) ?? [], id: \.id) { model in
                 Button {
-                    bridge.selectModel(model.id, source: "nav-picker.model")
-                    bridge.selectBackend(.mlx, source: "nav-picker.model")
+                    bridge.switchToMLXModel(model.id, source: "nav-picker.model")
                 } label: {
                     HStack {
                         Text("\(model.name) (\(model.parameters))")

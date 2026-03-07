@@ -332,7 +332,7 @@ final class MLXModelManager: ObservableObject {
             )
         }
 
-        cancelCurrentLoad(reason: "superseded by \(model.id)")
+        cancelCurrentLoad(reason: "superseded by \(model.id)", tearDownModel: false)
         tearDownCurrentModel(reason: "preparing to load \(model.id)")
         activeLoadID = loadID
         load(model, loadID: loadID, source: source)
@@ -342,7 +342,7 @@ final class MLXModelManager: ObservableObject {
         availableModels.first(where: { $0.id == id })
     }
 
-    func cancelCurrentLoad(reason: String = "cancelled") {
+    func cancelCurrentLoad(reason: String = "cancelled", tearDownModel: Bool = true) {
         loadTask?.cancel()
         loadTask = nil
         logger.notice("MLX load cancelled: reason=\(reason, privacy: .public)")
@@ -353,7 +353,9 @@ final class MLXModelManager: ObservableObject {
         if activeLoadID != nil {
             activeLoadID = nil
         }
-        tearDownCurrentModel(reason: "cancelCurrentLoad(\(reason))")
+        if tearDownModel {
+            tearDownCurrentModel(reason: "cancelCurrentLoad(\(reason))")
+        }
     }
 
     func cancelAndLoad(_ model: MLXModelInfo) {
@@ -384,6 +386,9 @@ final class MLXModelManager: ObservableObject {
                 guard !Task.isCancelled else { return }
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
+                    await MainActor.run {
+                        self.resetMemoryCaches()
+                    }
                     return
                 }
                 await MainActor.run {
@@ -411,6 +416,7 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.loadTask = nil
+                    self.resetMemoryCaches()
                 }
                 self.logger.notice("MLX container load cancelled during execution: id=\(model.id, privacy: .public)")
             } catch {
@@ -527,15 +533,22 @@ final class MLXModelManager: ObservableObject {
             let input = try await container.prepare(input: userInput)
             let params = GenerateParameters(maxTokens: 1, temperature: 1.0, topP: 1.0)
             let stream = try await container.generate(input: input, parameters: params)
-            for await _ in stream { }
-            Memory.clearCache()
-            Memory.cacheLimit = 4 * 1024 * 1024
+            for await _ in stream {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+            }
+            resetMemoryCaches()
             deferredPrewarmModelID = nil
             prewarmInFlightModelID = nil
             print("✅ LM Metal shaders pre-warmed")
             logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
+        } catch is CancellationError {
+            resetMemoryCaches()
+            prewarmInFlightModelID = nil
+            logger.notice("MLX prewarm cancelled: id=\(model.id, privacy: .public)")
         } catch {
-            Memory.cacheLimit = 4 * 1024 * 1024
+            resetMemoryCaches()
             prewarmInFlightModelID = nil
             print("⚠️ Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
             logger.error("MLX prewarm failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -563,13 +576,11 @@ final class MLXModelManager: ObservableObject {
             "MLX generation start: model=\(currentModel.localDirName, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
         )
         let toolCallFormat = await container.configuration.toolCallFormat
-        let wrappedXMLToolCallFilter: WrappedXMLToolCallStreamFilter? =
+        let suppressWrappedXMLToolMarkup =
             !tools.isEmpty &&
             toolCallFormat == .xmlFunction &&
             usesWrappedXMLToolCalls(for: currentModel)
-            ? WrappedXMLToolCallStreamFilter()
-            : nil
-        if wrappedXMLToolCallFilter != nil {
+        if suppressWrappedXMLToolMarkup {
             logger.notice("MLX wrapped XML tool-call filter enabled: model=\(currentModel.localDirName, privacy: .public)")
         }
         // Always free the Metal buffer pool before inference — on a device where the model
@@ -578,15 +589,16 @@ final class MLXModelManager: ObservableObject {
         Memory.cacheLimit = 0
         _ = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         defer {
-            Memory.cacheLimit = 4 * 1024 * 1024
+            resetMemoryCaches()
         }
 
+        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokens
         let maxTokens: Int? = if !tools.isEmpty {
             4096
         } else if memoryConstrained {
-            1024
+            min(configuredMaxOutputTokens, 1024)
         } else {
-            nil
+            configuredMaxOutputTokens
         }
         let maxKVSize: Int? = if !tools.isEmpty {
             8192
@@ -595,14 +607,31 @@ final class MLXModelManager: ObservableObject {
         } else {
             nil
         }
-        let params = enableThinking
-            ? GenerateParameters(maxTokens: maxTokens,
-                                 maxKVSize: maxKVSize,
-                                 temperature: 0.6, topP: 0.95)
-            : GenerateParameters(maxTokens: maxTokens,
-                                 maxKVSize: maxKVSize,
-                                 temperature: 0.7, topP: 0.8)
-        let additionalContext: [String: any Sendable]? = enableThinking ? nil : ["enable_thinking": false]
+        let params: GenerateParameters
+        if enableThinking && currentModel.id == "qwen3.5-2b-4bit" {
+            // Match the supported subset of Qwen's recommended 2B thinking settings.
+            params = GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                temperature: 1.0,
+                topP: 0.95
+            )
+        } else if enableThinking {
+            params = GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                temperature: 0.6,
+                topP: 0.95
+            )
+        } else {
+            params = GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                temperature: 0.7,
+                topP: 0.8
+            )
+        }
+        let additionalContext: [String: any Sendable]? = ["enable_thinking": enableThinking]
         let processing = UserInput.Processing()
 
         if tools.isEmpty {
@@ -612,6 +641,9 @@ final class MLXModelManager: ObservableObject {
             logger.notice("MLX plain path prepared input successfully")
             let stream = try await container.generate(input: input, parameters: params)
             for await generation in stream {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
                 if case .chunk(let text) = generation {
                     onToken(text)
                 }
@@ -645,57 +677,19 @@ final class MLXModelManager: ObservableObject {
             throw error
         }
 
-        if wrappedXMLToolCallFilter != nil {
-            let result = try await generateWrappedXMLToolTextStream(
-                container: container,
-                messages: messages,
-                processing: processing,
-                additionalContext: additionalContext,
-                tools: tools,
-                params: params,
-                toolDispatch: toolDispatch,
-                onToken: onToken
-            )
-            logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
-            return result
-        }
-
-        let invocationTracker = ToolInvocationTracker()
-        let session = ChatSession(
-            container,
-            history: Array(messages.dropLast()),
-            generateParameters: params,
+        let result = try await generateToolTextStream(
+            container: container,
+            messages: messages,
             processing: processing,
             additionalContext: additionalContext,
             tools: tools,
-            toolDispatch: { toolCall in
-                await invocationTracker.increment()
-                self.logger.notice("MLX dispatching tool call: name=\(toolCall.function.name, privacy: .public)")
-                // Free activation buffers from the previous generate step before
-                // running the tool — the model → tool → model cycle would otherwise
-                // hold two sets of activations simultaneously.
-                Memory.clearCache()
-                guard let toolDispatch else {
-                    throw GenerationError.missingToolDispatch
-                }
-                return try await toolDispatch(toolCall)
-            }
+            params: params,
+            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+            toolDispatch: toolDispatch,
+            onToken: onToken
         )
-        let stream = session.streamResponse(
-            to: lastMessage.content,
-            role: lastMessage.role,
-            images: lastMessage.images,
-            videos: lastMessage.videos
-        )
-        logger.notice("MLX tool path stream opened")
-
-        for try await generation in stream {
-            onToken(generation)
-        }
-
-        let toolInvocationCount = await invocationTracker.value
-        logger.notice("MLX tool path completed: tool_invocations=\(toolInvocationCount, privacy: .public)")
-        return MLXGenerationResult(toolInvocationCount: toolInvocationCount)
+        logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
+        return result
     }
 
     // MARK: - Diagnostics / Management
@@ -734,7 +728,7 @@ final class MLXModelManager: ObservableObject {
     }
 
     func unloadAllModels() {
-        cancelCurrentLoad(reason: "unloadAllModels")
+        cancelCurrentLoad(reason: "unloadAllModels", tearDownModel: false)
         tearDownCurrentModel(reason: "unloadAllModels")
         print("🧹 Unloaded all MLX models")
     }
@@ -781,21 +775,24 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private actor ToolInvocationTracker {
-        private(set) var value = 0
+    internal static let maxToolInvocationsPerResponse = 6
 
-        func increment() {
-            value += 1
-        }
+    internal static func shouldDisableTools(after toolResult: String) -> Bool {
+        AppWebSearchToolBridge.isSearchLimitToolResponse(toolResult)
     }
 
-    private func generateWrappedXMLToolTextStream(
+    internal static func excessiveToolCallToolResponse(maximum: Int) -> String {
+        "[tool internal error: limit reached after \(maximum) tool invocations for this response. Do not call tools again. Continue with the available information already available.]"
+    }
+
+    private func generateToolTextStream(
         container: ModelContainer,
         messages: [Chat.Message],
         processing: UserInput.Processing,
         additionalContext: [String: any Sendable]?,
         tools: [MLXToolSpec],
         params: GenerateParameters,
+        suppressWrappedXMLToolMarkup: Bool,
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
         onToken: @escaping (String) -> Void
     ) async throws -> MLXGenerationResult {
@@ -803,41 +800,54 @@ final class MLXModelManager: ObservableObject {
         let conversationImages = messages.flatMap(\.images)
         let conversationVideos = messages.flatMap(\.videos)
         var toolInvocationCount = 0
+        var activeTools = tools
 
         while true {
             var userInput = UserInput(
                 messages: rawMessages,
                 images: conversationImages,
                 videos: conversationVideos,
-                tools: tools,
+                tools: activeTools,
                 additionalContext: additionalContext
             )
             userInput.processing = processing
 
             let input = try await container.prepare(input: userInput)
             let stream = try await container.generate(input: input, parameters: params)
-            logger.notice("MLX wrapped XML tool path stream opened")
+            logger.notice(
+                "MLX tool path stream opened: wrapped_xml_filter=\(suppressWrappedXMLToolMarkup, privacy: .public) active_tools=\(activeTools.count, privacy: .public)"
+            )
 
-            let outputFilter = WrappedXMLToolCallStreamFilter()
+            let outputFilter = suppressWrappedXMLToolMarkup ? WrappedXMLToolCallStreamFilter() : nil
             var assistantVisibleText = ""
             var emittedToolCall: MLXToolCall?
 
             for await generation in stream {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
                 switch generation {
                 case .chunk(let text):
-                    if let visibleChunk = await outputFilter.consume(text) {
-                        assistantVisibleText += visibleChunk
-                        onToken(visibleChunk)
+                    if let outputFilter {
+                        if let visibleChunk = await outputFilter.consume(text) {
+                            assistantVisibleText += visibleChunk
+                            onToken(visibleChunk)
+                        }
+                    } else {
+                        assistantVisibleText += text
+                        onToken(text)
                     }
                 case .toolCall(let toolCall):
                     emittedToolCall = toolCall
-                    await outputFilter.didDispatchToolCall()
+                    if let outputFilter {
+                        await outputFilter.didDispatchToolCall()
+                    }
                 case .info:
                     break
                 }
             }
 
-            if let trailingText = await outputFilter.finish() {
+            if let outputFilter, let trailingText = await outputFilter.finish() {
                 assistantVisibleText += trailingText
                 onToken(trailingText)
             }
@@ -849,11 +859,26 @@ final class MLXModelManager: ObservableObject {
             toolInvocationCount += 1
             logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
             Memory.clearCache()
-            guard let toolDispatch else {
-                throw GenerationError.missingToolDispatch
-            }
+            let toolResult: String
+            if toolInvocationCount > Self.maxToolInvocationsPerResponse {
+                logger.error(
+                    "MLX forcing tool shutdown after excessive tool calls: count=\(toolInvocationCount, privacy: .public) max=\(Self.maxToolInvocationsPerResponse, privacy: .public)"
+                )
+                toolResult = Self.excessiveToolCallToolResponse(maximum: Self.maxToolInvocationsPerResponse)
+                activeTools = []
+            } else {
+                guard let toolDispatch else {
+                    throw GenerationError.missingToolDispatch
+                }
 
-            let toolResult = try await toolDispatch(emittedToolCall)
+                toolResult = try await toolDispatch(emittedToolCall)
+                if Self.shouldDisableTools(after: toolResult) {
+                    logger.notice("MLX disabling tools for remainder of response after search limit was reached")
+                    activeTools = []
+                } else if AppWebSearchToolBridge.isInternalToolErrorResponse(toolResult) {
+                    logger.notice("MLX received recoverable internal tool error; leaving tools enabled so the model can retry with corrected arguments")
+                }
+            }
             rawMessages.append(Self.assistantToolCallMessage(
                 content: assistantVisibleText,
                 toolCall: emittedToolCall
@@ -1139,6 +1164,13 @@ final class MLXModelManager: ObservableObject {
             lowered.contains("<parameter=")
     }
 
+    private func resetMemoryCaches() {
+        Memory.clearCache()
+        Memory.cacheLimit = 0
+        Memory.clearCache()
+        Memory.cacheLimit = 4 * 1024 * 1024
+    }
+
     private func tearDownCurrentModel(reason: String) {
         if container != nil || currentModel != nil || deferredPrewarmModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
@@ -1147,8 +1179,7 @@ final class MLXModelManager: ObservableObject {
         currentModel = nil
         deferredPrewarmModelID = nil
         prewarmInFlightModelID = nil
-        Memory.clearCache()
-        Memory.cacheLimit = 4 * 1024 * 1024
+        resetMemoryCaches()
     }
 }
 

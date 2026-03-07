@@ -50,12 +50,15 @@ extension ChatViewModel {
 
     /// Determines if reasoning mode should be used based on prompt complexity
     internal func shouldUseReasoningForPrompt(_ userText: String) async throws -> Bool {
+        let backendBridge = ModelBackendBridge.shared
+        guard backendBridge.reasoningAvailable else { return false }
+
         if conversation.reasoningMode { return true }
         guard conversation.smartReasoningMode else { return false }
 
         // On MLX backend, skip Foundation Models entirely — loading Apple Intelligence
         // alongside the MLX model causes OOM. Use the heuristic directly.
-        if ModelBackendBridge.shared.selectedBackend == .mlx {
+        if backendBridge.selectedBackend == .mlx {
             return useReasoningHeuristic(userText)
         }
 
@@ -256,6 +259,96 @@ extension ChatViewModel {
         return (nil, trimmedText)
     }
 
+    internal static func parseReasoningResponseForSearchSessionText(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            return (nil, nil)
+        }
+
+        let closeTag = "</think>"
+        let altCloseTag = "</thinking>"
+        let lastThinkClose = trimmedText.range(of: closeTag, options: [.caseInsensitive, .backwards])
+        let lastThinkingClose = trimmedText.range(of: altCloseTag, options: [.caseInsensitive, .backwards])
+        let lastCloseRange: Range<String.Index>? = {
+            switch (lastThinkClose, lastThinkingClose) {
+            case let (.some(a), .some(b)):
+                return a.lowerBound > b.lowerBound ? a : b
+            case let (.some(a), nil):
+                return a
+            case let (nil, .some(b)):
+                return b
+            case (nil, nil):
+                return nil
+            }
+        }()
+
+        guard let closeRange = lastCloseRange else {
+            let reasoningOnly = trimmedText
+                .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (reasoningOnly.isEmpty ? nil : reasoningOnly, nil)
+        }
+
+        let beforeClose = String(trimmedText[..<closeRange.lowerBound])
+            .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let afterClose = String(trimmedText[closeRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let paragraphs = afterClose
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var reasoningParts: [String] = beforeClose.isEmpty ? [] : [beforeClose]
+        var answerParts: [String] = []
+
+        for paragraph in paragraphs {
+            if answerParts.isEmpty && looksLikeReasoningContinuation(paragraph) {
+                reasoningParts.append(paragraph)
+            } else {
+                answerParts.append(paragraph)
+            }
+        }
+
+        let reasoning = reasoningParts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        var answer = answerParts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if answer.lowercased().hasPrefix("final answer:") {
+            answer = String(answer.dropFirst("final answer:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return (reasoning.isEmpty ? nil : reasoning, answer.isEmpty ? nil : answer)
+    }
+
+    private func parseReasoningResponseForSearchSession(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
+        Self.parseReasoningResponseForSearchSessionText(text)
+    }
+
+    private static func looksLikeReasoningContinuation(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        let reasoningPrefixes = [
+            "let me", "i should", "i need to", "i'll", "i will", "now i",
+            "i should check", "i should search", "i need to verify", "i need to check",
+            "wait,", "hold on,", "before i answer"
+        ]
+        if reasoningPrefixes.contains(where: { normalized.hasPrefix($0) }) {
+            return true
+        }
+
+        if normalized.contains("search") && normalized.contains("let me") {
+            return true
+        }
+
+        if normalized.contains("search again") || normalized.contains("another search") {
+            return true
+        }
+
+        return false
+    }
+
     // made internal so it can be called from extensions in other files
     internal func updateMessageWithReasoningContent(_ message: Message, fullText: String, finalize: Bool = false) {
         // DEBUG: Log if we're updating with empty/whitespace-only content
@@ -303,6 +396,7 @@ extension ChatViewModel {
             // Before </think> arrives all content is in-progress reasoning with no tags at all.
             let isMLX = ModelBackendBridge.shared.selectedBackend == .mlx
             if isMLX {
+                let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
                 let hasClose = visiblePortion.contains("</think>") || visiblePortion.contains("</thinking>")
                 if !hasClose {
                     // Still thinking – show in the reasoning bubble, nothing in the answer yet.
@@ -313,9 +407,27 @@ extension ChatViewModel {
                     }
                     return
                 }
+
+                if hasLiveSearches && !finalize {
+                    let provisionalReasoning = visiblePortion
+                        .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
+                        .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !provisionalReasoning.isEmpty {
+                        message.reasoning = provisionalReasoning
+                        message.updateReasoningSteps()
+                    }
+                    message.text = ""
+                    return
+                }
             }
 
-            let parsed = parseReasoningResponse(visiblePortion)
+            let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
+            let parsed = if isMLX && hasLiveSearches {
+                parseReasoningResponseForSearchSession(visiblePortion)
+            } else {
+                parseReasoningResponse(visiblePortion)
+            }
 
             // Always update reasoning if present
             if let reasoning = parsed.reasoning {

@@ -21,11 +21,40 @@ struct SearchInvocation: Codable, Sendable, Identifiable {
     var id: UUID
     var query: String
     var results: String
+    var anchorStepNumber: Int?
+    var timestamp: Date
 
-    nonisolated init(id: UUID = UUID(), query: String, results: String) {
+    nonisolated init(
+        id: UUID = UUID(),
+        query: String,
+        results: String,
+        anchorStepNumber: Int? = nil,
+        timestamp: Date = Date()
+    ) {
         self.id = id
         self.query = query
         self.results = results
+        self.anchorStepNumber = anchorStepNumber
+        self.timestamp = timestamp
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case query
+        case results
+        case anchorStepNumber
+        case timestamp
+    }
+}
+
+extension SearchInvocation {
+    nonisolated init(from decoder: any Swift.Decoder) throws {
+        let container = try decoder.container(keyedBy: SearchInvocation.CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: SearchInvocation.CodingKeys.id) ?? UUID()
+        self.query = try container.decode(String.self, forKey: SearchInvocation.CodingKeys.query)
+        self.results = try container.decode(String.self, forKey: SearchInvocation.CodingKeys.results)
+        self.anchorStepNumber = try container.decodeIfPresent(Int.self, forKey: SearchInvocation.CodingKeys.anchorStepNumber)
+        self.timestamp = try container.decodeIfPresent(Date.self, forKey: SearchInvocation.CodingKeys.timestamp) ?? Date()
     }
 }
 
@@ -39,12 +68,13 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     }
 
     private let searchService: TavilySearchService
-    private static let maxInvocations = 4
+    static let maxInvocations = 2
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "WebSearchTool")
 
     // Thread-safe storage for captured results (written in `call`, read on @MainActor).
     private let lock = NSLock()
     private var _invocations: [SearchInvocation] = []
+    private var _searchLimitReached = false
 
     // Backward-compat accessors (return last invocation)
     var lastSearchQuery: String? {
@@ -57,6 +87,10 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
 
     var allInvocations: [SearchInvocation] {
         lock.withLock { _invocations }
+    }
+
+    var searchLimitReached: Bool {
+        lock.withLock { _searchLimitReached }
     }
 
     init(searchService: TavilySearchService) {
@@ -82,6 +116,24 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
                 "MLX tool call executed: name=\(toolCall.function.name, privacy: .public) result_chars=\(result.count, privacy: .public)"
             )
             return result
+        } catch DecodingError.keyNotFound(let key, _) where key.stringValue == "query" {
+            let result = Self.invalidArgumentsToolResponse()
+            logger.warning(
+                "MLX tool call missing required query argument: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+            )
+            return result
+        } catch DecodingError.valueNotFound(_, _) {
+            let result = Self.invalidArgumentsToolResponse()
+            logger.warning(
+                "MLX tool call missing value for required argument: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+            )
+            return result
+        } catch DecodingError.typeMismatch(_, _) {
+            let result = Self.invalidArgumentsToolResponse()
+            logger.warning(
+                "MLX tool call had invalid argument type: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+            )
+            return result
         } catch {
             logger.error(
                 "MLX tool call execution failed: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
@@ -93,8 +145,11 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     func executeSearch(query: String) async throws -> String {
         let count = lock.withLock { _invocations.count }
         if count >= Self.maxInvocations {
+            lock.withLock {
+                _searchLimitReached = true
+            }
             logger.warning("Search skipped: invocation limit reached (\(count, privacy: .public))")
-            return "[Search limit reached — maximum \(Self.maxInvocations) searches per response.]"
+            return Self.searchLimitToolResponse(limit: Self.maxInvocations)
         }
 
         logger.notice("Search started: query=\(query, privacy: .public) prior_invocations=\(count, privacy: .public)")
@@ -130,6 +185,22 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    static func searchLimitToolResponse(limit: Int) -> String {
+        "[webSearch internal error: limit reached after \(limit) searches for this response. Do not call webSearch again. Continue with the available information.]"
+    }
+
+    static func isSearchLimitToolResponse(_ text: String) -> Bool {
+        text.hasPrefix("[webSearch internal error: limit reached")
+    }
+
+    static func invalidArgumentsToolResponse() -> String {
+        "[webSearch internal error: missing required 'query' argument. Call webSearch again with a concise query string and continue reasoning.]"
+    }
+
+    static func isInternalToolErrorResponse(_ text: String) -> Bool {
+        text.hasPrefix("[webSearch internal error:")
+    }
 
     private static func truncateAtWordBoundary(_ text: String, maxChars: Int) -> String {
         guard text.count > maxChars else { return text }

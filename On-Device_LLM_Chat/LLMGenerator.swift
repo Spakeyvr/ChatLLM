@@ -46,7 +46,7 @@ private func buildEnhancedPrompt(for original: String) -> String {
     return preamble + original
 }
 
-private func makeSafetyBlockedError() -> NSError {
+nonisolated private func makeSafetyBlockedError() -> NSError {
     NSError(domain: "OnDeviceLLMGenerator", code: 3,
             userInfo: [NSLocalizedDescriptionKey: "Apple's safety system blocked this response. Try rephrasing your request."])
 }
@@ -57,7 +57,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         SystemLanguageModel.default.availability == .available
     }
 
-    private func isSafetyModerationError(_ error: Error) -> Bool {
+    nonisolated private func isSafetyModerationError(_ error: Error) -> Bool {
         let message = (error as NSError).localizedDescription.lowercased()
         return message.contains("unsafe") ||
                message.contains("safety") ||
@@ -89,13 +89,16 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         let session = tools.isEmpty ? LanguageModelSession() : LanguageModelSession(tools: tools)
         let effectivePrompt = buildEnhancedPrompt(for: prompt)
 
-        return AsyncThrowingStream { continuation in
+        return TaskBackedAsyncThrowingStream.make { continuation in
             Task {
                 do {
                     var lastYieldedLength = 0
                     var iterator = session.streamResponse(to: effectivePrompt).makeAsyncIterator()
                     while let partial = try await iterator.next() {
-                        if Task.isCancelled { continuation.finish(); return }
+                        if Task.isCancelled {
+                            continuation.finish()
+                            return
+                        }
                         let newContent = partial.content
                         if newContent.count > lastYieldedLength {
                             let delta = String(newContent.dropFirst(lastYieldedLength))
@@ -105,6 +108,8 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                             }
                         }
                     }
+                    continuation.finish()
+                } catch is CancellationError {
                     continuation.finish()
                 } catch {
                     if self.isSafetyModerationError(error) {
