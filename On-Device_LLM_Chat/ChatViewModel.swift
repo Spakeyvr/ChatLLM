@@ -426,7 +426,17 @@ final class ChatViewModel: ObservableObject {
         let forceSearchRequired = assistantMessage.searchQuery != nil
         let toolCallsDisabled = disableWebSearch || UserDefaults.standard.disableToolCalls
         let promptBridge = ModelBackendBridge.shared
-        let shouldPreloadSearchForMLX = promptBridge.selectedBackend == .mlx && forceSearchRequired && !toolCallsDisabled
+        let autonomousWebSearchAvailable = !toolCallsDisabled && searchService != nil
+        let latestUserQuestion = conversation.messages
+            .filter { $0.order < order && $0.role == .user }
+            .sortedByOrder
+            .last?
+            .text ?? ""
+        let questionLogPreview = String(
+            latestUserQuestion
+                .replacingOccurrences(of: "\n", with: " ")
+                .prefix(240)
+        )
 
         guard let targetToReset = conversation.messages.first(where: { $0.id == targetID }),
               targetRole == .assistant else {
@@ -449,36 +459,15 @@ final class ChatViewModel: ObservableObject {
         conversation.lastUpdated = Date()
         immediateSave()
 
-        var preloadedSearchInvocations: [SearchInvocation] = []
-        var effectiveAdditionalInstruction = additionalUserInstruction
-        if shouldPreloadSearchForMLX, let query = assistantMessage.searchQuery, let service = searchService {
-            logger.notice("Preloading Tavily search for MLX backend: query=\(query, privacy: .public)")
-            do {
-                let preloadBridge = AppWebSearchToolBridge(searchService: service)
-                _ = try await preloadBridge.executeSearch(query: query)
-                preloadedSearchInvocations = preloadBridge.allInvocations
-                if let results = preloadedSearchInvocations.first?.results, !results.isEmpty {
-                    let preloadInstruction = """
-                    Use these web search results to answer the user's request. Do not call any tools.
+        let preloadedSearchInvocations: [SearchInvocation] = []
+        let effectiveAdditionalInstruction = additionalUserInstruction
 
-                    <sources>
-                    \(results)
-                    </sources>
-                    """
-                    if let existing = effectiveAdditionalInstruction, !existing.isEmpty {
-                        effectiveAdditionalInstruction = existing + "\n\n" + preloadInstruction
-                    } else {
-                        effectiveAdditionalInstruction = preloadInstruction
-                    }
-                }
-            } catch {
-                logger.error("MLX preloaded search failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        let webSearchAvailable = !shouldPreloadSearchForMLX && !toolCallsDisabled && forceSearchRequired && searchService != nil
+        let webSearchAvailable = autonomousWebSearchAvailable
         logger.notice(
-            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
+            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
+        )
+        logger.notice(
+            "streamAssistant question: chars=\(latestUserQuestion.count, privacy: .public) search_query=\(assistantMessage.searchQuery ?? "", privacy: .public) preview=\(questionLogPreview, privacy: .public)"
         )
         // MLX path: structured messages passed to Qwen3VLProcessor which applies the Jinja template.
         // enable_thinking is controlled via additionalContext, not baked into the message text.
@@ -490,7 +479,9 @@ final class ChatViewModel: ObservableObject {
                     upToOrderExclusive: order,
                     additionalInstruction: effectiveAdditionalInstruction,
                     includeLatestUserImages: allowNativeImages,
-                    maxMessages: webSearchAvailable ? 10 : nil
+                    maxMessages: webSearchAvailable ? 10 : nil,
+                    toolsAvailable: webSearchAvailable,
+                    forceWebSearch: forceSearchRequired
                 )
             } catch {
                 targetToReset.generationError = "Failed to prepare image for native inference: \(error.localizedDescription)"
@@ -503,7 +494,12 @@ final class ChatViewModel: ObservableObject {
             builtPrompt = "MLX:\(mlxMessages!.count) msgs"
         } else {
             // Foundation Models: keep existing plain-text prompt format unchanged.
-            builtPrompt = buildPrompt(upToOrderExclusive: order, currentReasoningActive: targetToReset.isReasoningMode, webSearchAvailable: webSearchAvailable)
+            builtPrompt = buildPrompt(
+                upToOrderExclusive: order,
+                currentReasoningActive: targetToReset.isReasoningMode,
+                webSearchAvailable: webSearchAvailable,
+                forceWebSearchRequired: forceSearchRequired
+            )
             if let instruction = effectiveAdditionalInstruction, !instruction.isEmpty {
                 builtPrompt += "\n\nUser: \(instruction)"
             }
@@ -577,17 +573,20 @@ final class ChatViewModel: ObservableObject {
                     if manager.currentModel != nil {
                         let isReasoning = targetToReset.isReasoningMode
                         let msgs = mlxMessages ?? []
-                        let useMemoryConstrainedMLX = shouldPreloadSearchForMLX
+                        let useMemoryConstrainedMLX = false
                         stream = AsyncThrowingStream { continuation in
                             Task { @MainActor in
                                 do {
-                                    _ = try await manager.generateTextStream(
+                                    let result = try await manager.generateTextStream(
                                         messages: msgs,
                                         enableThinking: isReasoning,
                                         memoryConstrained: useMemoryConstrainedMLX,
                                         tools: mlxTools,
                                         toolDispatch: mlxToolDispatch,
                                         onToken: { token in continuation.yield(token) }
+                                    )
+                                    self.logger.notice(
+                                        "streamAssistant MLX generation finished: tool_invocations=\(result.toolInvocationCount, privacy: .public) question_preview=\(questionLogPreview, privacy: .public)"
                                     )
                                     continuation.finish()
                                 } catch {
@@ -689,11 +688,22 @@ final class ChatViewModel: ObservableObject {
                     self.conversation.lastUpdated = Date()
                     self.scheduleCoalescedSave()
                 }
+                let rawOutputPreview = String(
+                    cumulativeSoFar
+                        .replacingOccurrences(of: "\n", with: " ")
+                        .prefix(240)
+                )
+                self.logger.notice(
+                    "streamAssistant raw output: chars=\(cumulativeSoFar.count, privacy: .public) wrote_any=\(wroteAny, privacy: .public) preview=\(rawOutputPreview, privacy: .public)"
+                )
             } catch is CancellationError {
                 print("⚠️ streaming Task: Cancelled")
                 outcome = .cancelled
             } catch {
                 print("❌ streaming Task: Error - \(error)")
+                self.logger.error(
+                    "streamAssistant generation error: question_preview=\(questionLogPreview, privacy: .public) partial_chars=\(cumulativeSoFar.count, privacy: .public) error=\((error as NSError).localizedDescription, privacy: .public)"
+                )
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
                     let msg = self.isContextWindowError(error)
                         ? ContextWindowError().localizedDescription
@@ -708,6 +718,10 @@ final class ChatViewModel: ObservableObject {
 
             // Inject search sources from native tool (if the model called it)
             let capturedInvocations = webSearchBridge?.allInvocations ?? preloadedSearchInvocations
+            let invocationQueries = capturedInvocations.map(\.query).joined(separator: " | ")
+            self.logger.notice(
+                "streamAssistant search summary: invocations=\(capturedInvocations.count, privacy: .public) queries=\(invocationQueries, privacy: .public)"
+            )
             if !capturedInvocations.isEmpty {
                 if let target = self.conversation.messages.first(where: { $0.id == targetID }) {
                     // Store all invocations on the message for per-search UI
@@ -751,6 +765,9 @@ final class ChatViewModel: ObservableObject {
 
                 if !hasAnyVisibleContent && target.generationError == nil {
                     logger.warning("No visible content after streaming (wroteAny=\(wroteAny))")
+                    self.logger.warning(
+                        "streamAssistant empty visible output: question_preview=\(questionLogPreview, privacy: .public) raw_chars=\(cumulativeSoFar.count, privacy: .public) tool_invocations=\(capturedInvocations.count, privacy: .public)"
+                    )
 
                     let hasPreviousContent = !previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                                             !(previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
@@ -775,6 +792,9 @@ final class ChatViewModel: ObservableObject {
                 }
 
                 target.markAsComplete()
+                self.logger.notice(
+                    "streamAssistant finalized: outcome=\(String(describing: outcome), privacy: .public) error=\(target.generationError ?? "", privacy: .public) final_text_chars=\(target.text.count, privacy: .public)"
+                )
 
                 Task { @MainActor in
                     let generator = UIImpactFeedbackGenerator(style: .light)

@@ -54,6 +54,49 @@ struct On_Device_LLM_ChatTests {
         #expect(limited.contains("Search limit reached"))
     }
 
+    @Test func qwenToolTemplateInspectionPrefersXMLFunctionFormat() {
+        let packageContents = """
+        <tool_call>
+        <function=webSearch>
+        <parameter=query>
+        latest OpenAI model
+        </parameter>
+        </function>
+        </tool_call>
+        """
+
+        let inferredFormat = MLXModelManager.inferToolCallFormat(
+            packageContents: packageContents,
+            modelType: "qwen3_5"
+        )
+
+        #expect(inferredFormat == .xmlFunction)
+        #expect(MLXModelManager.usesWrappedXMLToolCallTemplate(packageContents: packageContents))
+    }
+
+    @Test func wrappedXMLToolCallStreamFilterSuppressesToolMarkup() async {
+        let filter = WrappedXMLToolCallStreamFilter()
+
+        let firstChunk = await filter.consume("I will check that.\n<tool")
+        let secondChunk = await filter.consume("_call>\n<function=webSearch>")
+        let thirdChunk = await filter.consume("\n<parameter=query>\nlatest OpenAI model\n</parameter>")
+        await filter.didDispatchToolCall()
+        let trailingChunk = await filter.finish()
+
+        #expect(firstChunk == "I will check that.\n")
+        #expect(secondChunk == nil)
+        #expect(thirdChunk == nil)
+        #expect(trailingChunk == nil)
+    }
+
+    @Test func qwenToolArgumentNormalizationUnwrapsJSONValueStrings() {
+        let normalized = MLXModelManager.normalizedToolArguments([
+            "query": JSONValue.string("OpenAI latest model")
+        ])
+
+        #expect(normalized["query"] as? String == "OpenAI latest model")
+    }
+
     private func makeSearchBridge() throws -> AppWebSearchToolBridge {
         MockTavilyURLProtocol.responseData = """
         {

@@ -77,7 +77,12 @@ extension ChatViewModel {
     // Older messages are silently dropped to prevent OOM on long conversations.
     private static let maxContextMessages = 30
 
-    func buildPrompt(upToOrderExclusive maxOrderExclusive: Int, currentReasoningActive: Bool? = nil, webSearchAvailable: Bool = false) -> String {
+    func buildPrompt(
+        upToOrderExclusive maxOrderExclusive: Int,
+        currentReasoningActive: Bool? = nil,
+        webSearchAvailable: Bool = false,
+        forceWebSearchRequired: Bool = false
+    ) -> String {
         // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
         var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
         // Sliding window: keep only the most recent N messages to cap context size.
@@ -141,7 +146,10 @@ extension ChatViewModel {
         }
 
         if webSearchAvailable {
-            systemPrompt += "\n\n" + (needsReasoningInstructions ? Self.webSearchReasoningInstructions : Self.webSearchInstructions)
+            systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
+                reasoningEnabled: needsReasoningInstructions,
+                forceSearchRequired: forceWebSearchRequired
+            )
         }
 
         parts.insert("System: \(systemPrompt)", at: 0)
@@ -218,7 +226,9 @@ extension ChatViewModel {
         upToOrderExclusive maxOrderExclusive: Int,
         additionalInstruction: String? = nil,
         includeLatestUserImages: Bool = true,
-        maxMessages: Int? = nil
+        maxMessages: Int? = nil,
+        toolsAvailable: Bool = false,
+        forceWebSearch: Bool = false
     ) async throws -> [Chat.Message] {
         var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
         // Sliding window: cap context to avoid OOM from accumulated KV cache / token pressure.
@@ -231,8 +241,19 @@ extension ChatViewModel {
             .map(\.order)
             .max()
 
+        var systemPrompt = Self.qwenCompactSystemPrompt
+        if toolsAvailable {
+            systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
+                reasoningEnabled: false,
+                forceSearchRequired: forceWebSearch
+            )
+            // The tokenizer chat template already injects the exact MLX tool-call
+            // syntax for the active Qwen package. Duplicating it here risks
+            // contradicting the installed template and suppressing tool use.
+        }
+
         var messages: [Chat.Message] = []
-        messages.append(.system(Self.qwenCompactSystemPrompt))
+        messages.append(.system(systemPrompt))
 
         for msg in snapshots {
             if msg.role == .assistant && !msg.isFinal { continue }
@@ -259,7 +280,11 @@ extension ChatViewModel {
         }
 
         if let instruction = additionalInstruction, !instruction.isEmpty {
-            messages.append(.user(instruction))
+            if forceWebSearch, let lastIndex = messages.indices.last, messages[lastIndex].role == .user {
+                messages[lastIndex].content += "\n\n" + instruction
+            } else {
+                messages.append(.user(instruction))
+            }
         }
 
         return messages
@@ -344,18 +369,27 @@ extension ChatViewModel {
     Remember: <thinking> = your reasoning process, After </thinking> = the complete answer for the user.
 """
 
-    internal static let webSearchReasoningInstructions: String = """
-    WEB SEARCH DURING REASONING:
-    You have a webSearch tool available. You can call it multiple times during your thinking process to gather information iteratively:
-    1. Identify what you need to search for
-    2. Call webSearch with a concise query
-    3. Analyze the results
-    4. If you need more detail or a different angle, search again with a refined query
-    You may perform up to 4 searches per response. Use multiple searches when the topic is complex or when initial results suggest follow-up questions.
-    """
+    internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
+        var lines = [
+            "WEB SEARCH:",
+            "- You have a webSearch tool available.",
+            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information.",
+            "- Use it when you need to verify a fact that may have changed recently.",
+            "- Do not use it for stable general knowledge that you already know reliably."
+        ]
 
-    internal static let webSearchInstructions: String = """
-    WEB SEARCH:
-    You have a webSearch tool available. Use it when the user asks about current events, real-time data, or anything that requires up-to-date information. You can search multiple times if needed to gather comprehensive information.
-    """
+        if forceSearchRequired {
+            lines.append("- This request explicitly requires web search, so you must call webSearch before answering.")
+            lines.append("- Do not answer from memory before using the tool.")
+        }
+
+        if reasoningEnabled {
+            lines.append("- During reasoning, you may search iteratively: identify what to check, call webSearch with a concise query, inspect the results, and refine if needed.")
+            lines.append("- You may perform up to 4 searches for a single response when follow-up verification is needed.")
+        } else {
+            lines.append("- You may search more than once if the first result is incomplete or needs verification.")
+        }
+
+        return lines.joined(separator: "\n")
+    }
 }

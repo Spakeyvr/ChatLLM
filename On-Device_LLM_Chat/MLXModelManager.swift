@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import MLX
 import MLXLMCommon
+import MLXVLM
 import Tokenizers
 import OSLog
 
@@ -130,7 +131,7 @@ final class MLXModelManager: ObservableObject {
     private let downloader = ModelDownloader()
     private var downloaderTask: Task<Void, Never>?
     private var compatibilityErrors: [String: String] = [:]
-    private var toolTemplateSupportCache: [String: ToolTemplateSupport] = [:]
+    private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
     private var activeLoadID: UUID?
     private var deferredPrewarmModelID: String?
@@ -180,6 +181,7 @@ final class MLXModelManager: ObservableObject {
     private struct ModelPackageMetadata {
         let architecture: String?
         let processorClass: String?
+        let modelType: String?
     }
 
     struct MLXGenerationResult: Sendable {
@@ -189,6 +191,12 @@ final class MLXModelManager: ObservableObject {
     private enum ToolTemplateSupport: Equatable {
         case supported
         case unsupported(String)
+    }
+
+    private struct ToolTemplateInspection {
+        let support: ToolTemplateSupport
+        let preferredToolCallFormat: ToolCallFormat?
+        let usesWrappedXMLToolCalls: Bool
     }
 
     // MARK: - Model Directory (Documents)
@@ -372,6 +380,7 @@ final class MLXModelManager: ObservableObject {
                     "MLX container load start: id=\(model.id, privacy: .public) source=\(source, privacy: .public) path=\(modelURL.lastPathComponent, privacy: .public)"
                 )
                 let loaded = try await loadModelContainer(directory: modelURL)
+                await self.applyPreferredToolCallFormatIfNeeded(to: loaded, for: model)
                 guard !Task.isCancelled else { return }
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
@@ -553,6 +562,16 @@ final class MLXModelManager: ObservableObject {
         logger.notice(
             "MLX generation start: model=\(currentModel.localDirName, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
         )
+        let toolCallFormat = await container.configuration.toolCallFormat
+        let wrappedXMLToolCallFilter: WrappedXMLToolCallStreamFilter? =
+            !tools.isEmpty &&
+            toolCallFormat == .xmlFunction &&
+            usesWrappedXMLToolCalls(for: currentModel)
+            ? WrappedXMLToolCallStreamFilter()
+            : nil
+        if wrappedXMLToolCallFilter != nil {
+            logger.notice("MLX wrapped XML tool-call filter enabled: model=\(currentModel.localDirName, privacy: .public)")
+        }
         // Always free the Metal buffer pool before inference — on a device where the model
         // alone consumes ~3 GB, every megabyte matters during the activation spike.
         Memory.clearCache()
@@ -626,6 +645,21 @@ final class MLXModelManager: ObservableObject {
             throw error
         }
 
+        if wrappedXMLToolCallFilter != nil {
+            let result = try await generateWrappedXMLToolTextStream(
+                container: container,
+                messages: messages,
+                processing: processing,
+                additionalContext: additionalContext,
+                tools: tools,
+                params: params,
+                toolDispatch: toolDispatch,
+                onToken: onToken
+            )
+            logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
+            return result
+        }
+
         let invocationTracker = ToolInvocationTracker()
         let session = ChatSession(
             container,
@@ -668,7 +702,7 @@ final class MLXModelManager: ObservableObject {
 
     func refreshModelAvailability() {
         compatibilityErrors = [:]
-        toolTemplateSupportCache = [:]
+        toolTemplateInspectionCache = [:]
         packageMetadataCache = [:]
         availableModels = availableModels.map { model in
             var updated = model
@@ -755,6 +789,175 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
+    private func generateWrappedXMLToolTextStream(
+        container: ModelContainer,
+        messages: [Chat.Message],
+        processing: UserInput.Processing,
+        additionalContext: [String: any Sendable]?,
+        tools: [MLXToolSpec],
+        params: GenerateParameters,
+        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
+        onToken: @escaping (String) -> Void
+    ) async throws -> MLXGenerationResult {
+        var rawMessages = Qwen3VLMessageGenerator().generate(messages: messages)
+        let conversationImages = messages.flatMap(\.images)
+        let conversationVideos = messages.flatMap(\.videos)
+        var toolInvocationCount = 0
+
+        while true {
+            var userInput = UserInput(
+                messages: rawMessages,
+                images: conversationImages,
+                videos: conversationVideos,
+                tools: tools,
+                additionalContext: additionalContext
+            )
+            userInput.processing = processing
+
+            let input = try await container.prepare(input: userInput)
+            let stream = try await container.generate(input: input, parameters: params)
+            logger.notice("MLX wrapped XML tool path stream opened")
+
+            let outputFilter = WrappedXMLToolCallStreamFilter()
+            var assistantVisibleText = ""
+            var emittedToolCall: MLXToolCall?
+
+            for await generation in stream {
+                switch generation {
+                case .chunk(let text):
+                    if let visibleChunk = await outputFilter.consume(text) {
+                        assistantVisibleText += visibleChunk
+                        onToken(visibleChunk)
+                    }
+                case .toolCall(let toolCall):
+                    emittedToolCall = toolCall
+                    await outputFilter.didDispatchToolCall()
+                case .info:
+                    break
+                }
+            }
+
+            if let trailingText = await outputFilter.finish() {
+                assistantVisibleText += trailingText
+                onToken(trailingText)
+            }
+
+            guard let emittedToolCall else {
+                return MLXGenerationResult(toolInvocationCount: toolInvocationCount)
+            }
+
+            toolInvocationCount += 1
+            logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
+            Memory.clearCache()
+            guard let toolDispatch else {
+                throw GenerationError.missingToolDispatch
+            }
+
+            let toolResult = try await toolDispatch(emittedToolCall)
+            rawMessages.append(Self.assistantToolCallMessage(
+                content: assistantVisibleText,
+                toolCall: emittedToolCall
+            ))
+            rawMessages.append(Self.toolResponseMessage(toolResult))
+        }
+    }
+
+    private static func assistantToolCallMessage(
+        content: String,
+        toolCall: MLXToolCall
+    ) -> MLXLMCommon.Message {
+        var message: MLXLMCommon.Message = [
+            "role": Chat.Message.Role.assistant.rawValue,
+            "content": content
+        ]
+        message["tool_calls"] = [[
+            "function": [
+                "name": toolCall.function.name,
+                "arguments": Self.normalizedToolArguments(toolCall.function.arguments)
+            ]
+        ]]
+        return message
+    }
+
+    private static func toolResponseMessage(_ content: String) -> MLXLMCommon.Message {
+        [
+            "role": Chat.Message.Role.tool.rawValue,
+            "content": content
+        ]
+    }
+
+    internal static func normalizedToolArguments(
+        _ arguments: [String: any Sendable]
+    ) -> [String: any Sendable] {
+        arguments.reduce(into: [String: any Sendable]()) { partialResult, entry in
+            partialResult[entry.key] = normalizedToolArgumentValue(entry.value)
+        }
+    }
+
+    private static func normalizedToolArgumentValue(_ value: any Sendable) -> any Sendable {
+        switch value {
+        case let jsonValue as JSONValue:
+            return normalized(jsonValue)
+        case let string as String:
+            return string
+        case let bool as Bool:
+            return bool
+        case let int as Int:
+            return int
+        case let double as Double:
+            return double
+        case let array as [JSONValue]:
+            return array.map { normalized($0) }
+        case let object as [String: JSONValue]:
+            return object.mapValues { normalized($0) }
+        default:
+            return String(describing: value)
+        }
+    }
+
+    private static func normalized(_ value: JSONValue) -> any Sendable {
+        switch value {
+        case .null:
+            return "null"
+        case .bool(let bool):
+            return bool
+        case .int(let int):
+            return int
+        case .double(let double):
+            return double
+        case .string(let string):
+            return string
+        case .array(let array):
+            return array.map { normalized($0) }
+        case .object(let object):
+            return object.mapValues { normalized($0) }
+        }
+    }
+
+    private func applyPreferredToolCallFormatIfNeeded(
+        to loaded: ModelContainer,
+        for model: MLXModelInfo
+    ) async {
+        guard let preferredToolCallFormat = preferredToolCallFormat(for: model) else {
+            return
+        }
+
+        let currentToolCallFormat = await loaded.configuration.toolCallFormat
+        guard currentToolCallFormat != preferredToolCallFormat else {
+            logger.notice(
+                "MLX tool-call format retained: id=\(model.id, privacy: .public) format=\(preferredToolCallFormat.rawValue, privacy: .public)"
+            )
+            return
+        }
+
+        await loaded.update { context in
+            context.configuration.toolCallFormat = preferredToolCallFormat
+        }
+        logger.notice(
+            "MLX tool-call format override applied: id=\(model.id, privacy: .public) format=\(preferredToolCallFormat.rawValue, privacy: .public)"
+        )
+    }
+
     private func validateToolTemplateSupport(for model: MLXModelInfo) throws {
         switch toolTemplateSupport(for: model) {
         case .supported:
@@ -765,25 +968,47 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func logToolTemplateSupport(for model: MLXModelInfo) {
-        switch toolTemplateSupport(for: model) {
+        let inspection = toolTemplateInspection(for: model)
+        switch inspection.support {
         case .supported:
             print("✅ MLX tool template support confirmed for \(model.displayName)")
+            if let preferredToolCallFormat = inspection.preferredToolCallFormat {
+                logger.notice(
+                    "MLX tool template inspection: id=\(model.id, privacy: .public) format=\(preferredToolCallFormat.rawValue, privacy: .public) wrapped_xml=\(inspection.usesWrappedXMLToolCalls, privacy: .public)"
+                )
+            }
         case .unsupported(let message):
             print("⚠️ MLX tool template support unavailable: \(message)")
         }
     }
 
     private func toolTemplateSupport(for model: MLXModelInfo) -> ToolTemplateSupport {
-        if let cached = toolTemplateSupportCache[model.id] {
+        toolTemplateInspection(for: model).support
+    }
+
+    private func preferredToolCallFormat(for model: MLXModelInfo) -> ToolCallFormat? {
+        toolTemplateInspection(for: model).preferredToolCallFormat
+    }
+
+    private func usesWrappedXMLToolCalls(for model: MLXModelInfo) -> Bool {
+        toolTemplateInspection(for: model).usesWrappedXMLToolCalls
+    }
+
+    private func toolTemplateInspection(for model: MLXModelInfo) -> ToolTemplateInspection {
+        if let cached = toolTemplateInspectionCache[model.id] {
             return cached
         }
 
         guard let modelURL = modelDirectoryURL(for: model) else {
-            let result = ToolTemplateSupport.unsupported(
-                "Installed model '\(model.localDirName)' could not be inspected for tool support. Re-download the model package to restore the tokenizer chat template."
+            let inspection = ToolTemplateInspection(
+                support: .unsupported(
+                    "Installed model '\(model.localDirName)' could not be inspected for tool support. Re-download the model package to restore the tokenizer chat template."
+                ),
+                preferredToolCallFormat: nil,
+                usesWrappedXMLToolCalls: false
             )
-            toolTemplateSupportCache[model.id] = result
-            return result
+            toolTemplateInspectionCache[model.id] = inspection
+            return inspection
         }
 
         let candidateFiles = [
@@ -812,18 +1037,28 @@ final class MLXModelManager: ObservableObject {
             lowered.contains("role == 'tool'") ||
             lowered.contains("role != 'tool'")
         let hasToolCalls = lowered.contains("tool_call") || lowered.contains("tool_calls")
+        let preferredToolCallFormat = Self.inferToolCallFormat(
+            packageContents: combinedContents,
+            modelType: packageMetadata(for: model)?.modelType
+        )
+        let usesWrappedXMLToolCalls = Self.usesWrappedXMLToolCallTemplate(packageContents: combinedContents)
 
-        let result: ToolTemplateSupport
+        let support: ToolTemplateSupport
         if hasToolsContext && (hasToolRole || hasToolCalls) {
-            result = .supported
+            support = .supported
         } else {
-            result = .unsupported(
+            support = .unsupported(
                 "Installed model '\(model.localDirName)' does not expose a tool-aware chat template. Re-download or update this Qwen 3.5 MLX model package to enable MLX tool calling."
             )
         }
 
-        toolTemplateSupportCache[model.id] = result
-        return result
+        let inspection = ToolTemplateInspection(
+            support: support,
+            preferredToolCallFormat: preferredToolCallFormat,
+            usesWrappedXMLToolCalls: usesWrappedXMLToolCalls
+        )
+        toolTemplateInspectionCache[model.id] = inspection
+        return inspection
     }
 
     private func packageMetadata(for info: MLXModelInfo) -> ModelPackageMetadata? {
@@ -841,6 +1076,7 @@ final class MLXModelManager: ObservableObject {
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         ) ?? [:]
         let architecture = (configJSON["architectures"] as? [String])?.first
+        let modelType = configJSON["model_type"] as? String
 
         let processorURLCandidates = [
             modelURL.appendingPathComponent("preprocessor_config.json"),
@@ -859,9 +1095,48 @@ final class MLXModelManager: ObservableObject {
             break
         }
 
-        let metadata = ModelPackageMetadata(architecture: architecture, processorClass: processorClass)
+        let metadata = ModelPackageMetadata(
+            architecture: architecture,
+            processorClass: processorClass,
+            modelType: modelType
+        )
         packageMetadataCache[info.id] = metadata
         return metadata
+    }
+
+    internal static func inferToolCallFormat(
+        packageContents: String,
+        modelType: String?
+    ) -> ToolCallFormat? {
+        let lowered = packageContents.lowercased()
+
+        if lowered.contains("<function=") && lowered.contains("<parameter=") {
+            return .xmlFunction
+        }
+
+        let hasJSONToolCallExample =
+            lowered.contains("<tool_call>") &&
+            lowered.contains("\"name\"") &&
+            lowered.contains("\"arguments\"")
+        if hasJSONToolCallExample {
+            return .json
+        }
+
+        if let modelType,
+           modelType.lowercased().hasPrefix("qwen3_5"),
+           lowered.contains("tool_call") &&
+           lowered.contains("function") {
+            return .xmlFunction
+        }
+
+        return nil
+    }
+
+    internal static func usesWrappedXMLToolCallTemplate(packageContents: String) -> Bool {
+        let lowered = packageContents.lowercased()
+        return lowered.contains("<tool_call>") &&
+            lowered.contains("<function=") &&
+            lowered.contains("<parameter=")
     }
 
     private func tearDownCurrentModel(reason: String) {
@@ -874,5 +1149,99 @@ final class MLXModelManager: ObservableObject {
         prewarmInFlightModelID = nil
         Memory.clearCache()
         Memory.cacheLimit = 4 * 1024 * 1024
+    }
+}
+
+actor WrappedXMLToolCallStreamFilter {
+    private static let toolMarkupMarkers = [
+        "<tool_call>",
+        "<function=",
+        "<parameter=",
+        "</parameter>",
+        "</function>",
+        "</tool_call>"
+    ]
+
+    private var pendingText = ""
+    private var suppressingToolMarkup = false
+
+    func consume(_ chunk: String) -> String? {
+        guard !chunk.isEmpty else { return nil }
+
+        if suppressingToolMarkup {
+            return nil
+        }
+
+        pendingText += chunk
+
+        if let markerRange = Self.firstMarkerRange(in: pendingText) {
+            let visiblePrefix = String(pendingText[..<markerRange.lowerBound])
+            pendingText = ""
+            suppressingToolMarkup = true
+            return visiblePrefix.isEmpty ? nil : visiblePrefix
+        }
+
+        let safePrefixLength = Self.safePrefixLength(in: pendingText)
+        guard safePrefixLength > 0 else {
+            return nil
+        }
+
+        let safeEnd = pendingText.index(pendingText.startIndex, offsetBy: safePrefixLength)
+        let safeChunk = String(pendingText[..<safeEnd])
+        pendingText = String(pendingText[safeEnd...])
+        return safeChunk.isEmpty ? nil : safeChunk
+    }
+
+    func didDispatchToolCall() {
+        pendingText = ""
+        suppressingToolMarkup = false
+    }
+
+    func finish() -> String? {
+        defer {
+            pendingText = ""
+            suppressingToolMarkup = false
+        }
+
+        guard !suppressingToolMarkup, !pendingText.isEmpty else {
+            return nil
+        }
+
+        return pendingText
+    }
+
+    private static func firstMarkerRange(in text: String) -> Range<String.Index>? {
+        toolMarkupMarkers
+            .compactMap { marker in text.range(of: marker) }
+            .min { $0.lowerBound < $1.lowerBound }
+    }
+
+    private static func safePrefixLength(in text: String) -> Int {
+        guard text.contains("<") else {
+            return text.count
+        }
+
+        let suffixLength = longestMarkerPrefixSuffix(in: text)
+        return text.count - suffixLength
+    }
+
+    private static func longestMarkerPrefixSuffix(in text: String) -> Int {
+        let maxSuffixLength = min(
+            text.count,
+            toolMarkupMarkers.map(\.count).max() ?? 0
+        )
+        guard maxSuffixLength > 0 else {
+            return 0
+        }
+
+        for suffixLength in stride(from: maxSuffixLength, through: 1, by: -1) {
+            let suffixStart = text.index(text.endIndex, offsetBy: -suffixLength)
+            let suffix = String(text[suffixStart...])
+            if toolMarkupMarkers.contains(where: { $0.hasPrefix(suffix) }) {
+                return suffixLength
+            }
+        }
+
+        return 0
     }
 }

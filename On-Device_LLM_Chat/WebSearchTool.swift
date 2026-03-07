@@ -72,8 +72,22 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     }
 
     func dispatchMLXToolCall(_ toolCall: MLXToolCall) async throws -> String {
-        logger.notice("MLX tool call received: name=\(toolCall.function.name, privacy: .public)")
-        return try await toolCall.execute(with: makeMLXTool())
+        let rawArguments = String(describing: toolCall.function.arguments)
+        logger.notice(
+            "MLX tool call received: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+        )
+        do {
+            let result = try await toolCall.execute(with: makeMLXTool())
+            logger.notice(
+                "MLX tool call executed: name=\(toolCall.function.name, privacy: .public) result_chars=\(result.count, privacy: .public)"
+            )
+            return result
+        } catch {
+            logger.error(
+                "MLX tool call execution failed: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
     }
 
     func executeSearch(query: String) async throws -> String {
