@@ -9,6 +9,7 @@ import Testing
 import Foundation
 import MLXLMCommon
 import SwiftUI
+import SwiftData
 @testable import On_Device_LLM_Chat
 
 @MainActor
@@ -54,6 +55,26 @@ struct On_Device_LLM_ChatTests {
         let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(payload["api_key"] == nil)
         #expect(payload["query"] as? String == "latest swift release")
+        #expect(payload["max_results"] as? Int == 2)
+        #expect(payload["topic"] as? String == "news")
+        #expect(payload["time_range"] as? String == "week")
+        #expect(payload["search_depth"] as? String == "basic")
+        #expect(payload["auto_parameters"] as? Bool == true)
+        #expect(payload["include_answer"] as? String == "basic")
+        #expect(payload["include_raw_content"] as? Bool == false)
+    }
+
+    @Test func tavilySearchServiceKeepsCompactShapeForExactMatchQueries() async throws {
+        let service = try makeSearchService()
+
+        _ = try await service.search(query: #" "swift 6.2 release notes" "#)
+
+        let body = try #require(MockTavilyURLProtocol.lastRequestBody)
+        let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(payload["search_depth"] as? String == "basic")
+        #expect(payload["exact_match"] == nil)
+        #expect(payload["chunks_per_source"] == nil)
+        #expect(payload["include_answer"] as? String == "basic")
     }
 
     @Test func tavilySearchServiceMapsUnauthorizedResponsesToInvalidAPIKey() async throws {
@@ -404,6 +425,88 @@ struct On_Device_LLM_ChatTests {
         """)
     }
 
+    @Test func streamingReasoningUpdateKeepsPostSearchReasoningOutOfAnswerBubble() throws {
+        let originalBackend = ModelBackendBridge.shared.selectedBackend
+        ModelBackendBridge.shared.selectedBackend = .mlx
+        defer { ModelBackendBridge.shared.selectedBackend = originalBackend }
+
+        let viewModel = try makeViewModel()
+        let conversation = viewModel.conversation
+        let message = Message(
+            role: .assistant,
+            text: "",
+            order: 1,
+            conversation: conversation,
+            isReasoningMode: true
+        )
+        message.searchInvocations = [
+            SearchInvocation(
+                query: "latest swift release",
+                results: "Swift 6.2 Released"
+            )
+        ]
+        message.streamingReasoningPhase = .postToolReasoning
+
+        viewModel.updateMessageWithReasoningContent(
+            message,
+            fullText: """
+            I should verify the release notes.
+            </think>
+
+            I should cross-check whether 6.2 is stable or still in beta.
+            """,
+            finalize: false
+        )
+
+        #expect(message.reasoning == """
+        I should verify the release notes.
+
+        I should cross-check whether 6.2 is stable or still in beta.
+        """)
+        #expect(message.finalAnswer == nil)
+        #expect(message.text.isEmpty)
+        #expect(message.streamingReasoningPhase == .postToolReasoning)
+    }
+
+    @Test func streamingReasoningUpdateShowsAnswerAfterPostSearchReasoningTurnsIntoAnswer() throws {
+        let originalBackend = ModelBackendBridge.shared.selectedBackend
+        ModelBackendBridge.shared.selectedBackend = .mlx
+        defer { ModelBackendBridge.shared.selectedBackend = originalBackend }
+
+        let viewModel = try makeViewModel()
+        let conversation = viewModel.conversation
+        let message = Message(
+            role: .assistant,
+            text: "",
+            order: 1,
+            conversation: conversation,
+            isReasoningMode: true
+        )
+        message.searchInvocations = [
+            SearchInvocation(
+                query: "latest swift release",
+                results: "Swift 6.2 Released"
+            )
+        ]
+        message.streamingReasoningPhase = .postToolReasoning
+
+        viewModel.updateMessageWithReasoningContent(
+            message,
+            fullText: """
+            I should verify the release notes.
+            </think>
+
+            Based on the search, Swift 6.2 is the latest stable release.
+            """,
+            finalize: false
+        )
+
+        #expect(message.reasoning == "I should verify the release notes.")
+        #expect(message.finalAnswer == "Based on the search, Swift 6.2 is the latest stable release.")
+        #expect(message.text == "Based on the search, Swift 6.2 is the latest stable release.")
+        #expect(message.streamingReasoningPhase == .finalAnswer)
+    }
+
     @Test func streamingChunkMergePreservesSingleCharacterNumericChunks() {
         let merged = ChatViewModel.mergedStreamingChunk(
             currentText: "10",
@@ -468,12 +571,19 @@ struct On_Device_LLM_ChatTests {
         MockTavilyURLProtocol.responseData = """
         {
           "query": "latest swift release",
+          "answer": "Swift 6.2 is the latest stable release.",
+          "auto_parameters": {
+            "topic": "news",
+            "search_depth": "basic",
+            "time_range": "week"
+          },
           "results": [
             {
               "title": "Swift 6.2 Released",
               "url": "https://example.com/swift",
               "content": "Swift 6.2 adds more concurrency fixes.",
-              "score": 0.99
+              "score": 0.99,
+              "published_date": "2026-02-28"
             }
           ]
         }
@@ -490,6 +600,21 @@ struct On_Device_LLM_ChatTests {
         configuration.protocolClasses = [MockTavilyURLProtocol.self]
         let session = URLSession(configuration: configuration)
         return try TavilySearchService(apiKey: "test-key", session: session)
+    }
+
+    private func makeViewModel() throws -> ChatViewModel {
+        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let conversation = Conversation(title: "Test")
+        return ChatViewModel(
+            generator: TestLLMGenerator(),
+            context: context,
+            conversation: conversation
+        )
     }
 
 }
@@ -576,4 +701,18 @@ private func waitForCancellation(_ probe: CancellationProbe) async -> Bool {
         try? await Task.sleep(for: .milliseconds(25))
     }
     return await probe.isCancelled()
+}
+
+private struct TestLLMGenerator: LLMGenerator {
+    func isAvailable() -> Bool { true }
+
+    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+        ""
+    }
+
+    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
 }

@@ -9,6 +9,45 @@
 
 import Foundation
 
+private enum TavilySearchTopic: String, Sendable {
+    case general
+    case news
+    case finance
+}
+
+private enum TavilySearchDepth: String, Sendable {
+    case basic
+    case advanced
+}
+
+private enum TavilySearchTimeRange: String, Sendable {
+    case day
+    case week
+    case month
+    case year
+}
+
+private struct TavilySearchPlan: Sendable {
+    let maxResults: Int
+    let topic: TavilySearchTopic?
+    let searchDepth: TavilySearchDepth?
+    let timeRange: TavilySearchTimeRange?
+    let includeAnswer: String
+    let autoParameters: Bool
+}
+
+struct TavilyAutoParameters: Decodable, Sendable {
+    let topic: String?
+    let searchDepth: String?
+    let timeRange: String?
+
+    enum CodingKeys: String, CodingKey {
+        case topic
+        case searchDepth = "search_depth"
+        case timeRange = "time_range"
+    }
+}
+
 /// Model for a single search result (Tavily's structure)
 struct TavilySearchResult: Decodable, Identifiable, Sendable {
     var id = UUID()
@@ -17,6 +56,7 @@ struct TavilySearchResult: Decodable, Identifiable, Sendable {
     let url: String
     let content: String
     let score: Double?  // Relevance score
+    let publishedDate: String?
     
     // NEW: Exclude 'id' from Codable (it's local, not in JSON)
     enum CodingKeys: String, CodingKey {
@@ -24,6 +64,7 @@ struct TavilySearchResult: Decodable, Identifiable, Sendable {
         case url
         case content
         case score
+        case publishedDate = "published_date"
     }
 }
 
@@ -35,6 +76,7 @@ extension TavilySearchResult {
         self.url = try container.decode(String.self, forKey: .url)
         self.content = try container.decode(String.self, forKey: .content)
         self.score = try container.decodeIfPresent(Double.self, forKey: .score)
+        self.publishedDate = try container.decodeIfPresent(String.self, forKey: .publishedDate)
     }
 }
 
@@ -43,12 +85,14 @@ struct TavilySearchResponse: Decodable, Sendable {
     let query: String
     let results: [TavilySearchResult]
     let answer: String?  // AI-generated summary if enabled
+    let autoParameters: TavilyAutoParameters?
     
     // NEW: Exclude any non-JSON fields if needed; assumes standard snake_case
     enum CodingKeys: String, CodingKey {
         case query
         case results
         case answer
+        case autoParameters = "auto_parameters"
     }
 }
 
@@ -58,6 +102,7 @@ extension TavilySearchResponse {
         self.query = try container.decode(String.self, forKey: .query)
         self.results = try container.decode([TavilySearchResult].self, forKey: .results)
         self.answer = try container.decodeIfPresent(String.self, forKey: .answer)
+        self.autoParameters = try container.decodeIfPresent(TavilyAutoParameters.self, forKey: .autoParameters)
     }
 }
 
@@ -115,25 +160,39 @@ actor TavilySearchService {
         self.session = session
     }
     
-    func search(query: String, maxResults: Int = 5, searchDepth: String = "basic") async throws -> String {
+    func search(query: String, maxResults: Int = 3, searchDepth: String? = nil) async throws -> String {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             throw TavilySearchError.invalidQuery
         }
+        let plan = Self.makeSearchPlan(
+            query: trimmedQuery,
+            requestedMaxResults: maxResults,
+            explicitSearchDepth: searchDepth
+        )
         
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        
-        // IMPORTANT: Do NOT ask Tavily for an AI summary. We only want raw citations.
-        let body: [String: Any] = [
+
+        var body: [String: Any] = [
             "query": trimmedQuery,
-            "search_depth": searchDepth,
-            "max_results": maxResults,
-            "include_answer": false  // Disable AI summary
+            "max_results": plan.maxResults,
+            "include_answer": plan.includeAnswer,
+            "include_raw_content": false,
+            "auto_parameters": plan.autoParameters
         ]
+        if let topic = plan.topic?.rawValue {
+            body["topic"] = topic
+        }
+        if let searchDepth = plan.searchDepth?.rawValue {
+            body["search_depth"] = searchDepth
+        }
+        if let timeRange = plan.timeRange?.rawValue {
+            body["time_range"] = timeRange
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await session.data(for: request)
@@ -166,23 +225,95 @@ actor TavilySearchService {
     }
     
     private func formatResults(_ response: TavilySearchResponse, query: String) -> String {
-        // Return a clean, summary-free citation list. Keep it compact and machine-usable.
-        var lines: [String] = []
-        for (index, result) in response.results.enumerated() {
-            // Numbered item
-            lines.append("\(index + 1). \(result.title)")
-            // Snippet/content
-            if !result.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append(result.content)
-            }
-            // URL on its own line
-            lines.append(result.url)
-            // Blank line between entries
+        var lines: [String] = ["Search query: \(query)"]
+
+        if let answer = compactWhitespace(response.answer), !answer.isEmpty {
             lines.append("")
+            lines.append("Tavily answer:")
+            lines.append(answer)
         }
-        // Trim trailing blank lines
-        while lines.last?.isEmpty == true { _ = lines.popLast() }
-        return lines.joined(separator: "\n")
+
+        lines.append("")
+        lines.append("Sources:")
+
+        for (index, result) in response.results.prefix(2).enumerated() {
+            lines.append("[\(index + 1)] \(result.title)")
+            lines.append(result.url)
+        }
+
+        let joined = lines.joined(separator: "\n")
+        return joined.count > 1200 ? Self.truncateAtWordBoundary(joined, maxChars: 1200) : joined
+    }
+
+    private static func makeSearchPlan(
+        query: String,
+        requestedMaxResults: Int,
+        explicitSearchDepth: String?
+    ) -> TavilySearchPlan {
+        let normalized = query.lowercased()
+
+        let financeKeywords = [
+            "stock", "stocks", "share price", "market cap", "earnings", "revenue",
+            "crypto", "bitcoin", "ethereum", "nasdaq", "dow", "s&p", "price target"
+        ]
+        let newsKeywords = [
+            "latest", "today", "current", "currently", "recent", "breaking",
+            "announced", "release date", "released", "news", "update", "live",
+            "score", "result", "winner"
+        ]
+
+        let isFinanceQuery = financeKeywords.contains { normalized.contains($0) }
+        let isNewsQuery = newsKeywords.contains { normalized.contains($0) }
+        let topic: TavilySearchTopic? = if isFinanceQuery {
+            .finance
+        } else if isNewsQuery {
+            .news
+        } else {
+            nil
+        }
+
+        let timeRange: TavilySearchTimeRange? = if normalized.contains("today") || normalized.contains("live") || normalized.contains("currently") {
+            .day
+        } else if normalized.contains("this week") || normalized.contains("latest") || normalized.contains("recent") || normalized.contains("breaking") {
+            .week
+        } else {
+            nil
+        }
+
+        let resolvedDepth: TavilySearchDepth? = if let explicitSearchDepth,
+            let parsedDepth = TavilySearchDepth(rawValue: explicitSearchDepth.lowercased()) {
+            parsedDepth
+        } else {
+            .basic
+        }
+
+        return TavilySearchPlan(
+            maxResults: min(max(requestedMaxResults, 1), 2),
+            topic: topic,
+            searchDepth: resolvedDepth,
+            timeRange: timeRange,
+            includeAnswer: "basic",
+            autoParameters: true
+        )
+    }
+
+    private static func truncateAtWordBoundary(_ text: String, maxChars: Int) -> String {
+        guard text.count > maxChars else { return text }
+        let truncated = String(text.prefix(maxChars))
+        if let lastSpace = truncated.lastIndex(of: " ") {
+            return String(truncated[..<lastSpace]) + "..."
+        }
+        return truncated + "..."
+    }
+
+    private func compactWhitespace(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let collapsed = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return collapsed.isEmpty ? nil : collapsed
     }
 
     private func parseErrorMessage(from data: Data) -> String? {

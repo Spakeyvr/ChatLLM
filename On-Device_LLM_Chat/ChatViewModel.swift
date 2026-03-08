@@ -509,6 +509,11 @@ final class ChatViewModel: ObservableObject {
         var outcome: StreamOutcome = .succeeded
     }
 
+    private enum StreamEvent {
+        case text(String)
+        case toolCall(MLXToolCall)
+    }
+
     /// Detects if an error is related to context window/length limits
     func isContextWindowError(_ error: Error) -> Bool {
         let errorString = error.localizedDescription.lowercased()
@@ -806,9 +811,9 @@ final class ChatViewModel: ObservableObject {
             var iterator = stream.makeAsyncIterator()
 
             while !Task.isCancelled {
-                let nextChunk: String?
+                let nextEvent: StreamEvent?
                 do {
-                    nextChunk = try await withTimeout(result.wroteAny ? activeChunkTimeout : firstTokenTimeout) {
+                    nextEvent = try await withTimeout(result.wroteAny ? activeChunkTimeout : firstTokenTimeout) {
                         try await iterator.next()
                     }
                 } catch let timeout as GenerationTimeoutError {
@@ -825,19 +830,26 @@ final class ChatViewModel: ObservableObject {
                     break
                 }
 
-                guard let newText = nextChunk, !newText.isEmpty else {
-                    if nextChunk == nil { break }
-                    continue
-                }
+                guard let nextEvent else { break }
 
                 guard conversation.messages.contains(where: { $0.id == preparation.targetID }) else {
                     break
                 }
 
-                if !appendStreamingChunk(newText, into: &result) {
-                    continue
+                switch nextEvent {
+                case .text(let newText):
+                    guard !newText.isEmpty else { continue }
+                    if !appendStreamingChunk(newText, into: &result) {
+                        continue
+                    }
+                    renderIfThrottled()
+                case .toolCall:
+                    if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }),
+                       liveTarget.isReasoningMode {
+                        liveTarget.streamingReasoningPhase = .postToolReasoning
+                        syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
+                    }
                 }
-                renderIfThrottled()
             }
 
             if result.wroteAny,
@@ -885,7 +897,7 @@ final class ChatViewModel: ObservableObject {
         return result
     }
 
-    private func makeGenerationStream(from preparation: StreamPreparation) async throws -> AsyncThrowingStream<String, Error> {
+    private func makeGenerationStream(from preparation: StreamPreparation) async throws -> AsyncThrowingStream<StreamEvent, Error> {
         switch preparation.backendRequest {
         case .mlx(let manager, let messages, let enableThinking, let tools, let toolDispatch):
             logger.notice("streamAssistant entering MLX generation path")
@@ -909,7 +921,8 @@ final class ChatViewModel: ObservableObject {
                             enableThinking: enableThinking,
                             tools: tools,
                             toolDispatch: toolDispatch,
-                            onToken: { token in continuation.yield(token) }
+                            onToken: { token in continuation.yield(.text(token)) },
+                            onToolCall: { toolCall in continuation.yield(.toolCall(toolCall)) }
                         )
                         self.logger.notice(
                             "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview=\(preparation.questionLogPreview, privacy: .public)"
@@ -924,8 +937,20 @@ final class ChatViewModel: ObservableObject {
             }
         case .foundation(let prompt, let tools):
             logger.notice("streamAssistant entering Foundation Models generation path")
-            return try await withTimeout(firstTokenTimeout) {
+            let textStream = try await withTimeout(firstTokenTimeout) {
                 try await self.generator.streamResponse(to: prompt, tools: tools)
+            }
+            return AsyncThrowingStream { continuation in
+                Task {
+                    do {
+                        for try await chunk in textStream {
+                            continuation.yield(.text(chunk))
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
             }
         }
     }

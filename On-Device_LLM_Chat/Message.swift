@@ -46,6 +46,12 @@ struct ReasoningStep: Codable, Sendable, Identifiable {
     }
 }
 
+enum ReasoningStreamPhase: String, Sendable {
+    case initialThinking
+    case postToolReasoning
+    case finalAnswer
+}
+
 enum MessageRole: String, Codable, CaseIterable, Sendable {
     case system
     case user
@@ -88,6 +94,7 @@ final class Message {
     var generationStartedAt: Date?
     var generationCompletedAt: Date?
     @Transient var generationError: String?  // ephemeral; not persisted
+    @Transient var streamingReasoningPhase: ReasoningStreamPhase?
 
     // All web search invocations stored as JSON for SwiftData compatibility
     var searchInvocationsJSON: String?
@@ -382,6 +389,7 @@ extension Message {
         generationModelName = modelName
         generationStartedAt = startedAt
         generationCompletedAt = nil
+        streamingReasoningPhase = isReasoningMode ? .initialThinking : nil
     }
 
     func completeGenerationCapture(rawText: String, completedAt: Date = Date()) {
@@ -461,6 +469,7 @@ extension Message {
             self.generationModelName = nil
             self.generationStartedAt = nil
             self.generationCompletedAt = nil
+            self.streamingReasoningPhase = nil
         }
         
         return savedSources

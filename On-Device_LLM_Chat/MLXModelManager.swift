@@ -591,7 +591,8 @@ final class MLXModelManager: ObservableObject {
         memoryConstrained: Bool = false,
         tools: [MLXToolSpec] = [],
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)? = nil,
-        onToken: @escaping (String) -> Void
+        onToken: @escaping (String) -> Void,
+        onToolCall: @escaping (MLXToolCall) -> Void = { _ in }
     ) async throws -> MLXGenerationResult {
         guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
@@ -710,7 +711,8 @@ final class MLXModelManager: ObservableObject {
                 params: params,
                 suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
                 toolDispatch: toolDispatch,
-                onToken: onToken
+                onToken: onToken,
+                onToolCall: onToolCall
             )
             logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
             return result
@@ -750,7 +752,8 @@ final class MLXModelManager: ObservableObject {
                 params: fallbackParams,
                 suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
                 toolDispatch: toolDispatch,
-                onToken: onToken
+                onToken: onToken,
+                onToolCall: onToolCall
             )
             logger.notice("MLX tool path completed after KV fallback: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
             return result
@@ -964,7 +967,8 @@ final class MLXModelManager: ObservableObject {
         params: GenerateParameters,
         suppressWrappedXMLToolMarkup: Bool,
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
-        onToken: @escaping (String) -> Void
+        onToken: @escaping (String) -> Void,
+        onToolCall: @escaping (MLXToolCall) -> Void
     ) async throws -> MLXGenerationResult {
         do {
             let preflightInput = UserInput(
@@ -992,7 +996,8 @@ final class MLXModelManager: ObservableObject {
             params: params,
             suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
             toolDispatch: toolDispatch,
-            onToken: onToken
+            onToken: onToken,
+            onToolCall: onToolCall
         )
     }
 
@@ -1005,7 +1010,8 @@ final class MLXModelManager: ObservableObject {
         params: GenerateParameters,
         suppressWrappedXMLToolMarkup: Bool,
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
-        onToken: @escaping (String) -> Void
+        onToken: @escaping (String) -> Void,
+        onToolCall: @escaping (MLXToolCall) -> Void
     ) async throws -> MLXGenerationResult {
         var rawMessages = Qwen3VLMessageGenerator().generate(messages: messages)
         let conversationImages = messages.flatMap(\.images)
@@ -1051,6 +1057,7 @@ final class MLXModelManager: ObservableObject {
                     }
                 case .toolCall(let toolCall):
                     emittedToolCall = toolCall
+                    onToolCall(toolCall)
                     if let outputFilter {
                         await outputFilter.didDispatchToolCall()
                     }

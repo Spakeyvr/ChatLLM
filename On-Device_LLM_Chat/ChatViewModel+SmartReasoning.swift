@@ -349,6 +349,40 @@ extension ChatViewModel {
         return false
     }
 
+    private static func looksLikeAnswerStartDuringStreaming(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let normalized = trimmed.lowercased()
+        if looksLikeReasoningContinuation(trimmed) {
+            return false
+        }
+
+        if normalized.hasPrefix("final answer:") ||
+            normalized.hasPrefix("based on") ||
+            normalized.hasPrefix("according to") ||
+            normalized.hasPrefix("the answer is") ||
+            normalized.hasPrefix("in summary") ||
+            normalized.hasPrefix("here's") ||
+            normalized.hasPrefix("here is") {
+            return true
+        }
+
+        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("1. ") || trimmed.hasPrefix("• ") {
+            return true
+        }
+
+        if trimmed.contains("\n\n") {
+            return true
+        }
+
+        if normalized.hasPrefix("i ") || normalized.hasPrefix("i'm ") || normalized.hasPrefix("i’ve ") || normalized.hasPrefix("i've ") {
+            return false
+        }
+
+        return trimmed.count >= 48
+    }
+
     // made internal so it can be called from extensions in other files
     internal func updateMessageWithReasoningContent(_ message: Message, fullText: String, finalize: Bool = false) {
         // DEBUG: Log if we're updating with empty/whitespace-only content
@@ -396,7 +430,6 @@ extension ChatViewModel {
             // Before </think> arrives all content is in-progress reasoning with no tags at all.
             let isMLX = ModelBackendBridge.shared.selectedBackend == .mlx
             if isMLX {
-                let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
                 let hasClose = visiblePortion.contains("</think>") || visiblePortion.contains("</thinking>")
                 if !hasClose {
                     // Still thinking – show in the reasoning bubble, nothing in the answer yet.
@@ -407,19 +440,6 @@ extension ChatViewModel {
                     }
                     return
                 }
-
-                if hasLiveSearches && !finalize {
-                    let provisionalReasoning = visiblePortion
-                        .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
-                        .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !provisionalReasoning.isEmpty {
-                        message.reasoning = provisionalReasoning
-                        message.updateReasoningSteps()
-                    }
-                    message.text = ""
-                    return
-                }
             }
 
             let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
@@ -427,6 +447,27 @@ extension ChatViewModel {
                 parseReasoningResponseForSearchSession(visiblePortion)
             } else {
                 parseReasoningResponse(visiblePortion)
+            }
+
+            if isMLX && hasLiveSearches && !finalize {
+                let phase = message.streamingReasoningPhase ?? .initialThinking
+                if phase == .postToolReasoning {
+                    if let answer = parsed.finalAnswer,
+                       Self.looksLikeAnswerStartDuringStreaming(answer) {
+                        message.streamingReasoningPhase = .finalAnswer
+                    } else {
+                        let provisionalReasoning = visiblePortion
+                            .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
+                            .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !provisionalReasoning.isEmpty {
+                            message.reasoning = provisionalReasoning
+                            message.updateReasoningSteps()
+                        }
+                        message.text = ""
+                        return
+                    }
+                }
             }
 
             // Always update reasoning if present
@@ -442,6 +483,7 @@ extension ChatViewModel {
                 let stored = sourcesBlock + answer
                 message.finalAnswer = stored
                 message.text = answer // Keep raw visible text for non-reasoning fallbacks
+                message.streamingReasoningPhase = .finalAnswer
             } else {
                 // While only reasoning is present, keep the visible text empty or last known final answer
                 if parsed.reasoning == nil && visiblePortion.contains("<thinking>") {
