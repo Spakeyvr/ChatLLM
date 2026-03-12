@@ -152,7 +152,7 @@ extension ChatViewModel {
         print("   - ID: \(targetMessage.id)")
         print("   - Role: \(targetMessage.role)")
         print("   - Order: \(targetMessage.order)")
-        print("   - Text preview: '\(String(targetMessage.text.prefix(50)))...'")
+        print("   - Text chars: \(targetMessage.text.count)")
 
         targetMessage.isReasoningMode = shouldUseReasoning
         targetMessage.promptSnapshot = nil
@@ -163,7 +163,7 @@ extension ChatViewModel {
         // CRITICAL FIX: Pass msg.order so buildPrompt excludes this assistant message itself
         // (basedOnHistoryUpTo is exclusive), correctly including all preceding user messages.
         print("🚀 Calling streamAssistant with order \(msg.order) for message \(msg.id)")
-        print("📊 Message details: role=\(msg.role), text='\(msg.text.prefix(50))...', isFinal=\(msg.isFinal)")
+        print("📊 Message details: role=\(msg.role), text_chars=\(msg.text.count), isFinal=\(msg.isFinal)")
         print("📊 All message orders in conversation: \(conversation.messages.map { "(\($0.role):\($0.order))" }.joined(separator: ", "))")
         await streamAssistant(into: msg, basedOnHistoryUpTo: msg.order)
         print("✅ Regeneration completed for message order \(messageOrder)")

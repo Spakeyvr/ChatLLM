@@ -13,6 +13,7 @@ actor ModelDownloader {
     private static let hfResolveBase = "https://huggingface.co"
     private static let chunkSize     = 256 * 1024
     private static let minProgressInterval: Double = 0.01  // report at most every 1% change
+    private static let disallowedRemotePathComponents: Set<String> = [".", ".."]
 
     // MARK: - File List
 
@@ -59,12 +60,15 @@ actor ModelDownloader {
         for file in files {
             try Task.checkCancellation()
 
-            guard let fileURL = URL(string: "\(Self.hfResolveBase)/\(repoId)/resolve/main/\(file.name)") else {
+            let remotePathComponents = try Self.validatedRemotePathComponents(for: file.name)
+            guard let fileURL = Self.resolveDownloadURL(
+                repoId: repoId,
+                remotePathComponents: remotePathComponents
+            ) else {
                 throw DownloadError.badURL(file: file.name)
             }
 
-            let destURL = targetDir.appendingPathComponent(file.name)
-            let tempURL = targetDir.appendingPathComponent("\(file.name).download")
+            let (destURL, tempURL) = try Self.destinationURLs(for: file.name, inside: targetDir)
 
             let parentDir = destURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
@@ -79,6 +83,7 @@ actor ModelDownloader {
             let effectiveTotal = totalExpected > 0 ? totalExpected
                 : (contentLength > 0 ? totalWritten + contentLength + files.dropFirst(filesCompleted + 1).reduce(0) { $0 + $1.size } : 0)
 
+            try? FileManager.default.removeItem(at: tempURL)
             FileManager.default.createFile(atPath: tempURL.path, contents: nil)
             let handle = try FileHandle(forWritingTo: tempURL)
 
@@ -134,18 +139,102 @@ actor ModelDownloader {
         return 0
     }
 
+    internal static func validatedRemotePathComponents(for remotePath: String) throws -> [String] {
+        let trimmed = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("/") else {
+            throw DownloadError.invalidRemotePath(file: remotePath)
+        }
+
+        let components = trimmed
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        guard !components.isEmpty,
+              components.allSatisfy({
+                  !$0.isEmpty &&
+                  !Self.disallowedRemotePathComponents.contains($0) &&
+                  !$0.contains("\\")
+              }) else {
+            throw DownloadError.invalidRemotePath(file: remotePath)
+        }
+
+        return components
+    }
+
+    internal static func destinationURLs(
+        for remotePath: String,
+        inside targetDir: URL
+    ) throws -> (destination: URL, temporary: URL) {
+        let components = try validatedRemotePathComponents(for: remotePath)
+        let targetRoot = targetDir.standardizedFileURL
+
+        let destinationDirectory = components
+            .dropLast()
+            .reduce(targetRoot) { partialResult, component in
+                partialResult.appendingPathComponent(component, isDirectory: true)
+            }
+        let destination = destinationDirectory.appendingPathComponent(
+            components.last ?? "",
+            isDirectory: false
+        )
+        let temporary = destination
+            .deletingLastPathComponent()
+            .appendingPathComponent(destination.lastPathComponent + ".download", isDirectory: false)
+
+        try ensureURLIsInsideTarget(destination, targetDir: targetRoot, originalFile: remotePath)
+        try ensureURLIsInsideTarget(temporary, targetDir: targetRoot, originalFile: remotePath)
+
+        return (destination, temporary)
+    }
+
+    private static func resolveDownloadURL(
+        repoId: String,
+        remotePathComponents: [String]
+    ) -> URL? {
+        let repoComponents = repoId
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard !repoComponents.isEmpty,
+              let baseURL = URL(string: hfResolveBase) else {
+            return nil
+        }
+
+        let repoURL = repoComponents.reduce(baseURL) { partialResult, component in
+            partialResult.appendingPathComponent(component, isDirectory: false)
+        }
+
+        return (["resolve", "main"] + remotePathComponents).reduce(repoURL) { partialResult, component in
+            partialResult.appendingPathComponent(component, isDirectory: false)
+        }
+    }
+
+    private static func ensureURLIsInsideTarget(
+        _ url: URL,
+        targetDir: URL,
+        originalFile: String
+    ) throws {
+        let targetPath = targetDir.standardizedFileURL.path
+        let resolvedPath = url.standardizedFileURL.path
+        guard resolvedPath == targetPath || resolvedPath.hasPrefix(targetPath + "/") else {
+            throw DownloadError.invalidRemotePath(file: originalFile)
+        }
+    }
+
     // MARK: - Errors
 
     enum DownloadError: LocalizedError {
         case badResponse
         case noFilesFound
         case badURL(file: String)
+        case invalidRemotePath(file: String)
 
         var errorDescription: String? {
             switch self {
             case .badResponse:       return "The server returned an unexpected response. Check your internet connection."
             case .noFilesFound:      return "No files found for this model on HuggingFace."
             case .badURL(let file):  return "Could not construct download URL for file: \(file)"
+            case .invalidRemotePath(let file):
+                return "The server returned an unexpected file path for: \(file)"
             }
         }
     }

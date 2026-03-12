@@ -32,7 +32,6 @@ extension ChatViewModel {
         analysisResult: VisionAnalysisResult? = nil
     ) async {
         print("🖼️ sendWithImage called")
-        print("📝 Text: '\(text)'")
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed

@@ -667,7 +667,7 @@ final class ChatViewModel: ObservableObject {
             "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(resetState.forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) backend_tool_support=\(backendSupportsWebSearchTools, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
         )
         logger.notice(
-            "streamAssistant question: chars=\(resetState.latestUserQuestion.count, privacy: .public) search_query=\(resetState.target.searchQuery ?? "", privacy: .public) preview=\(resetState.questionLogPreview, privacy: .public)"
+            "streamAssistant question: chars=\(resetState.latestUserQuestion.count, privacy: .public) search_query_present=\(resetState.target.searchQuery != nil, privacy: .public)"
         )
 
         let foundationModelTools: [any FoundationModelTool] = webSearchBridge.map { [$0.foundationModelTool] } ?? []
@@ -870,13 +870,8 @@ final class ChatViewModel: ObservableObject {
                 scheduleCoalescedSave()
             }
 
-            let rawOutputPreview = String(
-                result.cumulativeText
-                    .replacingOccurrences(of: "\n", with: " ")
-                    .prefix(240)
-            )
             logger.notice(
-                "streamAssistant raw output: chars=\(result.cumulativeText.count, privacy: .public) wrote_any=\(result.wroteAny, privacy: .public) preview=\(rawOutputPreview, privacy: .public)"
+                "streamAssistant raw output: chars=\(result.cumulativeText.count, privacy: .public) wrote_any=\(result.wroteAny, privacy: .public)"
             )
         } catch is CancellationError {
             print("⚠️ streaming Task: Cancelled")
@@ -884,7 +879,7 @@ final class ChatViewModel: ObservableObject {
         } catch {
             print("❌ streaming Task: Error - \(error)")
             logger.error(
-                "streamAssistant generation error: question_preview=\(preparation.questionLogPreview, privacy: .public) partial_chars=\(result.cumulativeText.count, privacy: .public) error=\((error as NSError).localizedDescription, privacy: .public)"
+                "streamAssistant generation error: question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public) partial_chars=\(result.cumulativeText.count, privacy: .public) error=\((error as NSError).localizedDescription, privacy: .public)"
             )
             if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                 let message = isContextWindowError(error)
@@ -934,7 +929,7 @@ final class ChatViewModel: ObservableObject {
                             onToolCall: { toolCall in continuation.yield(.toolCall(toolCall)) }
                         )
                         self.logger.notice(
-                            "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview=\(preparation.questionLogPreview, privacy: .public)"
+                            "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public)"
                         )
                         continuation.finish()
                     } catch is CancellationError {
@@ -1029,9 +1024,8 @@ final class ChatViewModel: ObservableObject {
         targetID: UUID
     ) -> [SearchInvocation] {
         let capturedInvocations = webSearchBridge?.allInvocations ?? []
-        let invocationQueries = capturedInvocations.map(\.query).joined(separator: " | ")
         logger.notice(
-            "streamAssistant search summary: invocations=\(capturedInvocations.count, privacy: .public) queries=\(invocationQueries, privacy: .public)"
+            "streamAssistant search summary: invocations=\(capturedInvocations.count, privacy: .public)"
         )
 
         guard !capturedInvocations.isEmpty,
@@ -1106,7 +1100,7 @@ final class ChatViewModel: ObservableObject {
         if !hasAnyVisibleContent && target.generationError == nil {
             logger.warning("No visible content after streaming (wroteAny=\(consumption.wroteAny))")
             logger.warning(
-                "streamAssistant empty visible output: question_preview=\(preparation.questionLogPreview, privacy: .public) raw_chars=\(consumption.cumulativeText.count, privacy: .public) tool_invocations=\(capturedInvocations.count, privacy: .public)"
+                "streamAssistant empty visible output: question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public) raw_chars=\(consumption.cumulativeText.count, privacy: .public) tool_invocations=\(capturedInvocations.count, privacy: .public)"
             )
 
             if hasPreviousContent {

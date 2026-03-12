@@ -71,7 +71,7 @@ extension ChatViewModel {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
             if result != cleaned {
-                print("🧹 Normalized typo -> '\(replacement)'")
+                print("🧹 Normalized common typo pattern")
                 cleaned = result
             }
         }
@@ -108,7 +108,7 @@ extension ChatViewModel {
             if i + 1 < words.count {
                 let nextWord = words[i + 1]
                 if word.count < 4 && word.count > 0 && nextWord.count > word.count && nextWord.hasPrefix(word) {
-                    print("🧹 Fixing mid-word glitch: '\(word)' -> '\(nextWord)'")
+                    print("🧹 Fixing mid-word glitch")
                     fixedWords.append(nextWord)
                     i += 2
                     continue

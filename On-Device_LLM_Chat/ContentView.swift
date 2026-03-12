@@ -102,7 +102,7 @@ struct ContentView: View {
                 },
                 onCancel: { showSettings = false }
             )
-            .sheet(isPresented: $showExportSheet) {
+            .sheet(isPresented: $showExportSheet, onDismiss: cleanupExportFile) {
                 if let url = exportURL {
                     ShareSheet(activityItems: [url])
                 }
@@ -829,6 +829,7 @@ struct ContentView: View {
 
     private func exportAllChats() {
         guard !conversations.isEmpty else { return }
+        cleanupExportFile()
         
         // Create export content as JSON
         let dateFormatter = DateFormatter()
@@ -863,12 +864,19 @@ struct ContentView: View {
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         
         do {
-            try exportText.write(to: tempURL, atomically: true, encoding: .utf8)
+            let exportData = Data(exportText.utf8)
+            try exportData.write(to: tempURL, options: [.atomic, .completeFileProtection])
             exportURL = tempURL
             showExportSheet = true
         } catch {
             errorMessage = String(localized: "Failed to export chats. Please try again.")
         }
+    }
+
+    private func cleanupExportFile() {
+        guard let exportURL else { return }
+        try? FileManager.default.removeItem(at: exportURL)
+        self.exportURL = nil
     }
     
     private func performAutoDeleteIfNeeded() {

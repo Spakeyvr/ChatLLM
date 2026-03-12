@@ -99,7 +99,7 @@ extension ChatViewModel {
 
             let decision = response.content.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             let shouldUseReasoning = decision == "YES"
-            logger.info("Smart reasoning decision for '\(String(trimmedInput.prefix(50)))...': \(shouldUseReasoning ? "YES" : "NO")")
+            logger.info("Smart reasoning decision computed: request_chars=\(trimmedInput.count, privacy: .public) result=\(shouldUseReasoning ? "YES" : "NO", privacy: .public)")
             return shouldUseReasoning
         } catch {
             logger.error("Error evaluating prompt complexity: \(error.localizedDescription)")
@@ -186,7 +186,7 @@ extension ChatViewModel {
 
         // DEBUG: Log what we're parsing to diagnose short answer issues
         if trimmedText.count < 200 {
-            print("🔍 parseReasoningResponse input: '\(trimmedText)'")
+            print("🔍 parseReasoningResponse input chars: \(trimmedText.count)")
         }
 
         // Check all tag variants (Qwen3.5 uses <think>, older paths use <thinking>)
@@ -247,8 +247,8 @@ extension ChatViewModel {
                 // DEBUG: Log extracted values for short responses
                 if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
                     print("🔍 parseReasoningResponse extracted:")
-                    print("   - reasoning: '\(reasoning ?? "nil")'")
-                    print("   - finalAnswer: '\(finalAnswer ?? "nil")'")
+                    print("   - reasoning chars: \(reasoning?.count ?? 0)")
+                    print("   - finalAnswer chars: \(finalAnswer?.count ?? 0)")
                 }
 
                 return (reasoning, finalAnswer)

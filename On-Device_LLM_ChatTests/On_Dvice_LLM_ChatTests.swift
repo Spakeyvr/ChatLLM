@@ -678,6 +678,34 @@ struct On_Device_LLM_ChatTests {
         #expect(await waitForCancellation(probe))
     }
 
+    @Test func modelDownloaderRejectsRemoteTraversalPaths() {
+        var rejected = false
+
+        do {
+            _ = try ModelDownloader.destinationURLs(
+                for: "../escape.txt",
+                inside: URL(fileURLWithPath: "/tmp/models", isDirectory: true)
+            )
+        } catch let error as ModelDownloader.DownloadError {
+            if case .invalidRemotePath(let file) = error {
+                rejected = file == "../escape.txt"
+            }
+        } catch {}
+
+        #expect(rejected)
+    }
+
+    @Test func modelDownloaderKeepsNestedFilesInsideTargetDirectory() throws {
+        let targetDir = URL(fileURLWithPath: "/tmp/models", isDirectory: true)
+        let urls = try ModelDownloader.destinationURLs(
+            for: "nested/config.json",
+            inside: targetDir
+        )
+
+        #expect(urls.destination.standardizedFileURL.path == "/tmp/models/nested/config.json")
+        #expect(urls.temporary.standardizedFileURL.path == "/tmp/models/nested/config.json.download")
+    }
+
     private func makeSearchBridge() throws -> AppWebSearchToolBridge {
         MockTavilyURLProtocol.responseStatusCode = 200
         MockTavilyURLProtocol.responseData = """

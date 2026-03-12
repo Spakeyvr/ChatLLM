@@ -106,9 +106,9 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     }
 
     func dispatchMLXToolCall(_ toolCall: MLXToolCall) async throws -> String {
-        let rawArguments = String(describing: toolCall.function.arguments)
+        let rawArgumentCount = String(describing: toolCall.function.arguments).count
         logger.notice(
-            "MLX tool call received: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+            "MLX tool call received: name=\(toolCall.function.name, privacy: .public) argument_chars=\(rawArgumentCount, privacy: .public)"
         )
         do {
             let result = try await toolCall.execute(with: makeMLXTool())
@@ -119,24 +119,24 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
         } catch DecodingError.keyNotFound(let key, _) where key.stringValue == "query" {
             let result = Self.invalidArgumentsToolResponse()
             logger.warning(
-                "MLX tool call missing required query argument: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+                "MLX tool call missing required query argument: name=\(toolCall.function.name, privacy: .public) argument_chars=\(rawArgumentCount, privacy: .public)"
             )
             return result
         } catch DecodingError.valueNotFound(_, _) {
             let result = Self.invalidArgumentsToolResponse()
             logger.warning(
-                "MLX tool call missing value for required argument: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+                "MLX tool call missing value for required argument: name=\(toolCall.function.name, privacy: .public) argument_chars=\(rawArgumentCount, privacy: .public)"
             )
             return result
         } catch DecodingError.typeMismatch(_, _) {
             let result = Self.invalidArgumentsToolResponse()
             logger.warning(
-                "MLX tool call had invalid argument type: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public)"
+                "MLX tool call had invalid argument type: name=\(toolCall.function.name, privacy: .public) argument_chars=\(rawArgumentCount, privacy: .public)"
             )
             return result
         } catch {
             logger.error(
-                "MLX tool call execution failed: name=\(toolCall.function.name, privacy: .public) arguments=\(rawArguments, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                "MLX tool call execution failed: name=\(toolCall.function.name, privacy: .public) argument_chars=\(rawArgumentCount, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
@@ -152,7 +152,7 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
             return Self.searchLimitToolResponse(limit: Self.maxInvocations)
         }
 
-        logger.notice("Search started: query=\(query, privacy: .public) prior_invocations=\(count, privacy: .public)")
+        logger.notice("Search started: query_chars=\(query.count, privacy: .public) prior_invocations=\(count, privacy: .public)")
         let start = Date()
         let results = try await searchService.search(query: query, maxResults: 3)
         let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
@@ -166,7 +166,7 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
         }
 
         logger.notice(
-            "Search finished: query=\(query, privacy: .public) chars=\(truncated.count, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public)"
+            "Search finished: query_chars=\(query.count, privacy: .public) chars=\(truncated.count, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public)"
         )
 
         return truncated
