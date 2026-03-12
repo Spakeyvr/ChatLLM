@@ -184,6 +184,10 @@ struct ModelRow: View {
         modelManager.availabilityIssue(for: model)
     }
 
+    private var toolCallIssue: String? {
+        modelManager.toolCallIssue(for: model)
+    }
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
@@ -222,6 +226,13 @@ struct ModelRow: View {
                     Label(model.loadPolicy.packageDescription, systemImage: "square.stack.3d.up.fill")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+
+                    if let toolCallIssue {
+                        Text(toolCallIssue)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
 
                     if !model.isAvailable {
                         if modelManager.isDownloading {

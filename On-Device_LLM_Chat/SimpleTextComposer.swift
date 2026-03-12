@@ -22,6 +22,7 @@ struct SimpleTextComposer: View {
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
     @Binding var disableToolCalls: Bool
+    var toolCallsLockedDisabled: Bool = false
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
@@ -61,6 +62,7 @@ struct SimpleTextComposer: View {
                     forceSearch: $forceSearch,
                     searchAvailable: searchAvailable,
                     disableToolCalls: $disableToolCalls,
+                    toolCallsLockedDisabled: toolCallsLockedDisabled,
                     isReasoningEnabled: $isReasoningEnabled,
                     isSmartReasoningEnabled: $isSmartReasoningEnabled,
                     reasoningAvailable: reasoningAvailable
@@ -185,6 +187,7 @@ private struct AddOptionsSheet: View {
     @Binding var forceSearch: Bool
     var searchAvailable: Bool
     @Binding var disableToolCalls: Bool
+    var toolCallsLockedDisabled: Bool
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool
@@ -220,6 +223,7 @@ private struct AddOptionsSheet: View {
                         }
                     }
                     .tint(.orange)
+                    .disabled(toolCallsLockedDisabled)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
                     .onChange(of: disableToolCalls) { _, isDisabled in

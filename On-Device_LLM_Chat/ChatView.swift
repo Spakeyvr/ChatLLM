@@ -30,7 +30,7 @@ struct ChatView: View {
 
     // Search toggle state
     @State private var forceSearch: Bool = false
-    @AppStorage("disableToolCalls") private var disableToolCalls: Bool = false
+    @AppStorage("disableToolCalls") private var disableToolCallsPreference: Bool = false
 
     // Backend bridge for checking reasoning availability
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
@@ -68,13 +68,36 @@ struct ChatView: View {
     // Pure computed property — no side effects, no @State mutations during body evaluation.
     // Sorting a typical message list (~10–50 items) is negligible; SwiftUI diffs the result.
     private var sortedMessages: [Message] {
-        viewModel.conversation.messages.sortedByOrder
+        viewModel.conversation.messages
+            .filter { $0.role != .system }
+            .sortedByOrder
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
     private var shouldPrecomputeVisionAnalysis: Bool {
         guard modelBackendBridge.selectedBackend == .mlx else { return true }
         return !(modelBackendBridge.modelManager?.currentModel?.supportsNativeImages ?? false)
+    }
+
+    private var webSearchToggleAvailable: Bool {
+        networkMonitor.isConnected &&
+        selectedImage == nil &&
+        modelBackendBridge.toolCallsAvailableForCurrentBackend
+    }
+
+    private var toolCallsLockedDisabled: Bool {
+        !modelBackendBridge.toolCallsAvailableForCurrentBackend
+    }
+
+    private var effectiveDisableToolCalls: Bool {
+        toolCallsLockedDisabled || disableToolCallsPreference
+    }
+
+    private var disableToolCallsBinding: Binding<Bool> {
+        Binding(
+            get: { effectiveDisableToolCalls },
+            set: { disableToolCallsPreference = $0 }
+        )
     }
 
     // Error handling helper
@@ -154,7 +177,7 @@ struct ChatView: View {
                     isReasoningEnabled: viewModel.conversation.reasoningMode,
                     isSmartReasoningEnabled: viewModel.conversation.smartReasoningMode,
                     reasoningAvailable: modelBackendBridge.reasoningAvailable,
-                    hasMessages: !viewModel.conversation.messages.isEmpty,
+                    hasMessages: !sortedMessages.isEmpty,
                     modelBackendBridge: modelBackendBridge
                 )
             }
@@ -343,8 +366,13 @@ struct ChatView: View {
                 forceSearch = false
             }
         }
-        .onChange(of: disableToolCalls) { _, isDisabled in
+        .onChange(of: effectiveDisableToolCalls) { _, isDisabled in
             if isDisabled && forceSearch {
+                forceSearch = false
+            }
+        }
+        .onChange(of: webSearchToggleAvailable) { _, isAvailable in
+            if !isAvailable && forceSearch {
                 forceSearch = false
             }
         }
@@ -389,8 +417,9 @@ struct ChatView: View {
                 isFileImporterPresented = true
             },
             forceSearch: $forceSearch,
-            searchAvailable: networkMonitor.isConnected && selectedImage == nil,
-            disableToolCalls: $disableToolCalls,
+            searchAvailable: webSearchToggleAvailable,
+            disableToolCalls: disableToolCallsBinding,
+            toolCallsLockedDisabled: toolCallsLockedDisabled,
             isReasoningEnabled: Binding(
                 get: { viewModel.conversation.reasoningMode },
                 set: { viewModel.setReasoningMode($0) }
@@ -443,7 +472,7 @@ struct ChatView: View {
         guard !viewModel.isGenerating, !textToSend.isEmpty else { return }
 
         let shouldSearch = forceSearch
-        let shouldDisableToolCalls = disableToolCalls
+        let shouldDisableToolCalls = effectiveDisableToolCalls
 
         // Clear input immediately for snappy feel, then send
         inputText = ""

@@ -214,6 +214,37 @@ class ModelBackendBridge: ObservableObject {
         }
     }
 
+    private var selectedMLXModel: MLXModelManager.MLXModelInfo? {
+        if let model = modelManager?.currentModel {
+            return model
+        }
+        guard let modelID = selectedModelID else {
+            return nil
+        }
+        return modelManager?.model(withID: modelID)
+    }
+
+    var toolCallsAvailableForCurrentBackend: Bool {
+        switch selectedBackend {
+        case .foundationModels:
+            return true
+        case .mlx:
+            guard let model = selectedMLXModel, let manager = modelManager else {
+                return false
+            }
+            return manager.supportsToolCalls(for: model)
+        }
+    }
+
+    var toolCallAvailabilityIssueForCurrentBackend: String? {
+        guard selectedBackend == .mlx,
+              let model = selectedMLXModel,
+              let manager = modelManager else {
+            return nil
+        }
+        return manager.toolCallIssue(for: model)
+    }
+
     func shouldEnableThinking(
         reasoningMode: Bool,
         smartReasoningMode: Bool,

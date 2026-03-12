@@ -76,6 +76,8 @@ final class MLXModelManager: ObservableObject {
         let supportsReasoning: Bool
         let supportsNativeImages: Bool
         let requiredProcessorClass: String?
+        let minimumPhoneMemoryBytes: UInt64?
+        let minimumPhoneMemoryForToolCallsBytes: UInt64?
 
         init(
             id: String,
@@ -90,7 +92,9 @@ final class MLXModelManager: ObservableObject {
             isAvailable: Bool,
             supportsReasoning: Bool,
             supportsNativeImages: Bool = false,
-            requiredProcessorClass: String? = nil
+            requiredProcessorClass: String? = nil,
+            minimumPhoneMemoryBytes: UInt64? = nil,
+            minimumPhoneMemoryForToolCallsBytes: UInt64? = nil
         ) {
             self.id = id
             self.name = name
@@ -105,6 +109,8 @@ final class MLXModelManager: ObservableObject {
             self.supportsReasoning = supportsReasoning
             self.supportsNativeImages = supportsNativeImages
             self.requiredProcessorClass = requiredProcessorClass
+            self.minimumPhoneMemoryBytes = minimumPhoneMemoryBytes
+            self.minimumPhoneMemoryForToolCallsBytes = minimumPhoneMemoryForToolCallsBytes
         }
 
         var displayName: String { "\(name) (\(parameters))" }
@@ -137,6 +143,7 @@ final class MLXModelManager: ObservableObject {
     private var deferredPrewarmModelID: String?
     private var prewarmInFlightModelID: String?
     private var memoryMaintenanceTimer: Timer?
+    private let deviceSupportProfile: MLXDeviceSupportProfile
 
     private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
     private static let memoryMaintenanceInterval: TimeInterval = 3
@@ -160,7 +167,9 @@ final class MLXModelManager: ObservableObject {
             isAvailable: false,
             supportsReasoning: true,
             supportsNativeImages: true,
-            requiredProcessorClass: "Qwen3VLProcessor"
+            requiredProcessorClass: "Qwen3VLProcessor",
+            minimumPhoneMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte,
+            minimumPhoneMemoryForToolCallsBytes: 12 * MLXDeviceSupportProfile.gibibyte
         ),
         MLXModelInfo(
             id: "qwen3.5-2b-4bit",
@@ -175,7 +184,9 @@ final class MLXModelManager: ObservableObject {
             isAvailable: false,
             supportsReasoning: true,
             supportsNativeImages: true,
-            requiredProcessorClass: "Qwen3VLProcessor"
+            requiredProcessorClass: "Qwen3VLProcessor",
+            minimumPhoneMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte,
+            minimumPhoneMemoryForToolCallsBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
     ]
 
@@ -232,7 +243,19 @@ final class MLXModelManager: ObservableObject {
     private func installationStatus(for info: MLXModelInfo) -> ModelInstallationStatus {
         let dir = documentsDirectory.appendingPathComponent("Models/\(info.localDirName)")
         let fm = FileManager.default
-        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
+        let hasConfig = fm.fileExists(atPath: dir.appendingPathComponent("config.json").path)
+        let contents = hasConfig ? ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []) : []
+        let hasWeights = contents.contains(where: { $0.hasSuffix(".safetensors") })
+
+        if let deviceIssue = deviceSupportProfile.availabilityIssue(for: info) {
+            return ModelInstallationStatus(
+                isInstalled: hasConfig && hasWeights,
+                isCompatible: false,
+                compatibilityError: deviceIssue
+            )
+        }
+
+        guard hasConfig else {
             #if targetEnvironment(simulator)
             if let simulatorUnsupportedReason = info.loadPolicy.simulatorUnsupportedReason {
                 return ModelInstallationStatus(
@@ -244,8 +267,7 @@ final class MLXModelManager: ObservableObject {
             #endif
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
-        let contents = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
-        guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else {
+        guard hasWeights else {
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
 
@@ -303,13 +325,22 @@ final class MLXModelManager: ObservableObject {
         compatibilityError(for: info)
     }
 
+    func supportsToolCalls(for info: MLXModelInfo) -> Bool {
+        deviceSupportProfile.supportsToolCalls(for: info)
+    }
+
+    func toolCallIssue(for info: MLXModelInfo) -> String? {
+        deviceSupportProfile.toolCallIssue(for: info)
+    }
+
     func packageArchitecture(for info: MLXModelInfo) -> String? {
         packageMetadata(for: info)?.architecture
     }
 
     // MARK: - Init
 
-    init() {
+    init(deviceSupportProfile: MLXDeviceSupportProfile? = nil) {
+        self.deviceSupportProfile = deviceSupportProfile ?? MLXDeviceSupportProfile.current
         availableModels = Self.modelDefinitions.map { definition in
             var model = definition
             let status = installationStatus(for: model)

@@ -654,7 +654,8 @@ final class ChatViewModel: ObservableObject {
     ) async -> StreamPreparation? {
         let promptBridge = ModelBackendBridge.shared
         let toolCallsDisabled = disableWebSearch || UserDefaults.standard.disableToolCalls
-        let autonomousWebSearchAvailable = !toolCallsDisabled && searchService != nil
+        let backendSupportsWebSearchTools = promptBridge.toolCallsAvailableForCurrentBackend
+        let autonomousWebSearchAvailable = !toolCallsDisabled && searchService != nil && backendSupportsWebSearchTools
         let webSearchAvailable = autonomousWebSearchAvailable
         let webSearchBridge: AppWebSearchToolBridge? = if webSearchAvailable, let service = searchService {
             AppWebSearchToolBridge(searchService: service)
@@ -663,7 +664,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         logger.notice(
-            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(resetState.forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
+            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(resetState.forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) backend_tool_support=\(backendSupportsWebSearchTools, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
         )
         logger.notice(
             "streamAssistant question: chars=\(resetState.latestUserQuestion.count, privacy: .public) search_query=\(resetState.target.searchQuery ?? "", privacy: .public) preview=\(resetState.questionLogPreview, privacy: .public)"
@@ -684,9 +685,17 @@ final class ChatViewModel: ObservableObject {
         )
 
         if resetState.forceSearchRequired && webSearchBridge == nil {
+            let failureMessage: String
+            if let backendIssue = promptBridge.toolCallAvailabilityIssueForCurrentBackend {
+                failureMessage = "\(backendIssue) Disable forced web search for this response or switch to a supported backend."
+            } else if toolCallsDisabled {
+                failureMessage = "Web search was explicitly required for this response, but tool calls are disabled. Re-enable tool calls or turn off forced web search."
+            } else {
+                failureMessage = "Web search was explicitly required for this response, but no search tool is configured. Add a Tavily API key."
+            }
             failStreamPreparation(
                 target: resetState.target,
-                message: "Web search was explicitly required for this response, but no search tool is configured. Add a Tavily API key or re-enable tool calls.",
+                message: failureMessage,
                 clearVisibleContent: true
             )
             return nil

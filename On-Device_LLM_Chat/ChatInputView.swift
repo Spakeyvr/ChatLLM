@@ -23,6 +23,7 @@ struct ComposerView: View {
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
     @Binding var disableToolCalls: Bool
+    var toolCallsLockedDisabled: Bool = false
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
@@ -42,6 +43,7 @@ struct ComposerView: View {
             forceSearch: $forceSearch,
             searchAvailable: searchAvailable,
             disableToolCalls: $disableToolCalls,
+            toolCallsLockedDisabled: toolCallsLockedDisabled,
             isReasoningEnabled: $isReasoningEnabled,
             isSmartReasoningEnabled: $isSmartReasoningEnabled,
             reasoningAvailable: reasoningAvailable

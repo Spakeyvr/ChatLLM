@@ -43,8 +43,7 @@ struct SettingsSheet: View {
     @State var editingPreset: SystemPromptPreset? = nil
     @State var isEditingSheetPresented: Bool = false
 
-    // Dynamic height for the main default prompt editor
-    @State private var promptEditorHeight: CGFloat = 140
+    @State private var isDefaultPromptFocused: Bool = false
 
     // Confirmation alerts
     enum PendingAction: Identifiable {
@@ -313,36 +312,14 @@ struct SettingsSheet: View {
                         .padding(.top, 8),
                     footer: Text(String(localized: "New chats will start with this system prompt. You can change it per chat from the gear button in the conversation."))
                 ) {
-                    GeometryReader { geometry in
-                        ZStack(alignment: .topLeading) {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(Color.secondary.opacity(0.15))
-                                )
-
-                            AutoSizingTextEditor(
-                                text: $defaultSystemPrompt,
-                                minHeight: 140,
-                                dynamicHeight: $promptEditorHeight,
-                                availableWidth: geometry.size.width,
-                                isMonospaced: useMonospacedEditors,
-                                font: useMonospacedEditors ? .body.monospaced() : .body
-                            )
-                            .padding(10)
-                            .frame(height: max(140, promptEditorHeight))
-                            .background(Color.clear)
-
-                            if defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text(String(localized: "Describe the assistant’s default behavior for new chats…"))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                            }
-                        }
-                    }
-                    .frame(minHeight: 140)
+                    NativePromptEditor(
+                        text: $defaultSystemPrompt,
+                        placeholder: String(localized: "Describe the assistant’s default behavior for new chats…"),
+                        isFocused: $isDefaultPromptFocused,
+                        minHeight: 140,
+                        maxHeight: 240,
+                        isMonospaced: useMonospacedEditors
+                    )
 
                     HStack {
                         if showCharacterCount {
@@ -766,193 +743,56 @@ private struct EditablePresetList<Row: View>: View {
     }
 }
 
-// MARK: - Auto-sizing TextEditor (iOS + macOS) - Optimized to Prevent Re-entrancy
+// MARK: - Native Prompt Editor
 
-struct AutoSizingTextEditor: View {
+struct NativePromptEditor: View {
     @Binding var text: String
+    let placeholder: String
+    @Binding var isFocused: Bool
     var minHeight: CGFloat
-    @Binding var dynamicHeight: CGFloat
-    var availableWidth: CGFloat?
+    var maxHeight: CGFloat? = nil
     var isMonospaced: Bool = true
-    var font: Font = .body
-
-    // Debounce flag to prevent recursive updates
-    @State private var isUpdating = false
-    @State private var lastText: String = ""
-    @State private var initialSizing = true  // Guard for first render
+    @FocusState private var isEditorFocused: Bool
 
     var body: some View {
-        _AutoSizingTextViewRepresentable(
-            text: $text,
-            height: $dynamicHeight,
-            font: font,
-            availableWidth: availableWidth,
-            isMonospaced: isMonospaced,
-            isUpdating: $isUpdating,
-            lastText: $lastText
-        )
-        .frame(minHeight: minHeight)
-        .onChange(of: text) { _, newValue in
-            if newValue != lastText {
-                lastText = newValue
-                if initialSizing {
-                    initialSizing = false
-                    updateHeightIfNeeded()
-                } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        if !isUpdating {
-                            updateHeightIfNeeded()
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                initialSizing = false
-                updateHeightIfNeeded()
-            }
-        }
-    }
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(isEditorFocused ? Color.accentColor.opacity(0.7) : Color.secondary.opacity(0.15), lineWidth: isEditorFocused ? 1.5 : 1)
+                )
 
-    private func updateHeightIfNeeded() {
-        // Helper; actual update in representable
+            TextEditor(text: $text)
+                .focused($isEditorFocused)
+                .font(isMonospaced ? .body.monospaced() : .body)
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(minHeight: minHeight, maxHeight: maxHeight, alignment: .topLeading)
+
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(placeholder)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .allowsHitTesting(false)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture {
+            isEditorFocused = true
+        }
+        .onChange(of: isEditorFocused) { _, newValue in
+            isFocused = newValue
+        }
+        .onChange(of: isFocused) { _, newValue in
+            if isEditorFocused != newValue {
+                isEditorFocused = newValue
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
-
-struct _AutoSizingTextViewRepresentable: View {
-    @Binding var text: String
-    @Binding var height: CGFloat
-    var font: Font
-    var availableWidth: CGFloat?
-    var isMonospaced: Bool
-    @Binding var isUpdating: Bool
-    @Binding var lastText: String
-
-    var body: some View {
-        PlatformTextView(
-            text: $text,
-            height: $height,
-            font: font,
-            availableWidth: availableWidth,
-            isMonospaced: isMonospaced,
-            isUpdating: $isUpdating,
-            lastText: $lastText
-        )
-    }
-}
-
-#if os(iOS) || os(tvOS) || os(visionOS)
-import UIKit
-
-struct PlatformTextView: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var height: CGFloat
-    var font: Font
-    var availableWidth: CGFloat?
-    var isMonospaced: Bool
-    @Binding var isUpdating: Bool
-    @Binding var lastText: String
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var textBinding: Binding<String>
-        var heightBinding: Binding<CGFloat>
-        var isUpdatingBinding: Binding<Bool>
-        var lastTextBinding: Binding<String>
-
-        init(text: Binding<String>, height: Binding<CGFloat>, isUpdating: Binding<Bool>, lastText: Binding<String>) {
-            self.textBinding = text
-            self.heightBinding = height
-            self.isUpdatingBinding = isUpdating
-            self.lastTextBinding = lastText
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            let newText = textView.text ?? ""
-            if newText != textBinding.wrappedValue {
-                textBinding.wrappedValue = newText
-                lastTextBinding.wrappedValue = newText
-            }
-            
-            if !isUpdatingBinding.wrappedValue {
-                isUpdatingBinding.wrappedValue = true
-                let newHeight = PlatformTextView.computedHeight(for: textView, availableWidth: nil)
-                DispatchQueue.main.async {
-                    if abs(self.heightBinding.wrappedValue - newHeight) > 2.0 {
-                        self.heightBinding.wrappedValue = newHeight
-                    }
-                    self.isUpdatingBinding.wrappedValue = false
-                }
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, height: $height, isUpdating: $isUpdating, lastText: $lastText)
-    }
-
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
-        tv.delegate = context.coordinator
-        tv.isScrollEnabled = false
-        tv.backgroundColor = .clear
-        tv.textContainer.lineFragmentPadding = 0
-        tv.textContainerInset = .zero
-        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        applyFont(to: tv)
-
-        tv.text = text
-        
-        DispatchQueue.main.async {
-            context.coordinator.lastTextBinding.wrappedValue = self.text
-            let newHeight = PlatformTextView.computedHeight(for: tv, availableWidth: self.availableWidth)
-            if abs(context.coordinator.heightBinding.wrappedValue - newHeight) > 2.0 {
-                context.coordinator.heightBinding.wrappedValue = newHeight
-            }
-        }
-
-        return tv
-    }
-
-    func updateUIView(_ uiView: UITextView, context: Context) {
-        if uiView.text != text {
-            uiView.text = text
-            DispatchQueue.main.async {
-                context.coordinator.lastTextBinding.wrappedValue = self.text
-            }
-        }
-        
-        applyFont(to: uiView)
-        
-        let newHeight = PlatformTextView.computedHeight(for: uiView, availableWidth: availableWidth)
-        if abs(height - newHeight) > 2.0 && !isUpdating {
-            DispatchQueue.main.async {
-                context.coordinator.isUpdatingBinding.wrappedValue = true
-                context.coordinator.heightBinding.wrappedValue = newHeight
-                context.coordinator.isUpdatingBinding.wrappedValue = false
-            }
-        }
-    }
-
-    private func applyFont(to textView: UITextView) {
-        let baseFont = UIFont.preferredFont(forTextStyle: .body)
-        let fontToUse = isMonospaced ? UIFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: .regular) : baseFont
-        textView.font = fontToUse
-    }
-
-    static func computedHeight(for textView: UITextView, availableWidth: CGFloat?) -> CGFloat {
-        let fixedWidth: CGFloat
-        if let width = availableWidth, width > 0 {
-            fixedWidth = width - 20
-        } else if textView.bounds.width > 0 {
-            fixedWidth = textView.bounds.width
-        } else {
-            fixedWidth = 300
-        }
-        textView.bounds.size.width = fixedWidth
-        let size = textView.sizeThatFits(CGSize(width: fixedWidth, height: .greatestFiniteMagnitude))
-        return max(size.height, 44)
-    }
-}
-#endif

@@ -286,6 +286,86 @@ struct On_Device_LLM_ChatTests {
         #expect(!configuration.usesQuantizedToolCacheStrategy)
     }
 
+    @Test func qwen4BRequiresEightGigabytesOnIPhone() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+
+        #expect(!profile.supportsModel(model))
+        #expect(profile.availabilityIssue(for: model)?.contains("8 GB") == true)
+    }
+
+    @Test func qwen4BToolCallsRequireTwelveGigabytesOnIPhone() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+
+        #expect(profile.supportsModel(model))
+        #expect(!manager.supportsToolCalls(for: model))
+        #expect(manager.toolCallIssue(for: model)?.contains("12 GB") == true)
+    }
+
+    @Test func qwen2BAllowsSixGigabyteIPhonesButBlocksToolCalls() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
+
+        #expect(profile.supportsModel(model))
+        #expect(!manager.supportsToolCalls(for: model))
+        #expect(manager.toolCallIssue(for: model)?.contains("8 GB") == true)
+    }
+
+    @Test func qwen2BEnablesToolCallsAtEightGigabytesOnIPhone() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
+
+        #expect(profile.supportsModel(model))
+        #expect(manager.supportsToolCalls(for: model))
+        #expect(manager.toolCallIssue(for: model) == nil)
+    }
+
+    @Test func qwenEightGigabyteTierTreatsSlightlyUnderreportedPhoneAsEightGigabytes() {
+        let marketedEightGigabytesButReportedBelowEightGiB: UInt64 = 7_950_000_000
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: marketedEightGigabytesButReportedBelowEightGiB
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let twoBModel = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+
+        #expect(profile.supportsModel(twoBModel))
+        #expect(manager.supportsToolCalls(for: twoBModel))
+        #expect(profile.supportsModel(fourBModel))
+        #expect(!manager.supportsToolCalls(for: fourBModel))
+    }
+
+    @Test func qwenIPhoneMemoryLimitsDoNotApplyToNonPhoneDevices() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: false,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+
+        #expect(profile.supportsModel(fourBModel))
+        #expect(manager.supportsToolCalls(for: fourBModel))
+        #expect(profile.availabilityIssue(for: fourBModel) == nil)
+    }
+
     @Test func settingsSheetDescribesToolRunKVQuantizationSupport() {
         #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("Tool-enabled runs switch"))
         #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("automatically fall back"))
