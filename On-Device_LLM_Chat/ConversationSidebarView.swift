@@ -25,7 +25,7 @@ struct ConversationRow: View {
     private var messagePreview: MessagePreview {
         let nonSystemMessages = conversation.messages.lazy
             .filter { $0.role != .system }
-            .map { (order: $0.order, role: $0.role, text: $0.text) }
+            .map { (order: $0.order, role: $0.role, text: $0.displayText) }
 
         if let last = nonSystemMessages.max(by: { $0.order < $1.order }) {
             // Strip <sources>…</sources> blocks and <thinking>…</thinking> from the preview

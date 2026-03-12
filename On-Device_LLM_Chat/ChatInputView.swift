@@ -92,11 +92,18 @@ struct NavigationTitleView: View {
                 Button {
                     modelBackendBridge.selectBackend(.foundationModels, source: "chat-input.foundation")
                 } label: {
-                    Text("Apple Foundation")
-                    if selectedBackend == "foundationModels" {
-                        Image(systemName: "checkmark")
+                    HStack {
+                        Text("Apple Foundation")
+                        if !modelBackendBridge.foundationModelsAvailable {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                        }
+                        if selectedBackend == "foundationModels" {
+                            Image(systemName: "checkmark")
+                        }
                     }
                 }
+                .disabled(!modelBackendBridge.foundationModelsAvailable)
 
                 // MLX Models
                 ForEach(modelManager?.availableModels ?? [], id: \.id) { model in

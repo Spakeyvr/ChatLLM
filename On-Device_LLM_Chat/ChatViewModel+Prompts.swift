@@ -29,8 +29,13 @@ extension ChatViewModel {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
-        formatter.dateFormat = "EEEE, MMMM d, yyyy 'at' HH:mm zzz"
-        let formatted = formatter.string(from: referenceDate)
+        formatter.dateFormat = "EEEE, MMMM d, yyyy 'at' HH:mm"
+        let timeZoneLabel: String = if timeZone.secondsFromGMT(for: referenceDate) == 0 {
+            "UTC"
+        } else {
+            timeZone.abbreviation(for: referenceDate) ?? timeZone.identifier
+        }
+        let formatted = formatter.string(from: referenceDate) + " " + timeZoneLabel
         return """
         Current date and time: \(formatted)
         - Treat this timestamp as the current moment for time-sensitive requests and web searches.

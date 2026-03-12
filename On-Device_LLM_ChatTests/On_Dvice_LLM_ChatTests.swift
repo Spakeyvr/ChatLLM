@@ -390,7 +390,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func currentDateTimeContextIncludesExactDateAndYearHint() {
-        let referenceDate = Date(timeIntervalSince1970: 1_762_845_600) // 2026-03-07 12:00:00 UTC
+        let referenceDate = Date(timeIntervalSince1970: 1_772_884_800) // 2026-03-07 12:00:00 UTC
         let utc = TimeZone(secondsFromGMT: 0)!
 
         let context = ChatViewModel.currentDateTimeContext(
@@ -505,6 +505,38 @@ struct On_Device_LLM_ChatTests {
         #expect(message.finalAnswer == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.text == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.streamingReasoningPhase == .finalAnswer)
+    }
+
+    @Test func cancelledGenerationBeforeFirstTokenRemovesEmptyAssistantPlaceholder() async throws {
+        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let conversation = Conversation(title: "Test")
+        let viewModel = ChatViewModel(
+            generator: BlockingLLMGenerator(),
+            context: context,
+            conversation: conversation
+        )
+
+        let sendTask = Task { await viewModel.send(userText: "Hello") }
+
+        for _ in 0..<50 {
+            if viewModel.isGenerating { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(viewModel.isGenerating)
+        #expect(conversation.messages.contains(where: { $0.role == .assistant }))
+
+        viewModel.cancelGeneration()
+        await sendTask.value
+
+        #expect(!viewModel.isGenerating)
+        #expect(conversation.messages.count == 1)
+        #expect(conversation.messages.allSatisfy { $0.role == .user })
     }
 
     @Test func streamingChunkMergePreservesSingleCharacterNumericChunks() {
@@ -713,6 +745,32 @@ private struct TestLLMGenerator: LLMGenerator {
     func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
+        }
+    }
+}
+
+private struct BlockingLLMGenerator: LLMGenerator {
+    func isAvailable() -> Bool { true }
+
+    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+        ""
+    }
+
+    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
         }
     }
 }

@@ -456,10 +456,13 @@ extension ChatViewModel {
                        Self.looksLikeAnswerStartDuringStreaming(answer) {
                         message.streamingReasoningPhase = .finalAnswer
                     } else {
-                        let provisionalReasoning = visiblePortion
-                            .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
-                            .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let provisionalReasoning = (
+                            parsed.reasoning ??
+                            visiblePortion
+                                .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
+                                .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
+                        )
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                         if !provisionalReasoning.isEmpty {
                             message.reasoning = provisionalReasoning
                             message.updateReasoningSteps()

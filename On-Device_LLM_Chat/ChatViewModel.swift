@@ -1078,6 +1078,21 @@ final class ChatViewModel: ObservableObject {
         }()
         let hasVisibleText = !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAnyVisibleContent = hasVisibleText || hasVisibleFinal
+        let hasPreviousContent = !preparation.previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !(preparation.previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+        if outcome == .cancelled && !hasAnyVisibleContent && target.generationError == nil {
+            if hasPreviousContent {
+                target.text = preparation.previousText
+                target.reasoning = preparation.previousReasoning
+                target.finalAnswer = preparation.previousFinal
+            } else {
+                conversation.messages.removeAll { $0.id == target.id }
+                context.delete(target)
+                conversation.lastUpdated = Date()
+                return outcome
+            }
+        }
 
         if !hasAnyVisibleContent && target.generationError == nil {
             logger.warning("No visible content after streaming (wroteAny=\(consumption.wroteAny))")
@@ -1085,11 +1100,8 @@ final class ChatViewModel: ObservableObject {
                 "streamAssistant empty visible output: question_preview=\(preparation.questionLogPreview, privacy: .public) raw_chars=\(consumption.cumulativeText.count, privacy: .public) tool_invocations=\(capturedInvocations.count, privacy: .public)"
             )
 
-            let hasPreviousContent = !preparation.previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                !(preparation.previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-
             if hasPreviousContent {
-                target.text = preparation.previousFinal ?? preparation.previousText
+                target.text = preparation.previousText
                 target.reasoning = preparation.previousReasoning
                 target.finalAnswer = preparation.previousFinal
             } else {

@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import FoundationModels
 
 /// Manages the integration between reasoning mode settings and model backends
 @MainActor
@@ -191,6 +192,10 @@ class ModelBackendBridge: ObservableObject {
 
     var supportsNativeThinking: Bool {
         return reasoningAvailable
+    }
+
+    var foundationModelsAvailable: Bool {
+        SystemLanguageModel.default.availability == .available
     }
 
     /// Get the current model's display name

@@ -225,11 +225,9 @@ struct ContentView: View {
     private var detailContent: some View {
         if let vm = activeChatViewModel {
             ChatView(viewModel: vm, onNewChat: { startDraftChat() })
-                .overlay(availabilityOverlay())
         } else if let convo = selection {
             if let vm = currentViewModel, vm.conversation.id == convo.id {
                 ChatView(viewModel: vm, onNewChat: { startDraftChat() })
-                    .overlay(availabilityOverlay())
             } else {
                 VStack(spacing: 16) {
                     ProgressView()
@@ -242,7 +240,6 @@ struct ContentView: View {
                         currentViewModel = createViewModel(for: convo)
                     }
                 }
-                .overlay(availabilityOverlay())
             }
         } else if conversations.isEmpty && !isLoading {
             VStack(spacing: 16) {
@@ -264,7 +261,6 @@ struct ContentView: View {
                 .padding(.top)
             }
             .padding()
-            .overlay(availabilityOverlay())
         } else {
             VStack(spacing: 16) {
                 if isLoading {
@@ -287,7 +283,6 @@ struct ContentView: View {
                 }
             }
             .padding()
-            .overlay(availabilityOverlay())
         }
     }
 
@@ -832,28 +827,6 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func availabilityOverlay() -> some View {
-        if SystemLanguageModel.default.availability != .available {
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.largeTitle)
-                    .glassEffect(.regular.tint(.orange.opacity(0.2)), in: .circle)
-                    .padding()
-                Text(String(localized: "On‑device model not available"))
-                    .font(.headline)
-                Text(String(localized: "This device or configuration doesn’t have access to the on‑device language model. You can still use the app UI; responses will be mocked."))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .glassEffect(.regular.tint(.orange.opacity(0.05)), in: .rect(cornerRadius: 16))
-            .padding()
-        } else {
-            EmptyView()
-        }
-    }
-    
     private func exportAllChats() {
         guard !conversations.isEmpty else { return }
         
@@ -879,7 +852,7 @@ struct ContentView: View {
             for message in sortedMessages where message.role != .system {
                 let roleLabel = message.role == .user ? "User" : "Assistant"
                 exportText += "**\(roleLabel):**\n"
-                exportText += message.text + "\n\n"
+                exportText += message.displayText + "\n\n"
             }
             
             exportText += String(repeating: "-", count: 60) + "\n\n"

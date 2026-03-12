@@ -11,21 +11,26 @@ import SwiftUI
 struct ModelPickerView: View {
     @AppStorage("selectedLLMBackend") private var selectedBackend: String = "foundationModels"
     @State private var showingModelManagement = false
+    @ObservedObject private var bridge = ModelBackendBridge.shared
 
     var body: some View {
         Menu {
             Button {
-                ModelBackendBridge.shared.selectBackend(.foundationModels, source: "nav-picker.foundation")
+                bridge.selectBackend(.foundationModels, source: "nav-picker.foundation")
             } label: {
                 HStack {
                     Text("Apple Foundation")
+                    if !bridge.foundationModelsAvailable {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
                     if selectedBackend == "foundationModels" {
                         Image(systemName: "checkmark")
                     }
                 }
             }
+            .disabled(!bridge.foundationModelsAvailable)
 
-            let bridge = ModelBackendBridge.shared
             ForEach(bridge.modelManager?.availableModels.filter(\.isAvailable) ?? [], id: \.id) { model in
                 Button {
                     bridge.switchToMLXModel(model.id, source: "nav-picker.model")
@@ -60,7 +65,7 @@ struct ModelPickerView: View {
 
     private var displayName: String {
         if selectedBackend == "mlx",
-           let model = ModelBackendBridge.shared.modelManager?.currentModel {
+           let model = bridge.modelManager?.currentModel {
             return "\(model.name) (\(model.parameters))"
         }
         return "Apple Foundation"
