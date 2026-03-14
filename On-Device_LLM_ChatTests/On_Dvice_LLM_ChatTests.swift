@@ -469,6 +469,51 @@ struct On_Device_LLM_ChatTests {
         #expect(merged.first(where: { $0.id == newID })?.anchorStepNumber == 3)
     }
 
+    @Test func clearingSearchInvocationsAlsoClearsLegacySearchQuery() {
+        let conversation = Conversation(title: "Test")
+        let message = Message(
+            role: .assistant,
+            text: "Answer",
+            order: 1,
+            conversation: conversation
+        )
+
+        message.searchInvocations = [
+            SearchInvocation(
+                query: "latest swift release",
+                results: "Swift 6.2 Released"
+            )
+        ]
+        #expect(message.searchQuery == "latest swift release")
+
+        message.searchInvocations = nil
+
+        #expect(message.searchInvocations == nil)
+        #expect(message.searchQuery == nil)
+    }
+
+    @Test func assistantPlaceholderTracksForcedWebSearchSeparatelyFromSearchHistory() throws {
+        let viewModel = try makeViewModel()
+
+        let forced = viewModel.appendAssistantPlaceholder(
+            isReasoningMode: false,
+            searchQuery: "latest swift release",
+            requiresWebSearch: true
+        )
+        let autonomous = viewModel.appendAssistantPlaceholder(isReasoningMode: false)
+        autonomous.searchInvocations = [
+            SearchInvocation(
+                query: "latest swift release",
+                results: "Swift 6.2 Released"
+            )
+        ]
+
+        #expect(forced.requiresWebSearch == true)
+        #expect(forced.searchQuery == "latest swift release")
+        #expect(autonomous.requiresWebSearch != true)
+        #expect(autonomous.searchQuery == "latest swift release")
+    }
+
     @Test func currentDateTimeContextIncludesExactDateAndYearHint() {
         let referenceDate = Date(timeIntervalSince1970: 1_772_884_800) // 2026-03-07 12:00:00 UTC
         let utc = TimeZone(secondsFromGMT: 0)!
@@ -481,6 +526,18 @@ struct On_Device_LLM_ChatTests {
         #expect(context.contains("Saturday, March 7, 2026 at 12:00 UTC"))
         #expect(context.contains("current year"))
         #expect(context.contains("exact date"))
+    }
+
+    @Test func webSearchSystemPromptUsesCurrentCalendarYear() {
+        let year = Calendar.current.component(.year, from: Date())
+
+        let prompt = ChatViewModel.webSearchSystemPrompt(
+            reasoningEnabled: false,
+            forceSearchRequired: false
+        )
+
+        #expect(prompt.contains("add \(year) to the search query"))
+        #expect(!prompt.contains("add 2026 to the search query"))
     }
 
     @Test func searchSessionParserKeepsBulletAnswerAfterThinkingCloses() {

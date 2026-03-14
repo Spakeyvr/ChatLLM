@@ -229,9 +229,6 @@ final class ChatViewModel: ObservableObject {
     internal func resolvedReasoningMode(for prompt: String, logContext: String) async -> Bool {
         do {
             return try await shouldUseReasoningForPrompt(prompt)
-        } catch let reasoningError as ReasoningEvaluationError {
-            print("Error determining reasoning mode\(logContext.isEmpty ? "" : " for \(logContext)"), using fallback: \(reasoningError.localizedDescription)")
-            return reasoningError.fallbackResult
         } catch {
             print("Unexpected error determining reasoning mode\(logContext.isEmpty ? "" : " for \(logContext)"), using conversation fallback: \(error)")
             return conversation.reasoningMode || conversation.smartReasoningMode
@@ -260,7 +257,8 @@ final class ChatViewModel: ObservableObject {
 
     internal func appendAssistantPlaceholder(
         isReasoningMode: Bool,
-        searchQuery: String? = nil
+        searchQuery: String? = nil,
+        requiresWebSearch: Bool = false
     ) -> Message {
         let assistantMsg = Message(
             role: .assistant,
@@ -269,7 +267,8 @@ final class ChatViewModel: ObservableObject {
             conversation: conversation,
             isFinal: false,
             isReasoningMode: isReasoningMode,
-            searchQuery: searchQuery
+            searchQuery: searchQuery,
+            requiresWebSearch: requiresWebSearch
         )
         conversation.messages.append(assistantMsg)
         conversation.lastUpdated = Date()
@@ -306,7 +305,8 @@ final class ChatViewModel: ObservableObject {
         let turn = appendUserMessage(trimmed)
         let assistantMsg = appendAssistantPlaceholder(
             isReasoningMode: shouldUseReasoning,
-            searchQuery: forceSearch ? trimmed : nil
+            searchQuery: forceSearch ? trimmed : nil,
+            requiresWebSearch: forceSearch
         )
 
         guard !Task.isCancelled else { return }
@@ -374,7 +374,17 @@ final class ChatViewModel: ObservableObject {
 
     internal func waitForStreamToFinish() async {
         if let task = currentStreamTask {
-            await task.value
+            do {
+                try await withTimeout(.seconds(4)) {
+                    await task.value
+                }
+            } catch is GenerationTimeoutError {
+                print("⚠️ waitForStreamToFinish timed out after 4 seconds")
+                task.cancel()
+                print("🛑 Cancelled stale streaming task")
+            } catch {
+                print("⚠️ waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
+            }
         }
         // Also ensure flags are down (in case a fast-path set them slightly later)
         var attempts = 0
@@ -383,13 +393,9 @@ final class ChatViewModel: ObservableObject {
             attempts += 1
         }
 
-        // CRITICAL FIX: If we hit the timeout, properly cancel the task first
         if attempts >= 100 {
-            print("⚠️ waitForStreamToFinish timed out after 4 seconds")
-
             if let task = currentStreamTask {
                 task.cancel()
-                print("🛑 Cancelled stale streaming task")
 
                 for _ in 0..<10 {
                     try? await Task.sleep(for: .milliseconds(50))
@@ -603,7 +609,8 @@ final class ChatViewModel: ObservableObject {
         let previousText = assistantMessage.text
         let previousReasoning = assistantMessage.reasoning
         let previousFinal = assistantMessage.finalAnswer
-        let forceSearchRequired = assistantMessage.searchQuery != nil
+        let forceSearchRequired = assistantMessage.requiresWebSearch == true ||
+            (assistantMessage.searchInvocations == nil && assistantMessage.searchQuery != nil)
         let latestUserQuestion = conversation.messages
             .filter { $0.order < order && $0.role == .user }
             .sortedByOrder

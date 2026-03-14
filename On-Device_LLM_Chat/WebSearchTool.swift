@@ -74,6 +74,7 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     // Thread-safe storage for captured results (written in `call`, read on @MainActor).
     private let lock = NSLock()
     private var _invocations: [SearchInvocation] = []
+    private var _inFlightSearches = 0
     private var _searchLimitReached = false
 
     // Backward-compat accessors (return last invocation)
@@ -143,17 +144,30 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     }
 
     func executeSearch(query: String) async throws -> String {
-        let count = lock.withLock { _invocations.count }
-        if count >= Self.maxInvocations {
-            lock.withLock {
+        let slotReservation = lock.withLock { () -> (priorInvocations: Int, reservedCount: Int)? in
+            let reservedCount = _invocations.count + _inFlightSearches
+            guard reservedCount < Self.maxInvocations else {
                 _searchLimitReached = true
+                return nil
             }
+            _inFlightSearches += 1
+            return (_invocations.count, reservedCount)
+        }
+
+        guard let slotReservation else {
+            let count = lock.withLock { _invocations.count + _inFlightSearches }
             logger.warning("Search skipped: invocation limit reached (\(count, privacy: .public))")
             return Self.searchLimitToolResponse(limit: Self.maxInvocations)
         }
 
-        logger.notice("Search started: query_chars=\(query.count, privacy: .public) prior_invocations=\(count, privacy: .public)")
+        logger.notice("Search started: query_chars=\(query.count, privacy: .public) prior_invocations=\(slotReservation.priorInvocations, privacy: .public)")
         let start = Date()
+        defer {
+            lock.withLock {
+                _inFlightSearches = max(0, _inFlightSearches - 1)
+            }
+        }
+
         let results = try await searchService.search(query: query, maxResults: 3)
         let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
         let truncated = results.count > 3500

@@ -13,6 +13,7 @@ import PhotosUI
 import Combine
 import OSLog
 import SafariServices
+import ImageIO
 
 struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
@@ -82,7 +83,8 @@ struct ChatView: View {
     private var webSearchToggleAvailable: Bool {
         networkMonitor.isConnected &&
         selectedImage == nil &&
-        modelBackendBridge.toolCallsAvailableForCurrentBackend
+        modelBackendBridge.toolCallsAvailableForCurrentBackend &&
+        viewModel.searchService != nil
     }
 
     private var toolCallsLockedDisabled: Bool {
@@ -527,11 +529,10 @@ struct ChatView: View {
         guard !items.isEmpty else { return }
         for item in items {
             do {
-                // Prefer Data to avoid large UIImage intermediates; ImageStore will downscale
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    throw ImageError.noData
-                }
-                guard let image = UIImage(data: data) else {
+                guard let image = try await loadThumbnailImage(
+                    from: item,
+                    maxPixelSize: 2_048
+                ) else {
                     throw ImageError.invalidFormat
                 }
                 await handleImageForOCR(image)
@@ -554,8 +555,10 @@ struct ChatView: View {
             }
             defer { url.stopAccessingSecurityScopedResource() }
 
-            let data = try Data(contentsOf: url)
-            guard let image = UIImage(data: data) else {
+            guard let image = decodeThumbnailImage(
+                from: url,
+                maxPixelSize: 2_048
+            ) else {
                 throw ImageError.invalidFormat
             }
             await handleImageForOCR(image)
@@ -662,9 +665,56 @@ struct ChatView: View {
     // raw is local to this function — ARC releases the full-resolution bitmap
     // as soon as downscaleForPipeline returns, well before the pipeline starts.
     private func loadAndDownscaleImage(from item: PhotosPickerItem) async -> UIImage? {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let raw  = UIImage(data: data) else { return nil }
-        return await downscaleForPipeline(raw)
+        if let thumbnail = try? await loadThumbnailImage(from: item, maxPixelSize: 1_200) {
+            return thumbnail
+        }
+        return nil
+    }
+
+    private func loadThumbnailImage(
+        from item: PhotosPickerItem,
+        maxPixelSize: Int
+    ) async throws -> UIImage? {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            return nil
+        }
+        return decodeThumbnailImage(from: data, maxPixelSize: maxPixelSize)
+    }
+
+    private func decodeThumbnailImage(from data: Data, maxPixelSize: Int) -> UIImage? {
+        data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return nil }
+            let cfData = CFDataCreate(kCFAllocatorDefault, baseAddress.assumingMemoryBound(to: UInt8.self), data.count)
+            guard let cfData,
+                  let source = CGImageSourceCreateWithData(cfData, nil) else {
+                return nil
+            }
+            return decodeThumbnailImage(from: source, maxPixelSize: maxPixelSize)
+        }
+    }
+
+    private func decodeThumbnailImage(from url: URL, maxPixelSize: Int) -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil
+        }
+        return decodeThumbnailImage(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    private func decodeThumbnailImage(
+        from source: CGImageSource,
+        maxPixelSize: Int
+    ) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: false,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 }
 

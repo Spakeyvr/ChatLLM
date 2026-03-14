@@ -9,7 +9,6 @@ import SwiftUI
 
 /// Model picker that appears in the navigation bar
 struct ModelPickerView: View {
-    @AppStorage("selectedLLMBackend") private var selectedBackend: String = "foundationModels"
     @State private var showingModelManagement = false
     @ObservedObject private var bridge = ModelBackendBridge.shared
 
@@ -24,7 +23,7 @@ struct ModelPickerView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
-                    if selectedBackend == "foundationModels" {
+                    if bridge.selectedBackend == .foundationModels {
                         Image(systemName: "checkmark")
                     }
                 }
@@ -37,7 +36,7 @@ struct ModelPickerView: View {
                 } label: {
                     HStack {
                         Text("\(model.name) (\(model.parameters))")
-                        if selectedBackend == "mlx" && bridge.selectedModelID == model.id {
+                        if bridge.selectedBackend == .mlx && bridge.selectedModelID == model.id {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -64,7 +63,7 @@ struct ModelPickerView: View {
     }
 
     private var displayName: String {
-        if selectedBackend == "mlx",
+        if bridge.selectedBackend == .mlx,
            let model = bridge.modelManager?.currentModel {
             return "\(model.name) (\(model.parameters))"
         }

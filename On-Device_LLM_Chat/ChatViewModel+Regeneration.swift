@@ -125,9 +125,6 @@ extension ChatViewModel {
         if let userMsg = precedingUserMessage {
             do {
                 shouldUseReasoning = try await shouldUseReasoningForPrompt(userMsg.text)
-            } catch let reasoningError as ReasoningEvaluationError {
-                print("Error determining reasoning mode in regenerateAfterAssistant, using fallback: \(reasoningError.localizedDescription)")
-                shouldUseReasoning = reasoningError.fallbackResult
             } catch {
                 print("Unexpected error determining reasoning mode in regenerateAfterAssistant, using conversation fallback: \(error)")
                 shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
@@ -211,9 +208,6 @@ extension ChatViewModel {
         let shouldUseReasoning: Bool
         do {
             shouldUseReasoning = try await shouldUseReasoningForPrompt(trimmed)
-        } catch let reasoningError as ReasoningEvaluationError {
-            print("Error determining reasoning mode in regenerateReplacingAssistant, using fallback: \(reasoningError.localizedDescription)")
-            shouldUseReasoning = reasoningError.fallbackResult
         } catch {
             print("Unexpected error determining reasoning mode in regenerateReplacingAssistant, using conversation fallback: \(error)")
             shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
@@ -312,9 +306,6 @@ extension ChatViewModel {
             if let userMsg = precedingUserMessage {
                 do {
                     shouldUseReasoning = try await shouldUseReasoningForPrompt(userMsg.text)
-                } catch let reasoningError as ReasoningEvaluationError {
-                    print("Error determining reasoning mode in editAndRegenerate, using fallback: \(reasoningError.localizedDescription)")
-                    shouldUseReasoning = reasoningError.fallbackResult
                 } catch {
                     print("Unexpected error determining reasoning mode in editAndRegenerate, using conversation fallback: \(error)")
                     shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode

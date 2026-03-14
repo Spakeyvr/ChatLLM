@@ -88,6 +88,7 @@ final class Message {
     var finalAnswer: String?
     var promptSnapshot: String?
     var searchQuery: String?  // Stores the user's query when web search was used
+    var requiresWebSearch: Bool?
     var rawText: String?
     var generationBackend: String?
     var generationModelName: String?
@@ -144,6 +145,7 @@ final class Message {
                 searchQuery = invocations.first?.query
             } else {
                 searchInvocationsJSON = nil
+                searchQuery = nil
             }
             _cachedSearchInvocationsJSON = nil
             _cachedSearchInvocations = nil
@@ -288,6 +290,7 @@ final class Message {
         isReasoningMode: Bool = false,
         reasoningSteps: [ReasoningStep]? = nil,
         searchQuery: String? = nil,
+        requiresWebSearch: Bool? = nil,
         rawText: String? = nil,
         generationBackend: String? = nil,
         generationModelName: String? = nil,
@@ -305,6 +308,7 @@ final class Message {
         self.finalAnswer = finalAnswer
         self.promptSnapshot = promptSnapshot
         self.searchQuery = searchQuery
+        self.requiresWebSearch = requiresWebSearch
         self.rawText = rawText
         self.generationBackend = generationBackend
         self.generationModelName = generationModelName

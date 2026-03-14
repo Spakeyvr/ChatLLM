@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import FoundationModels
 import os
 
 // Cached regexes for parseReasoningResponse (compiled once at app launch)
@@ -27,27 +26,6 @@ extension ChatViewModel {
 
     // MARK: - Smart Reasoning
 
-    internal enum ReasoningEvaluationError: LocalizedError {
-        case foundationModelsUnavailable(fallbackResult: Bool)
-        case foundationModelsError(error: Error, fallbackResult: Bool)
-
-        var errorDescription: String? {
-            switch self {
-            case .foundationModelsUnavailable(let fallbackResult):
-                return "Foundation Models unavailable, using heuristic result: \(fallbackResult)"
-            case .foundationModelsError(let error, let fallbackResult):
-                return "Foundation Models error (\(error.localizedDescription)), using heuristic result: \(fallbackResult)"
-            }
-        }
-
-        var fallbackResult: Bool {
-            switch self {
-            case .foundationModelsUnavailable(let result), .foundationModelsError(_, let result):
-                return result
-            }
-        }
-    }
-
     /// Determines if reasoning mode should be used based on prompt complexity
     internal func shouldUseReasoningForPrompt(_ userText: String) async throws -> Bool {
         let backendBridge = ModelBackendBridge.shared
@@ -56,58 +34,11 @@ extension ChatViewModel {
         if conversation.reasoningMode { return true }
         guard conversation.smartReasoningMode else { return false }
 
-        // On MLX backend, skip Foundation Models entirely — loading Apple Intelligence
-        // alongside the MLX model causes OOM. Use the heuristic directly.
-        if backendBridge.selectedBackend == .mlx {
-            return useReasoningHeuristic(userText)
-        }
-
-        let result = try await evaluatePromptComplexity(userText)
-        return result
+        // Smart reasoning currently uses a local heuristic and only runs for MLX/Qwen thinking models.
+        return useReasoningHeuristic(userText)
     }
 
-    /// Uses Foundation Models to determine if a prompt requires reasoning.
-    /// Only called on the Foundation Models backend.
-    private func evaluatePromptComplexity(_ userText: String) async throws -> Bool {
-        let model = SystemLanguageModel.default
-        guard case .available = model.availability else {
-            throw ReasoningEvaluationError.foundationModelsUnavailable(fallbackResult: useReasoningHeuristic(userText))
-        }
-
-        let trimmedInput = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedInput.isEmpty, trimmedInput.count <= 2000 else {
-            throw ReasoningEvaluationError.foundationModelsUnavailable(fallbackResult: useReasoningHeuristic(userText))
-        }
-
-        do {
-            let instructions = """
-            You are an AI assistant evaluator. Your job is to determine if a user's request requires step-by-step reasoning or if it can be answered directly.
-
-            IMPORTANT: Be helpful and interpret user intent. Typos and minor errors should not affect your decision.
-
-            Respond with ONLY "YES" if the request requires reasoning (complex problem-solving, multi-step analysis, mathematical calculations, code debugging, logical deduction, architecture decisions, etc.).
-
-            Respond with ONLY "NO" if the request can be answered directly (simple questions, factual lookups, basic explanations, casual conversation, straightforward how-to questions, etc.).
-
-            Be conservative - only use reasoning when it genuinely adds value for complex, multi-step problems.
-            """
-
-            let response = try await withFoundationModelsLock(timeout: .seconds(10)) {
-                let session = LanguageModelSession(instructions: instructions)
-                return try await session.respond(to: "User request: \"\(trimmedInput)\"")
-            }
-
-            let decision = response.content.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            let shouldUseReasoning = decision == "YES"
-            logger.info("Smart reasoning decision computed: request_chars=\(trimmedInput.count, privacy: .public) result=\(shouldUseReasoning ? "YES" : "NO", privacy: .public)")
-            return shouldUseReasoning
-        } catch {
-            logger.error("Error evaluating prompt complexity: \(error.localizedDescription)")
-            throw ReasoningEvaluationError.foundationModelsError(error: error, fallbackResult: useReasoningHeuristic(userText))
-        }
-    }
-
-    /// Fallback heuristic for determining if reasoning is needed when Foundation Models unavailable
+    /// Heuristic for determining whether an MLX reasoning model should be used.
     private func useReasoningHeuristic(_ userText: String) -> Bool {
         let lowercased = userText.lowercased()
 

@@ -2,7 +2,7 @@
 //  ModelBackendBridge.swift
 //  On-Device_LLM_Chat
 //
-//  Bridges between ChatViewModel's reasoning mode and model-specific implementations
+//  Bridges between chat settings and backend-specific model behavior
 //
 
 import Foundation
@@ -10,7 +10,7 @@ import SwiftUI
 import Combine
 import FoundationModels
 
-/// Manages the integration between reasoning mode settings and model backends
+/// Manages backend/model selection and backend-specific capabilities.
 @MainActor
 class ModelBackendBridge: ObservableObject {
 
@@ -24,6 +24,8 @@ class ModelBackendBridge: ObservableObject {
 
     /// Model manager for MLX models
     @Published var modelManager: MLXModelManager?
+
+    weak var activeConversation: Conversation?
 
     // MARK: - Backend Types
 
@@ -111,6 +113,27 @@ class ModelBackendBridge: ObservableObject {
         }
     }
 
+    func bindConversation(_ conversation: Conversation?) {
+        activeConversation = conversation
+        guard let conversation else { return }
+
+        let preferredBackend = conversation.preferredBackendRawValue.flatMap(Backend.init(rawValue:))
+            ?? Backend(rawValue: UserDefaults.standard.selectedLLMBackend)
+            ?? .foundationModels
+        let preferredModelID = conversation.preferredModelID ?? UserDefaults.standard.selectedCustomModelID
+
+        conversation.preferredBackendRawValue = preferredBackend.rawValue
+        if conversation.preferredModelID == nil {
+            conversation.preferredModelID = preferredModelID
+        }
+
+        if preferredBackend == .mlx, let preferredModelID {
+            switchToMLXModel(preferredModelID, source: "conversation.bind")
+        } else {
+            selectBackend(.foundationModels, source: "conversation.bind")
+        }
+    }
+
     // MARK: - Backend Management
 
     /// Switch to a different backend
@@ -123,6 +146,7 @@ class ModelBackendBridge: ObservableObject {
                 modelManager?.isLoading == true
             selectedBackend = .foundationModels
             UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+            persistSelectionToActiveConversation()
             guard shouldResetPipelines else { return }
             notifyPipelineReset(reason: "backend.foundationModels")
             modelManager?.unloadAllModels()
@@ -131,6 +155,7 @@ class ModelBackendBridge: ObservableObject {
             guard let modelIDToLoad else {
                 selectedBackend = .mlx
                 UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+                persistSelectionToActiveConversation()
                 return
             }
             switchToMLXModel(modelIDToLoad, source: source)
@@ -146,6 +171,7 @@ class ModelBackendBridge: ObservableObject {
 
         selectedModelID = modelID
         UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
+        persistSelectionToActiveConversation()
     }
 
     func switchToMLXModel(_ modelID: String, source: String = "unknown") {
@@ -153,6 +179,7 @@ class ModelBackendBridge: ObservableObject {
         selectedBackend = .mlx
         UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
         UserDefaults.standard.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
+        persistSelectionToActiveConversation()
 
         guard let manager = modelManager,
               let model = manager.model(withID: modelID),
@@ -176,9 +203,14 @@ class ModelBackendBridge: ObservableObject {
         )
     }
 
+    private func persistSelectionToActiveConversation() {
+        activeConversation?.preferredBackendRawValue = selectedBackend.rawValue
+        activeConversation?.preferredModelID = selectedModelID
+    }
+
     // MARK: - Model-Specific Features
 
-    /// Reasoning is available when using the MLX backend with a loaded reasoning-capable model
+    /// Reasoning is only exposed for MLX models that support it.
     var reasoningAvailable: Bool {
         guard selectedBackend == .mlx else {
             return false
@@ -188,10 +220,6 @@ class ModelBackendBridge: ObservableObject {
         }
         guard let modelID = selectedModelID else { return false }
         return modelID.contains("qwen")
-    }
-
-    var supportsNativeThinking: Bool {
-        return reasoningAvailable
     }
 
     var foundationModelsAvailable: Bool {

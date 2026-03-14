@@ -369,16 +369,11 @@ extension ChatViewModel {
 
     internal static let baseSystemPrompt: String = """
     You are a helpful, friendly assistant. Be conversational and practical.
-    - Answer questions directly and helpfully
-    - Answer in the user's language
-    - Answer casually and conversationally with the user
     - If you see a typo or unclear request, interpret the user's intent and respond accordingly
-    - Don't apologize for typos or minor errors - just answer what the user likely meant
     - Be concise but complete
     - You can do math. When numbers start getting large though, always say that your answer may not be correct and to double check.
     - NEVER encourage self-harm
     - NEVER provide illegal content or encourage illegal actions
-    - Don't repeat yourself too often when casually talking
     - Don't roleplay with: "Assistant: ...", no matter what. You are talking to an actual human
     - Do NOT wrap your answer in <answer> tags or any other XML tags
     """
@@ -433,10 +428,11 @@ extension ChatViewModel {
 """
 
     internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
+        let currentYear = Calendar.current.component(.year, from: Date())
         var lines = [
             "WEB SEARCH:",
             "- You have a webSearch tool available.",
-            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information. In this case, also remember to add 2026 to the search query.",
+            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information. In this case, also remember to add \(currentYear) to the search query.",
             "- Use it when you need to verify a fact that may have changed recently.",
             "- Do not use it for stable general knowledge that you already know reliably."
         ]
@@ -448,9 +444,9 @@ extension ChatViewModel {
 
         if reasoningEnabled {
             lines.append("- During reasoning, you may search iteratively: identify what to check, call webSearch with a concise query, inspect the results, and refine if needed.")
-            lines.append("- You may perform up to and only up to 2 searches for a single response when follow-up verification is needed.")
+            lines.append("- You may perform up to and only up to 3 searches for a single response when follow-up verification is needed.")
         } else {
-            lines.append("- You may perform up to 2 searches for a single response when follow-up verification is needed.")
+            lines.append("- You may perform up to 3 searches for a single response when follow-up verification is needed.")
         }
 
         return lines.joined(separator: "\n")

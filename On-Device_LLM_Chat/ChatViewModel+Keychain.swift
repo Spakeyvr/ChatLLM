@@ -14,14 +14,22 @@ extension ChatViewModel {
     /// Load API key from Keychain; initializes service if valid.
     /// Syncs with AppStorage for consistency.
     func loadTavilyAPIKey() {
-        // AppStorage is the primary source; Keychain is the secure backing store.
-        if let appStorageKey = UserDefaults.standard.string(forKey: "tavilyApiKey"),
-           !appStorageKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if getKeychainValue(service: tavilyKeyService, account: tavilyKeyAccount) != appStorageKey {
-                saveKeychainValue(appStorageKey, service: tavilyKeyService, account: tavilyKeyAccount)
+        if UserDefaults.standard.object(forKey: "tavilyApiKey") != nil,
+           let appStorageKey = UserDefaults.standard.string(forKey: "tavilyApiKey") {
+            let trimmedKey = appStorageKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedKey.isEmpty else {
+                deleteKeychainValue(service: tavilyKeyService, account: tavilyKeyAccount)
+                searchService = nil
+                tavilyKeyMissing = true
+                logger.info("🗑️ Tavily key cleared from AppStorage and Keychain")
+                return
+            }
+
+            if getKeychainValue(service: tavilyKeyService, account: tavilyKeyAccount) != trimmedKey {
+                saveKeychainValue(trimmedKey, service: tavilyKeyService, account: tavilyKeyAccount)
             }
             do {
-                searchService = try TavilySearchService(apiKey: appStorageKey)
+                searchService = try TavilySearchService(apiKey: trimmedKey)
                 tavilyKeyMissing = false
                 logger.info("✅ Tavily service initialized from AppStorage")
                 return
@@ -30,6 +38,7 @@ extension ChatViewModel {
             }
         }
 
+        // AppStorage is the primary source; Keychain is the secure backing store.
         guard let key = getKeychainValue(service: tavilyKeyService, account: tavilyKeyAccount) else {
             searchService = nil
             tavilyKeyMissing = true

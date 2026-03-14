@@ -63,7 +63,6 @@ struct NavigationTitleView: View {
     let hasMessages: Bool
 
     @ObservedObject var modelBackendBridge: ModelBackendBridge
-    @AppStorage("selectedLLMBackend") private var selectedBackend: String = "foundationModels"
 
     @State private var showModelManagement = false
 
@@ -74,7 +73,7 @@ struct NavigationTitleView: View {
     }
 
     private var displayName: String {
-        if selectedBackend == "foundationModels" {
+        if modelBackendBridge.selectedBackend == .foundationModels {
             return "Apple Foundation"
         } else if let current = modelBackendBridge.currentModelDisplayName {
             return current
@@ -100,7 +99,7 @@ struct NavigationTitleView: View {
                             Image(systemName: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
                         }
-                        if selectedBackend == "foundationModels" {
+                        if modelBackendBridge.selectedBackend == .foundationModels {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -115,7 +114,7 @@ struct NavigationTitleView: View {
                         } label: {
                             HStack {
                                 Text("\(model.name) (\(model.parameters))")
-                                if selectedBackend == "mlx" && modelBackendBridge.selectedModelID == model.id {
+                                if modelBackendBridge.selectedBackend == .mlx && modelBackendBridge.selectedModelID == model.id {
                                     Image(systemName: "checkmark")
                                 }
                             }

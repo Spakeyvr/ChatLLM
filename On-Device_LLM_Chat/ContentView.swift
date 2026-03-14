@@ -137,9 +137,13 @@ struct ContentView: View {
         _ = oldSelection?.id
         let newID = newSelection?.id
         // Entering draft mode: selection becomes nil but we want to keep the draft vm alive.
-        if newID == nil && draftConversation != nil { return }
+        if newID == nil && draftConversation != nil {
+            ModelBackendBridge.shared.bindConversation(draftConversation)
+            return
+        }
         // Navigating to a real conversation discards any open draft.
         if newID != nil { draftConversation = nil }
+        ModelBackendBridge.shared.bindConversation(newSelection)
         if let currentVM = currentViewModel, currentVM.conversation.id != newID {
             currentVM.cancelGeneration()
             currentViewModel = nil
@@ -539,6 +543,9 @@ struct ContentView: View {
             currentViewModel?.cancelGeneration()
             let convo = Conversation(title: String(localized: "New Chat"))
             convo.reasoningMode = reasoningModeDefault
+            let backendBridge = ModelBackendBridge.shared
+            convo.preferredBackendRawValue = backendBridge.selectedBackend.rawValue
+            convo.preferredModelID = backendBridge.selectedModelID
             let trimmed = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 let sys = Message(role: .system, text: trimmed, order: 0, conversation: convo, isFinal: true)
@@ -547,6 +554,7 @@ struct ContentView: View {
             // Set draft BEFORE clearing selection so handleSelectionChange preserves this vm.
             draftConversation = convo
             currentViewModel = createViewModel(for: convo)
+            backendBridge.bindConversation(convo)
             selection = nil
             // Push detail column on compact (iPhone) so the draft chat is immediately visible.
             preferredCompactColumn = .detail
