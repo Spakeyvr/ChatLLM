@@ -60,10 +60,6 @@ final class ChatViewModel: ObservableObject {
     private let chunkTimeout: Duration = .seconds(20)
     private let reasoningChunkTimeout: Duration = .seconds(30)
 
-    // Keychain constants for Tavily API key storage
-    let tavilyKeyService = "com.yourapp.tavily"  // Replace with your app's bundle ID
-    let tavilyKeyAccount = "TavilyAPIKey"
-
     // MARK: - Coalesced saving with optimized debouncing
     var pendingSaveTask: Task<Void, Never>?
     private let saveInterval: Duration = .milliseconds(300) // Optimized for streaming performance
@@ -98,7 +94,7 @@ final class ChatViewModel: ObservableObject {
 
         loadTavilyAPIKey()
 
-        keyChangeCancellable = NotificationCenter.default.publisher(for: NSNotification.Name("TavilyKeyChanged"))
+        keyChangeCancellable = NotificationCenter.default.publisher(for: TavilyAPIKeyStore.didChangeNotification)
             .sink { [weak self] _ in
                 self?.loadTavilyAPIKey()
             }

@@ -260,7 +260,7 @@ struct ModelManagementRow: View {
                             .foregroundStyle(.red)
                     }
                     .buttonStyle(.bordered)
-                } else if modelManager.isDownloading {
+                } else if modelManager.isDownloading(modelID: model.id) {
                     VStack(alignment: .leading, spacing: 4) {
                         ProgressView(value: modelManager.downloadProgress)
                         Text("\(Int(modelManager.downloadProgress * 100))%")
@@ -279,7 +279,14 @@ struct ModelManagementRow: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .font(.caption)
-                        if let error = modelManager.downloadError {
+                        .disabled(modelManager.hasActiveDownload(excluding: model.id))
+                        if modelManager.hasActiveDownload(excluding: model.id),
+                           let activeModel = modelManager.activeDownloadModel {
+                            Text("\(activeModel.displayName) is downloading")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        } else if let error = modelManager.downloadError(for: model.id) {
                             Text(error)
                                 .font(.caption2)
                                 .foregroundStyle(.red)

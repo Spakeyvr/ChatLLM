@@ -42,6 +42,7 @@ struct ContentView: View {
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @AppStorage("autoDeleteOldChats") private var autoDeleteOldChats: Bool = false
     @AppStorage("autoDeleteDays") private var autoDeleteDays: Int = 30
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
 
     private var preferredScheme: ColorScheme? {
         switch appAppearance {
@@ -52,10 +53,31 @@ struct ContentView: View {
     }
 
     var body: some View {
-        splitView
+        rootContent
             // Apply selected language to entire UI
             .environment(\.locale, Locale(identifier: appLanguage))
             .preferredColorScheme(preferredScheme)
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        if hasCompletedOnboarding {
+            mainExperience
+                .overlay(alignment: .topLeading) {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("content.root")
+                }
+        } else {
+            OnboardingView {
+                hasCompletedOnboarding = true
+            }
+        }
+    }
+
+    private var mainExperience: some View {
+        splitView
             .onAppear(perform: handleOnAppear)
             .onChange(of: selection, handleSelectionChange)
             .onChange(of: conversations, handleConversationsChange)
@@ -108,7 +130,7 @@ struct ContentView: View {
                 }
             }
     }
-    
+
     // Split the NavigationSplitView out of body to reduce complexity
     private var splitView: some View {
         NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {

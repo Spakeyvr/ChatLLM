@@ -10,6 +10,10 @@ import SwiftData
 
 @main
 struct On_Device_LLM_ChatApp: App {
+    init() {
+        configureUITestStateIfNeeded()
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Conversation.self,
@@ -30,5 +34,18 @@ struct On_Device_LLM_ChatApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+    }
+
+    private func configureUITestStateIfNeeded() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-ui-test-reset-app-state") else {
+            return
+        }
+
+        if let bundleIdentifier = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
+        }
+
+        TavilyAPIKeyStore.clear(postNotification: false)
     }
 }

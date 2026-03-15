@@ -126,7 +126,9 @@ final class MLXModelManager: ObservableObject {
 
     @Published var downloadProgress: Double = 0
     @Published var isDownloading: Bool = false
+    @Published private(set) var activeDownloadModelID: String?
     @Published var downloadError: String?
+    @Published private(set) var downloadErrorModelID: String?
 
     var supportsNativeThinking: Bool { true }
 
@@ -144,6 +146,7 @@ final class MLXModelManager: ObservableObject {
     private var prewarmInFlightModelID: String?
     private var memoryMaintenanceTimer: Timer?
     private let deviceSupportProfile: MLXDeviceSupportProfile
+    private var simulatedDownloadedModelIDs: Set<String> = []
 
     private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
     private static let memoryMaintenanceInterval: TimeInterval = 3
@@ -152,6 +155,7 @@ final class MLXModelManager: ObservableObject {
     private static let kvQuantizationWarmupStep = 256
     private static let toolMaxKVSize = 8192
     private static let memoryConstrainedMaxKVSize = 4096
+    private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
     private static let modelDefinitions: [MLXModelInfo] = [
         MLXModelInfo(
@@ -241,6 +245,13 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func installationStatus(for info: MLXModelInfo) -> ModelInstallationStatus {
+        if Self.isUITestFakeDownloadsEnabled {
+            if simulatedDownloadedModelIDs.contains(info.id) {
+                return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
+            }
+            return ModelInstallationStatus(isInstalled: false, isCompatible: true, compatibilityError: nil)
+        }
+
         let dir = documentsDirectory.appendingPathComponent("Models/\(info.localDirName)")
         let fm = FileManager.default
         let hasConfig = fm.fileExists(atPath: dir.appendingPathComponent("config.json").path)
@@ -321,6 +332,10 @@ final class MLXModelManager: ObservableObject {
         compatibilityErrors[info.id]
     }
 
+    private static var isUITestFakeDownloadsEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(uiTestFakeDownloadsArgument)
+    }
+
     func availabilityIssue(for info: MLXModelInfo) -> String? {
         compatibilityError(for: info)
     }
@@ -393,6 +408,24 @@ final class MLXModelManager: ObservableObject {
 
     func model(withID id: String) -> MLXModelInfo? {
         availableModels.first(where: { $0.id == id })
+    }
+
+    var activeDownloadModel: MLXModelInfo? {
+        guard let activeDownloadModelID else { return nil }
+        return model(withID: activeDownloadModelID)
+    }
+
+    func isDownloading(modelID: String) -> Bool {
+        isDownloading && activeDownloadModelID == modelID
+    }
+
+    func hasActiveDownload(excluding modelID: String) -> Bool {
+        isDownloading && activeDownloadModelID != modelID
+    }
+
+    func downloadError(for modelID: String) -> String? {
+        guard downloadErrorModelID == modelID else { return nil }
+        return downloadError
     }
 
     func cancelCurrentLoad(reason: String = "cancelled", tearDownModel: Bool = true) {
@@ -498,8 +531,15 @@ final class MLXModelManager: ObservableObject {
     func startDownload(for model: MLXModelInfo) {
         guard !isDownloading else { return }
         isDownloading = true
+        activeDownloadModelID = model.id
         downloadProgress = 0
         downloadError = nil
+        downloadErrorModelID = nil
+
+        if Self.isUITestFakeDownloadsEnabled {
+            startSimulatedDownload(for: model)
+            return
+        }
 
         let targetDir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
 
@@ -522,6 +562,8 @@ final class MLXModelManager: ObservableObject {
                 await MainActor.run {
                     self.downloadProgress = 1.0
                     self.isDownloading = false
+                    self.activeDownloadModelID = nil
+                    self.downloadErrorModelID = nil
                     self.refreshModelAvailability()
                 }
                 await MainActor.run {
@@ -531,13 +573,18 @@ final class MLXModelManager: ObservableObject {
             } catch is CancellationError {
                 await MainActor.run {
                     self.isDownloading = false
+                    self.activeDownloadModelID = nil
                     self.downloadProgress = 0
+                    self.downloadError = nil
+                    self.downloadErrorModelID = nil
                 }
                 self.cleanupPartialDownload(at: targetDir)
             } catch {
                 await MainActor.run {
                     self.isDownloading = false
+                    self.activeDownloadModelID = nil
                     self.downloadError = error.localizedDescription
+                    self.downloadErrorModelID = model.id
                 }
                 self.cleanupPartialDownload(at: targetDir)
                 print("❌ Download error: \(error)")
@@ -548,6 +595,49 @@ final class MLXModelManager: ObservableObject {
     func cancelDownload() {
         downloaderTask?.cancel()
         downloaderTask = nil
+    }
+
+    private func startSimulatedDownload(for model: MLXModelInfo) {
+        downloaderTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                for progress in [0.2, 0.55, 1.0] {
+                    try await Task.sleep(for: .milliseconds(120))
+                    guard !Task.isCancelled else {
+                        throw CancellationError()
+                    }
+
+                    await MainActor.run {
+                        self.downloadProgress = progress
+                    }
+                }
+
+                await MainActor.run {
+                    self.simulatedDownloadedModelIDs.insert(model.id)
+                    self.isDownloading = false
+                    self.activeDownloadModelID = nil
+                    self.downloadProgress = 1.0
+                    self.downloadErrorModelID = nil
+                    self.refreshModelAvailability()
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.isDownloading = false
+                    self.activeDownloadModelID = nil
+                    self.downloadProgress = 0
+                    self.downloadError = nil
+                    self.downloadErrorModelID = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self.isDownloading = false
+                    self.activeDownloadModelID = nil
+                    self.downloadError = error.localizedDescription
+                    self.downloadErrorModelID = model.id
+                }
+            }
+        }
     }
 
     private func cleanupPartialDownload(at dir: URL) {

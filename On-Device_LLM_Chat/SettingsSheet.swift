@@ -467,7 +467,7 @@ struct SettingsSheet: View {
             }
         }
         .onChange(of: tavilyApiKey) { _, _ in
-            NotificationCenter.default.post(name: NSNotification.Name("TavilyKeyChanged"), object: nil)
+            NotificationCenter.default.post(name: TavilyAPIKeyStore.didChangeNotification, object: nil)
         }
     }
 

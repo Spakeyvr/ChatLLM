@@ -188,6 +188,14 @@ struct ModelRow: View {
         modelManager.toolCallIssue(for: model)
     }
 
+    private var isDownloadingThisModel: Bool {
+        modelManager.isDownloading(modelID: model.id)
+    }
+
+    private var anotherDownloadInProgress: Bool {
+        modelManager.hasActiveDownload(excluding: model.id)
+    }
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
@@ -235,10 +243,11 @@ struct ModelRow: View {
                     }
 
                     if !model.isAvailable {
-                        if modelManager.isDownloading {
+                        if isDownloadingThisModel {
                             VStack(alignment: .leading, spacing: 2) {
                                 ProgressView(value: modelManager.downloadProgress)
                                     .frame(maxWidth: 180)
+                                    .accessibilityIdentifier("modelSelection.progress.\(model.id)")
                                 HStack(spacing: 8) {
                                     Text("\(Int(modelManager.downloadProgress * 100))%")
                                         .font(.caption2)
@@ -263,7 +272,14 @@ struct ModelRow: View {
                                 }
                                 .font(.caption2)
                                 .buttonStyle(.borderedProminent)
-                                if let error = modelManager.downloadError {
+                                .disabled(anotherDownloadInProgress)
+                                .accessibilityIdentifier("modelSelection.download.\(model.id)")
+                                if anotherDownloadInProgress, let activeModel = modelManager.activeDownloadModel {
+                                    Text("\(activeModel.displayName) is downloading")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                } else if let error = modelManager.downloadError(for: model.id) {
                                     Text(error)
                                         .font(.caption2)
                                         .foregroundStyle(.red)
