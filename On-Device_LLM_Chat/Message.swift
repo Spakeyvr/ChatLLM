@@ -11,7 +11,7 @@ import SwiftData
 // Pre-compiled regexes used in Message display and parsing (compiled once at app launch)
 // swiftlint:disable force_try
 private let _thinkingTagRegex = try! NSRegularExpression(
-    pattern: #"<thinking>[\s\S]*?</thinking>\s*"#, options: [.caseInsensitive])
+    pattern: #"<(?:think|thinking)>[\s\S]*?</(?:think|thinking)>\s*"#, options: [.caseInsensitive])
 private let _answerTagDisplayRegex = try! NSRegularExpression(
     pattern: #"<answer>([\s\S]*?)</answer>"#, options: [.caseInsensitive])
 private let _hiddenImageContextRegex = try! NSRegularExpression(
@@ -198,7 +198,8 @@ final class Message {
         }
         
         // CRITICAL FIX (Bug #6): Always strip raw <thinking> tags from display
-        if result.contains("<thinking>") || result.contains("<THINKING>") {
+        let lowercasedResult = result.lowercased()
+        if lowercasedResult.contains("<thinking>") || lowercasedResult.contains("<think>") {
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             result = _thinkingTagRegex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)

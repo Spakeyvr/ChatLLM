@@ -12,9 +12,9 @@ import UIKit
 // Pre-compiled regexes for stripForPreview (compiled once at app launch)
 // swiftlint:disable force_try
 private let _previewSourcesBlockRegex = try! NSRegularExpression(pattern: #"<sources>.*?</sources>"#,  options: [.dotMatchesLineSeparators, .caseInsensitive])
-private let _previewThinkingBlockRegex = try! NSRegularExpression(pattern: #"<thinking>.*?</thinking>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
+private let _previewThinkingBlockRegex = try! NSRegularExpression(pattern: #"<(?:think|thinking)>.*?</(?:think|thinking)>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 private let _previewSourcesTagRegex   = try! NSRegularExpression(pattern: #"</?sources>"#,              options: [.caseInsensitive])
-private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?thinking>"#,             options: [.caseInsensitive])
+private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?(?:think|thinking)>"#,   options: [.caseInsensitive])
 // swiftlint:enable force_try
 
 // MARK: - Conversation Row

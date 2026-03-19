@@ -644,6 +644,66 @@ struct On_Device_LLM_ChatTests {
         #expect(message.streamingReasoningPhase == .finalAnswer)
     }
 
+    @Test func reasoningOnlyStreamingIsNotTreatedAsEmptyOutput() async throws {
+        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let conversation = Conversation(title: "Test")
+        let viewModel = ChatViewModel(
+            generator: PartialReasoningLLMGenerator(),
+            context: context,
+            conversation: conversation
+        )
+
+        let userMessage = Message(
+            role: .user,
+            text: "Explain your thinking.",
+            order: 0,
+            conversation: conversation,
+            isFinal: true
+        )
+        conversation.messages.append(userMessage)
+
+        let assistantMessage = Message(
+            role: .assistant,
+            text: "",
+            order: 1,
+            conversation: conversation,
+            isReasoningMode: true
+        )
+        conversation.messages.append(assistantMessage)
+
+        let outcome = await viewModel.streamAssistant(
+            into: assistantMessage,
+            basedOnHistoryUpTo: assistantMessage.order
+        )
+
+        #expect(outcome == .succeeded)
+        #expect(assistantMessage.generationError == nil)
+        #expect(assistantMessage.reasoning == "Analyze the request carefully.")
+        #expect(assistantMessage.finalAnswer == nil)
+        #expect(assistantMessage.isFinal)
+    }
+
+    @Test func messageDisplayTextStripsThinkTags() {
+        let message = Message(
+            role: .assistant,
+            text: """
+            <think>
+            Analyze the request carefully.
+            </think>
+
+            Final answer: The tags should not be visible.
+            """,
+            order: 0
+        )
+
+        #expect(message.displayText == "The tags should not be visible.")
+    }
+
     @Test func cancelledGenerationBeforeFirstTokenRemovesEmptyAssistantPlaceholder() async throws {
         let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
         let container = try ModelContainer(
@@ -799,7 +859,7 @@ struct On_Device_LLM_ChatTests {
         return try TavilySearchService(apiKey: "test-key", session: session)
     }
 
-    private func makeViewModel() throws -> ChatViewModel {
+    private func makeViewModel(generator: LLMGenerator = TestLLMGenerator()) throws -> ChatViewModel {
         let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
@@ -808,7 +868,7 @@ struct On_Device_LLM_ChatTests {
         let context = ModelContext(container)
         let conversation = Conversation(title: "Test")
         return ChatViewModel(
-            generator: TestLLMGenerator(),
+            generator: generator,
             context: context,
             conversation: conversation
         )
@@ -936,6 +996,21 @@ private struct BlockingLLMGenerator: LLMGenerator {
             continuation.onTermination = { @Sendable _ in
                 producer.cancel()
             }
+        }
+    }
+}
+
+private struct PartialReasoningLLMGenerator: LLMGenerator {
+    func isAvailable() -> Bool { true }
+
+    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+        "<thinking>\nAnalyze the request carefully.\n</thinking>"
+    }
+
+    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield("<thinking>\nAnalyze the request carefully.\n</thinking>")
+            continuation.finish()
         }
     }
 }

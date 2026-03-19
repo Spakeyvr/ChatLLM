@@ -1083,7 +1083,8 @@ final class ChatViewModel: ObservableObject {
             return !stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }()
         let hasVisibleText = !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasAnyVisibleContent = hasVisibleText || hasVisibleFinal
+        let hasVisibleReasoning = !(target.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasAnyVisibleContent = hasVisibleText || hasVisibleFinal || hasVisibleReasoning
         let hasPreviousContent = !preparation.previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !(preparation.previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
 

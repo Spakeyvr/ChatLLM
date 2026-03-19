@@ -90,7 +90,7 @@ extension ChatViewModel {
             allowNativeImages: true
         )
 
-        if firstAttempt == .failedBeforeOutput && !Task.isCancelled {
+        if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && !Task.isCancelled {
             print("⚠️ Native image generation failed before output; falling back to Vision analysis context")
 
             let resolvedAnalysis = await resolveVisionAnalysisResult(

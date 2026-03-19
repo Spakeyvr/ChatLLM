@@ -42,6 +42,10 @@ private struct ErrorCalloutView: View {
 private let _extractSourcesRegex = try! NSRegularExpression(
     pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 
+// swiftlint:disable:next force_try
+private let _messageBubbleThinkTagRegex = try! NSRegularExpression(
+    pattern: #"<(thinking|think)>([\s\S]*?)</\1>"#, options: [.caseInsensitive])
+
 // MARK: - String helper to extract <sources> blocks
 
 extension String {
@@ -397,7 +401,8 @@ struct ReasoningMessageBubble: View {
             return (reasoning, message.finalAnswer)
         }
         // If not parsed but contains thinking tags, parse on-demand
-        if message.text.contains("<thinking>") {
+        let lowercased = message.text.lowercased()
+        if lowercased.contains("<thinking>") || lowercased.contains("<think>") {
             return parseReasoningFromText(message.text)
         }
         return (nil, nil)
@@ -410,20 +415,23 @@ struct ReasoningMessageBubble: View {
     private func parseReasoningFromText(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return (nil, nil) }
-        guard let openRange = trimmedText.range(of: "<thinking>", options: .caseInsensitive),
-              let closeRange = trimmedText.range(of: "</thinking>", options: .caseInsensitive),
-              openRange.upperBound < closeRange.lowerBound else {
+        let range = NSRange(trimmedText.startIndex..<trimmedText.endIndex, in: trimmedText)
+        guard let match = _messageBubbleThinkTagRegex.firstMatch(in: trimmedText, options: [], range: range),
+              match.numberOfRanges >= 3,
+              let reasoningRange = Range(match.range(at: 2), in: trimmedText),
+              let fullMatchRange = Range(match.range(at: 0), in: trimmedText) else {
             return (nil, text)
         }
-        let reasoningContent = String(trimmedText[openRange.upperBound..<closeRange.lowerBound])
+
+        let reasoningContent = String(trimmedText[reasoningRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let afterThinking = String(trimmedText[fullMatchRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalAnswer = afterThinking
+            .replacingOccurrences(
+                of: "^Final answer:\\s*",
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let afterThinking = String(trimmedText[closeRange.upperBound...])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalAnswer = afterThinking.replacingOccurrences(
-            of: "^Final answer:\\s*",
-            with: "",
-            options: [.regularExpression, .caseInsensitive]
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
         return (
             reasoning: reasoningContent.isEmpty ? nil : reasoningContent,
             finalAnswer: finalAnswer.isEmpty ? nil : finalAnswer
