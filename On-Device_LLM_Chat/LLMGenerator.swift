@@ -53,7 +53,7 @@ nonisolated private func makeSafetyBlockedError() -> NSError {
 
 final class OnDeviceLLMGenerator: LLMGenerator {
 
-    private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
+    nonisolated private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
 
     func isAvailable() -> Bool {
         SystemLanguageModel.default.availability == .available
