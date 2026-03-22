@@ -465,12 +465,12 @@ struct LoadingOverlay: View {
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-4bit",
+                id: "qwen3.5-4b-mixed36",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-4bit",
-                hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
-                parameters: "4B (4-bit)",
-                downloadSizeLabel: "3.03 GB",
+                localDirName: "Qwen3.5-4B-MLX-mixed36",
+                hfRepoId: "Spakie/Qwen3.5-4B-MLX-mixed36",
+                parameters: "4B (3/6-bit mixed)",
+                downloadSizeLabel: "2.50 GB",
                 loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
                 contextLength: 262144,
@@ -488,12 +488,12 @@ struct LoadingOverlay: View {
     .sheet(isPresented: $showingInfo) {
         ModelInfoSheet(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-4bit",
+                id: "qwen3.5-4b-mixed36",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-4bit",
-                hfRepoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
-                parameters: "4B (4-bit)",
-                downloadSizeLabel: "3.03 GB",
+                localDirName: "Qwen3.5-4B-MLX-mixed36",
+                hfRepoId: "Spakie/Qwen3.5-4B-MLX-mixed36",
+                parameters: "4B (3/6-bit mixed)",
+                downloadSizeLabel: "2.50 GB",
                 loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and image support",
                 contextLength: 262144,
