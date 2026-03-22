@@ -263,7 +263,8 @@ struct On_Device_LLM_ChatTests {
             isEnabled: true,
             hasTools: true,
             memoryConstrained: false,
-            configuredMaxOutputTokens: 2048
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 32768
         )
 
         #expect(configuration.maxTokens == 4096)
@@ -277,7 +278,8 @@ struct On_Device_LLM_ChatTests {
             isEnabled: false,
             hasTools: true,
             memoryConstrained: false,
-            configuredMaxOutputTokens: 2048
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 32768
         )
 
         #expect(configuration.maxTokens == 4096)
@@ -642,6 +644,87 @@ struct On_Device_LLM_ChatTests {
         #expect(message.finalAnswer == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.text == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.streamingReasoningPhase == .finalAnswer)
+    }
+
+    @Test func buildPromptExcludesHistoricalReasoningFromContext() throws {
+        let viewModel = try makeViewModel()
+        viewModel.conversation.reasoningMode = true
+
+        let user = Message(
+            role: .user,
+            text: "What changed in Swift 6.2?",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        let assistant = Message(
+            role: .assistant,
+            text: "Swift 6.2 is now available.",
+            order: 1,
+            conversation: viewModel.conversation,
+            isFinal: true,
+            reasoning: "I should think through the release timeline before answering.",
+            finalAnswer: "Swift 6.2 is now available.",
+            isReasoningMode: true
+        )
+        let nextUser = Message(
+            role: .user,
+            text: "Should I upgrade now?",
+            order: 2,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+
+        viewModel.conversation.messages.append(user)
+        viewModel.conversation.messages.append(assistant)
+        viewModel.conversation.messages.append(nextUser)
+
+        let prompt = viewModel.buildPrompt(upToOrderExclusive: 3, currentReasoningActive: true)
+
+        #expect(prompt.contains("Assistant: Swift 6.2 is now available."))
+        #expect(!prompt.contains("I should think through the release timeline"))
+        #expect(!prompt.contains("<thinking>"))
+    }
+
+    @Test func buildQwenMessagesExcludeHistoricalReasoningFromContext() async throws {
+        let viewModel = try makeViewModel()
+        viewModel.conversation.reasoningMode = true
+
+        let user = Message(
+            role: .user,
+            text: "What changed in Swift 6.2?",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        let assistant = Message(
+            role: .assistant,
+            text: "Swift 6.2 is now available.",
+            order: 1,
+            conversation: viewModel.conversation,
+            isFinal: true,
+            reasoning: "I should think through the release timeline before answering.",
+            finalAnswer: "Swift 6.2 is now available.",
+            isReasoningMode: true
+        )
+        let nextUser = Message(
+            role: .user,
+            text: "Should I upgrade now?",
+            order: 2,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+
+        viewModel.conversation.messages.append(user)
+        viewModel.conversation.messages.append(assistant)
+        viewModel.conversation.messages.append(nextUser)
+
+        let messages = try await viewModel.buildQwenMessages(upToOrderExclusive: 3)
+        let assistantMessage = try #require(messages.first(where: { $0.role == .assistant }))
+
+        #expect(assistantMessage.content == "Swift 6.2 is now available.")
+        #expect(!assistantMessage.content.contains("I should think through the release timeline"))
+        #expect(!assistantMessage.content.contains("<think>"))
     }
 
     @Test func reasoningOnlyStreamingIsNotTreatedAsEmptyOutput() async throws {

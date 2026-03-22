@@ -433,16 +433,16 @@ final class ChatViewModel: ObservableObject {
     }
 
     private struct ContextWindowError: LocalizedError {
+        let tokenLimit: Int
+
         var errorDescription: String? {
             return """
-            Context window exceeded. The conversation has become too long for the on-device model to process.
+            Context window limit reached. This device is currently capped at about \(tokenLimit) tokens for on-device MLX chats.
 
             Try one of these solutions:
-            • Start a new chat
-            • Delete some earlier messages in this conversation
-            • Reduce the length of your system prompt if you have one
-
-            Tip: The on-device model works best with focused conversations of 10-20 messages.
+            • Start a new chat or trim earlier messages
+            • Lower the Context Window setting
+            • Shorten your system prompt or the latest message
             """
         }
     }
@@ -534,6 +534,11 @@ final class ChatViewModel: ObservableObject {
             return true
         }
         return false
+    }
+
+    private func currentContextWindowLimit() -> Int {
+        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
+        return UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
     }
 
     // Add optional transient instruction that is appended to the prompt for this run only.
@@ -891,7 +896,7 @@ final class ChatViewModel: ObservableObject {
             )
             if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                 let message = isContextWindowError(error)
-                    ? ContextWindowError().localizedDescription
+                    ? ContextWindowError(tokenLimit: currentContextWindowLimit()).localizedDescription
                     : (error as NSError).localizedDescription
                 liveTarget.generationError = message
                 if result.cumulativeText.isEmpty {

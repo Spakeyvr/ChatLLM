@@ -298,16 +298,45 @@ extension Notification.Name {
 extension UserDefaults {
     var mlxMaxOutputTokens: Int {
         get {
-            let storedValue = integer(forKey: "mlxMaxOutputTokens")
-            if storedValue == 0 {
+            guard object(forKey: "mlxMaxOutputTokens") != nil else {
                 return 1024
+            }
+            let storedValue = integer(forKey: "mlxMaxOutputTokens")
+            if storedValue <= 0 {
+                return 0
             }
             return min(max(storedValue, 512), 1024)
         }
         set {
-            let clampedValue = min(max(newValue, 512), 1024)
+            let clampedValue = newValue <= 0 ? 0 : min(max(newValue, 512), 1024)
             set(clampedValue, forKey: "mlxMaxOutputTokens")
         }
+    }
+
+    var mlxMaxOutputTokensLimit: Int? {
+        let storedValue = mlxMaxOutputTokens
+        return storedValue == 0 ? nil : storedValue
+    }
+
+    func mlxContextWindowTokens(deviceMaximum: Int) -> Int {
+        let minimum = if deviceMaximum <= 2_048 {
+            1_024
+        } else if deviceMaximum <= 4_096 {
+            2_048
+        } else {
+            4_096
+        }
+
+        guard object(forKey: "mlxContextWindowTokens") != nil else {
+            return deviceMaximum
+        }
+
+        let storedValue = integer(forKey: "mlxContextWindowTokens")
+        if storedValue <= 0 {
+            return deviceMaximum
+        }
+
+        return min(max(storedValue, minimum), deviceMaximum)
     }
 
     var mlxEnableKVCacheQuantization: Bool {

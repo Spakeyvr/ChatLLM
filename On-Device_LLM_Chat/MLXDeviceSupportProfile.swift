@@ -62,6 +62,17 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         return "Web search and tool calls for \(model.displayName) require an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM."
     }
 
+    var maxContextWindowTokens: Int {
+        let normalizedGigabytes = Int(normalizedPhoneMemoryBytes / Self.gibibyte)
+        if normalizedGigabytes > 8 {
+            return 8_192
+        }
+        if normalizedGigabytes >= 8 {
+            return 4_096
+        }
+        return 2_048
+    }
+
     private var normalizedPhoneMemoryBytes: UInt64 {
         guard isPhone else {
             return physicalMemoryBytes

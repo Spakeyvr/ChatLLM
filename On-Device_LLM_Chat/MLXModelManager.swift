@@ -744,12 +744,16 @@ final class MLXModelManager: ObservableObject {
             cleanupMemoryAfterGeneration()
         }
 
-        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokens
+        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
+        let configuredContextWindow = UserDefaults.standard.mlxContextWindowTokens(
+            deviceMaximum: MLXDeviceSupportProfile.current.maxContextWindowTokens
+        )
         let generationConfiguration = Self.generationConfiguration(
             isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
             hasTools: !tools.isEmpty,
             memoryConstrained: memoryConstrained,
-            configuredMaxOutputTokens: configuredMaxOutputTokens
+            configuredMaxOutputTokens: configuredMaxOutputTokens,
+            configuredContextWindow: configuredContextWindow
         )
         let maxTokens = generationConfiguration.maxTokens
         let maxKVSize = generationConfiguration.maxKVSize
@@ -856,7 +860,8 @@ final class MLXModelManager: ObservableObject {
                 isEnabled: false,
                 hasTools: true,
                 memoryConstrained: memoryConstrained,
-                configuredMaxOutputTokens: configuredMaxOutputTokens
+                configuredMaxOutputTokens: configuredMaxOutputTokens,
+                configuredContextWindow: configuredContextWindow
             )
             let fallbackParams = Self.makeGenerateParameters(
                 maxTokens: fallbackConfiguration.maxTokens,
@@ -982,21 +987,23 @@ final class MLXModelManager: ObservableObject {
         isEnabled: Bool,
         hasTools: Bool,
         memoryConstrained: Bool,
-        configuredMaxOutputTokens: Int
+        configuredMaxOutputTokens: Int?,
+        configuredContextWindow: Int
     ) -> GenerationConfiguration {
         let usesQuantizedToolCacheStrategy = isEnabled && hasTools && !memoryConstrained
         let maxTokens: Int? = if hasTools {
             4096
         } else if memoryConstrained {
-            min(configuredMaxOutputTokens, 1024)
+            configuredMaxOutputTokens.map { min($0, 1024) }
         } else {
             configuredMaxOutputTokens
         }
-        let maxKVSize = effectiveMaxKVSize(
+        let baseMaxKVSize = effectiveMaxKVSize(
             isEnabled: isEnabled,
             hasTools: hasTools,
             memoryConstrained: memoryConstrained
         )
+        let maxKVSize = min(baseMaxKVSize ?? configuredContextWindow, configuredContextWindow)
         return GenerationConfiguration(
             maxTokens: maxTokens,
             maxKVSize: maxKVSize,

@@ -96,9 +96,11 @@ extension ChatViewModel {
 
     // MARK: - Prompt Builder
 
-    // Maximum number of messages (user + assistant combined) to include in the prompt context.
-    // Older messages are silently dropped to prevent OOM on long conversations.
+    // Legacy upper bound on the number of messages (user + assistant combined) in prompt context.
+    // The effective cap is further tightened by the device-aware token budget below.
     private static let maxContextMessages = 30
+    private static let minimumPromptBudgetTokens = 512
+    private static let promptOverheadReserveTokens = 256
 
     private func snapshotsContainVisionImageAnalysisData(_ snapshots: [MessageSnapshot]) -> Bool {
         snapshots.contains { snapshot in
@@ -112,6 +114,85 @@ extension ChatViewModel {
         }
     }
 
+    private func effectiveContextWindowTokenLimit() -> Int {
+        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
+        return UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
+    }
+
+    private func effectivePromptBudgetTokenLimit() -> Int {
+        let contextLimit = effectiveContextWindowTokenLimit()
+        let reservedOutputTokens = min(
+            UserDefaults.standard.mlxMaxOutputTokensLimit ?? 1_024,
+            max(512, contextLimit / 2)
+        )
+        return max(
+            Self.minimumPromptBudgetTokens,
+            contextLimit - reservedOutputTokens - Self.promptOverheadReserveTokens
+        )
+    }
+
+    private func trimmedSnapshotsForPrompt(
+        from snapshots: [MessageSnapshot],
+        maxMessages: Int?
+    ) -> [MessageSnapshot] {
+        var trimmedSnapshots = snapshots
+        let limit = min(maxMessages ?? Self.maxContextMessages, Self.maxContextMessages)
+        if trimmedSnapshots.count > limit {
+            trimmedSnapshots = Array(trimmedSnapshots.suffix(limit))
+        }
+
+        let tokenBudget = effectivePromptBudgetTokenLimit()
+        var keptSnapshots: [MessageSnapshot] = []
+        var usedTokens = 0
+
+        for snapshot in trimmedSnapshots.reversed() {
+            guard snapshot.role != .system else { continue }
+            if snapshot.role == .assistant && !snapshot.isFinal { continue }
+            guard !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+
+            let estimatedTokens = estimatedPromptTokenCost(
+                for: snapshot
+            )
+
+            if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
+                break
+            }
+
+            keptSnapshots.append(snapshot)
+            usedTokens += estimatedTokens
+
+            if usedTokens > tokenBudget {
+                break
+            }
+        }
+
+        return Array(keptSnapshots.reversed())
+    }
+
+    private func estimatedPromptTokenCost(
+        for snapshot: MessageSnapshot
+    ) -> Int {
+        let content: String
+        switch snapshot.role {
+        case .user:
+            content = snapshot.text
+        case .assistant:
+            if snapshot.isReasoningMode,
+               let answer = snapshot.finalAnswer {
+                content = answer
+            } else {
+                content = snapshot.text
+            }
+        default:
+            content = snapshot.text
+        }
+
+        let estimatedContentTokens = Int(ceil(Double(content.count) / 4.0))
+        return max(24, estimatedContentTokens + 12)
+    }
+
     func buildPrompt(
         upToOrderExclusive maxOrderExclusive: Int,
         currentReasoningActive: Bool? = nil,
@@ -119,11 +200,7 @@ extension ChatViewModel {
         forceWebSearchRequired: Bool = false
     ) -> String {
         // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
-        var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
-        // Sliding window: keep only the most recent N messages to cap context size.
-        if snapshots.count > Self.maxContextMessages {
-            snapshots = Array(snapshots.suffix(Self.maxContextMessages))
-        }
+        let allSnapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
 
         // Determine whether this response should use reasoning mode.
         // When explicitly passed (e.g. regeneration), honour that value;
@@ -134,6 +211,11 @@ extension ChatViewModel {
         } else {
             reasoningActive = conversation.reasoningMode || conversation.smartReasoningMode
         }
+
+        let snapshots = trimmedSnapshotsForPrompt(
+            from: allSnapshots,
+            maxMessages: nil
+        )
 
         var parts: [String] = snapshots.compactMap { msg in
             // *** CRITICAL FIX: Only include finalized assistant messages in the prompt ***
@@ -154,15 +236,9 @@ extension ChatViewModel {
             case .user:
                 return "User: \(msg.text)"
             case .assistant:
-                if msg.isReasoningMode, let reasoning = msg.reasoning, let answer = msg.finalAnswer {
+                if msg.isReasoningMode, let answer = msg.finalAnswer {
                     let cleanAnswer = stripSourcesFromText(answer)
-                    // Only include <thinking> tags when reasoning is still active,
-                    // otherwise the model continues reasoning after toggle-off.
-                    if reasoningActive {
-                        return "Assistant: <thinking>\n\(reasoning)\n</thinking>\n\n\(cleanAnswer)"
-                    } else {
-                        return "Assistant: \(cleanAnswer)"
-                    }
+                    return "Assistant: \(cleanAnswer)"
                 } else {
                     let cleanText = stripSourcesFromText(msg.text)
                     return "Assistant: \(cleanText)"
@@ -292,12 +368,10 @@ extension ChatViewModel {
         toolsAvailable: Bool = false,
         forceWebSearch: Bool = false
     ) async throws -> [Chat.Message] {
-        var snapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
-        // Sliding window: cap context to avoid OOM from accumulated KV cache / token pressure.
-        let limit = maxMessages ?? Self.maxContextMessages
-        if snapshots.count > limit {
-            snapshots = Array(snapshots.suffix(limit))
-        }
+        let snapshots = trimmedSnapshotsForPrompt(
+            from: messageSnapshots(upToOrderExclusive: maxOrderExclusive),
+            maxMessages: maxMessages
+        )
         let latestUserOrder = snapshots
             .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map(\.order)
@@ -340,9 +414,9 @@ extension ChatViewModel {
                 messages.append(.user(userText, images: images))
             case .assistant:
                 let content: String
-                if msg.isReasoningMode, let reasoning = msg.reasoning, let answer = msg.finalAnswer {
+                if msg.isReasoningMode, let answer = msg.finalAnswer {
                     let cleanAnswer = stripSourcesFromText(answer)
-                    content = "<think>\n\(reasoning)\n</think>\n\n\(cleanAnswer)"
+                    content = cleanAnswer
                 } else {
                     content = stripSourcesFromText(msg.text)
                 }
@@ -365,13 +439,10 @@ extension ChatViewModel {
 
     internal static let baseSystemPrompt: String = """
     You are a helpful, friendly assistant. Be conversational and practical.
-    - If you see a typo or unclear request, interpret the user's intent and respond accordingly
     - Be concise but complete
-    - You can do math. When numbers start getting large though, always say that your answer may not be correct and to double check.
     - NEVER encourage self-harm
     - NEVER provide illegal content or encourage illegal actions
     - Don't roleplay with: "Assistant: ...", no matter what. You are talking to an actual human
-    - Do NOT wrap your answer in <answer> tags or any other XML tags
     """
 
     internal static let foundationVisionImageInstructions: String = """
@@ -385,43 +456,12 @@ extension ChatViewModel {
     """
 
     internal static let qwenNativeImageInstructions: String = """
-    NATIVE IMAGE INSTRUCTIONS:
-    - Image attachments are provided directly to you as native multimodal inputs.
-    - Inspect the image itself; do not assume there will be a separate Vision-analysis text block unless the user message explicitly contains one.
-    - Read visible text from the image when asked, and describe visual details directly and concretely.
-    - Focus on the user's actual question about the image.
+
     """
 
     internal static let reasoningInstructions: String = """
-    REASONING MODE INSTRUCTIONS:
-    1. First, write your thinking process inside <thinking> tags:
-       <thinking>
-       - Break down the problem
-       - Consider different approaches
-       - Work through the logic step-by-step
-       - This is your private workspace - the user will see this as "View Reasoning"
-       </thinking>
 
-    2. After </thinking>, write your ACTUAL ANSWER for the user:
-       - This is what the user will see as your main response
-       - Provide the complete, final answer here
-       - Include all the information, examples, code, lists, etc. that the user asked for
-       - Don't just write a summary or meta-comment - give the FULL answer
-
-    Do NOT wrap your answer in <answer> tags or any other XML tags. Write plain text after </thinking>.
-
-    Example (CORRECT):
-    <thinking>
-    The user wants 5 story ideas. I should brainstorm different genres: sci-fi, fantasy, mystery, etc.
-    Let me come up with creative concepts for each.
-    </thinking>
-
-    Here are 5 story ideas:
-
-    1. **Time-Traveling Librarian**: A librarian discovers...
-    2. **AI Awakening**: In a future where...
-    [...complete list of 5 ideas with full descriptions ...]
-"""
+    """
 
     internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
         let currentYear = Calendar.current.component(.year, from: Date())
