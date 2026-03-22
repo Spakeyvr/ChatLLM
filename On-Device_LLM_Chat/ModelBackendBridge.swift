@@ -210,6 +210,10 @@ class ModelBackendBridge: ObservableObject {
 
     // MARK: - Model-Specific Features
 
+    /// Known model families that support reasoning/thinking mode.
+    /// Used as fallback when modelManager isn't available but a model ID is stored.
+    private static let knownReasoningPrefixes = ["qwen"]
+
     /// Reasoning is only exposed for MLX models that support it.
     var reasoningAvailable: Bool {
         guard selectedBackend == .mlx else {
@@ -219,7 +223,7 @@ class ModelBackendBridge: ObservableObject {
             return true
         }
         guard let modelID = selectedModelID else { return false }
-        return modelID.contains("qwen")
+        return Self.knownReasoningPrefixes.contains(where: { modelID.contains($0) })
     }
 
     var foundationModelsAvailable: Bool {

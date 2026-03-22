@@ -67,38 +67,45 @@ private struct NativeMarkdownText: View {
 }
 
 enum RichTextFeatureDetector {
-    private static let blockPatterns: [String] = [
-        #"(?m)^\s{0,3}#{1,6}\s+\S"#,
-        #"(?m)^\s{0,3}(?:[-*+]\s+\S|\d+\.\s+\S)"#,
-        #"(?m)^\s{0,3}>\s+\S"#,
-        #"(?m)^\s{0,3}```"#,
-        #"(?m)^\s{0,3}~~~"#,
-        #"(?m)^\s{0,3}(?:\|.*\|)$"#,
-        #"(?m)^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$"#
-    ]
+    // Pre-compiled patterns (compiled once at app launch, avoiding per-call regex recompilation)
+    private static let compiledPatterns: [NSRegularExpression] = {
+        let patterns = [
+            // Block patterns
+            #"(?m)^\s{0,3}#{1,6}\s+\S"#,
+            #"(?m)^\s{0,3}(?:[-*+]\s+\S|\d+\.\s+\S)"#,
+            #"(?m)^\s{0,3}>\s+\S"#,
+            #"(?m)^\s{0,3}```"#,
+            #"(?m)^\s{0,3}~~~"#,
+            #"(?m)^\s{0,3}(?:\|.*\|)$"#,
+            #"(?m)^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$"#,
+            // Math patterns
+            #"\\\((.+?)\\\)"#,
+            #"\\\[(.+?)\\\]"#,
+            #"\$\$(.+?)\$\$"#,
+            #"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)"#
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+    }()
 
-    private static let mathPatterns: [String] = [
-        #"\\\((.+?)\\\)"#,
-        #"\\\[(.+?)\\\]"#,
-        #"\$\$(.+?)\$\$"#,
-        #"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)"#
-    ]
+    private static let paragraphBreakRegex: NSRegularExpression? =
+        try? NSRegularExpression(pattern: #"\n\s*\n"#, options: [])
 
     static func requiresAdvancedRendering(_ text: String) -> Bool {
         guard !text.isEmpty else { return false }
-        if text.range(of: #"\n\s*\n"#, options: [.regularExpression]) != nil {
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+
+        if let re = paragraphBreakRegex, re.firstMatch(in: text, options: [], range: range) != nil {
             return true
         }
         if text.contains("\\begin{") || text.contains("\\end{") {
             return true
         }
-
-        for pattern in blockPatterns + mathPatterns {
-            if text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil {
+        for regex in compiledPatterns {
+            if regex.firstMatch(in: text, options: [], range: range) != nil {
                 return true
             }
         }
-
         return false
     }
 }

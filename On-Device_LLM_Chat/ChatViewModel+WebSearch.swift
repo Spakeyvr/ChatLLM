@@ -8,12 +8,6 @@
 import Foundation
 import os
 
-// swiftlint:disable force_try
-private let _extractSourcesRegex = try! NSRegularExpression(
-    pattern: #"<sources>(.*?)</sources>"#,
-    options: [.dotMatchesLineSeparators, .caseInsensitive])
-// swiftlint:enable force_try
-
 extension ChatViewModel {
 
     // MARK: - Web Search Helpers
@@ -27,17 +21,18 @@ extension ChatViewModel {
         ]
     }
 
-    // Cached regex patterns for stripping legacy search tags from stored messages.
-    static let searchPatterns: [NSRegularExpression] = {
-        let patterns = [
+    // Combined regex for stripping legacy search tags from stored messages (single-pass).
+    // swiftlint:disable:next force_try
+    static let combinedSearchPattern: NSRegularExpression = try! NSRegularExpression(
+        pattern: [
             #"<search>(.*?)</search>"#,
             #"<search\s+query\s*=\s*"(.*?)"\s*/>"#,
             #"\[search\](.*?)\[/search\]"#,
             #"(?im)^\s*SEARCH:\s*(.+?)\s*$"#,
             #"<tool:search>(.*?)</tool:search>"#
-        ]
-        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.dotMatchesLineSeparators, .caseInsensitive]) }
-    }()
+        ].joined(separator: "|"),
+        options: [.dotMatchesLineSeparators, .caseInsensitive]
+    )
 
     func requiresWebSearch(for userText: String) -> Bool {
         let q = userText.lowercased()
@@ -108,23 +103,19 @@ extension ChatViewModel {
     func extractSources(from text: String) -> String? {
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
-        guard let match = _extractSourcesRegex.firstMatch(in: text, options: [], range: range),
+        guard let match = SharedRegexes.sourcesBlock.firstMatch(in: text, options: [], range: range),
               match.numberOfRanges >= 2 else { return nil }
         let inner = match.range(at: 1)
         guard inner.location != NSNotFound else { return nil }
         return ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // Strip legacy <search> tags from stored messages (backward compat).
+    // Strip legacy <search> tags from stored messages (backward compat, single-pass).
     func stripSearchTags(_ text: String, preserveBoundaries: Bool = true) -> String {
-        var working = text
-
-        for re in Self.searchPatterns {
-            let ns = working as NSString
-            let range = NSRange(location: 0, length: ns.length)
-            working = re.stringByReplacingMatches(in: working, options: [], range: range, withTemplate: "")
-        }
-
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        let working = Self.combinedSearchPattern.stringByReplacingMatches(
+            in: text, options: [], range: range, withTemplate: "")
         let collapsed = working.replacingOccurrences(of: "\n\n\n", with: "\n\n")
         return preserveBoundaries ? collapsed : collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
     }

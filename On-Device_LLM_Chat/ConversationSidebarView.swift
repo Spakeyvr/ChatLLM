@@ -54,10 +54,13 @@ struct ConversationRow: View {
         applying(_previewSourcesTagRegex)
         applying(_previewThinkingTagRegex)
         // Collapse excessive whitespace/newlines
-        output = output
-            .replacingOccurrences(of: "[ \\t]*\\n[ \\t]*\\n+", with: "\n", options: .regularExpression)
-            .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var ns = output as NSString
+        output = SharedRegexes.multipleBlankLines.stringByReplacingMatches(
+            in: output, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "\n")
+        ns = output as NSString
+        output = SharedRegexes.excessiveWhitespace.stringByReplacingMatches(
+            in: output, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: " ")
+        output = output.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return output
     }

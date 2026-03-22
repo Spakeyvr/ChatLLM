@@ -11,15 +11,10 @@ import os
 // Cached regexes for parseReasoningResponse (compiled once at app launch)
 // swiftlint:disable force_try
 private let _parseReasoningRegexes: [NSRegularExpression] = [
-    try! NSRegularExpression(pattern: #"<thinking>(.*?)</thinking>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
-    try! NSRegularExpression(pattern: #"<thinking>(.*?)</thinking>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
-    try! NSRegularExpression(pattern: #"<think>(.*?)</think>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
-    try! NSRegularExpression(pattern: #"<think>(.*?)</think>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
+    try! NSRegularExpression(pattern: #"<(?:thinking|think)>(.*?)</(?:thinking|think)>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
+    try! NSRegularExpression(pattern: #"<(?:thinking|think)>(.*?)</(?:thinking|think)>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
 ]
 
-// Cached regex for stripping <sources>…</sources> in updateMessageWithReasoningContent
-private let _sourcesRegexSR = try! NSRegularExpression(
-    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 // swiftlint:enable force_try
 
 extension ChatViewModel {
@@ -50,7 +45,7 @@ extension ChatViewModel {
 
         let isSimpleQuestion = simplePatterns.contains { lowercased.hasPrefix($0) }
         if isSimpleQuestion && userText.count < 50 {
-            print("Heuristic: Simple question detected, no reasoning needed")
+            logger.debug("Heuristic: Simple question detected, no reasoning needed")
             return false
         }
 
@@ -89,21 +84,21 @@ extension ChatViewModel {
 
         // Combine heuristics - be somewhat conservative
         if hasComplexityKeyword || hasLogicalKeyword {
-            print("Heuristic: Complexity/logical keywords found, reasoning needed")
+            logger.debug("Heuristic: Complexity/logical keywords found, reasoning needed")
             return true
         }
 
         if hasCodeKeyword && (hasQuestionWords || isLongQuery) {
-            print("Heuristic: Code-related complex question, reasoning needed")
+            logger.debug("Heuristic: Code-related complex question, reasoning needed")
             return true
         }
 
         if isLongQuery && hasMultipleSentences && hasQuestionWords {
-            print("Heuristic: Long multi-sentence question, reasoning needed")
+            logger.debug("Heuristic: Long multi-sentence question, reasoning needed")
             return true
         }
 
-        print("Heuristic: No complexity indicators found, no reasoning needed")
+        logger.debug("Heuristic: No complexity indicators found, no reasoning needed")
         return false
     }
 
@@ -117,7 +112,7 @@ extension ChatViewModel {
 
         // DEBUG: Log what we're parsing to diagnose short answer issues
         if trimmedText.count < 200 {
-            print("🔍 parseReasoningResponse input chars: \(trimmedText.count)")
+            logger.debug("parseReasoningResponse input chars: \(trimmedText.count, privacy: .public)")
         }
 
         // Check all tag variants (Qwen3.5 uses <think>, older paths use <thinking>)
@@ -177,9 +172,7 @@ extension ChatViewModel {
 
                 // DEBUG: Log extracted values for short responses
                 if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
-                    print("🔍 parseReasoningResponse extracted:")
-                    print("   - reasoning chars: \(reasoning?.count ?? 0)")
-                    print("   - finalAnswer chars: \(finalAnswer?.count ?? 0)")
+                    logger.debug("parseReasoningResponse extracted: reasoning=\(reasoning?.count ?? 0, privacy: .public) finalAnswer=\(finalAnswer?.count ?? 0, privacy: .public)")
                 }
 
                 return (reasoning, finalAnswer)
@@ -318,10 +311,7 @@ extension ChatViewModel {
     internal func updateMessageWithReasoningContent(_ message: Message, fullText: String, finalize: Bool = false) {
         // DEBUG: Log if we're updating with empty/whitespace-only content
         if fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            print("⚠️ updateMessageWithReasoningContent called with empty/whitespace-only text")
-            print("   - Original text length: \(fullText.count)")
-            print("   - Message ID: \(message.id)")
-            print("   - isReasoningMode: \(message.isReasoningMode)")
+            logger.warning("updateMessageWithReasoningContent called with empty text (len=\(fullText.count, privacy: .public), id=\(message.id, privacy: .public), reasoning=\(message.isReasoningMode, privacy: .public))")
             return // Don't update with empty content
         }
 
@@ -346,7 +336,7 @@ extension ChatViewModel {
         let visiblePortion = {
             if let s = newSources, !s.isEmpty {
                 // Remove the first <sources> block occurrence
-                let re = _sourcesRegexSR
+                let re = SharedRegexes.sourcesBlock
                 let ns = cleanedText as NSString
                 let range = NSRange(location: 0, length: ns.length)
                 return re.stringByReplacingMatches(in: cleanedText, options: [], range: range, withTemplate: "")

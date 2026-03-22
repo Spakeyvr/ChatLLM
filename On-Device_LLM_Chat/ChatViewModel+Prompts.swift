@@ -10,10 +10,6 @@ import MLXLMCommon
 import os.log
 
 // swiftlint:disable:next force_try
-private let _sourcesRegex = try! NSRegularExpression(
-    pattern: #"<sources>(.*?)</sources>"#,
-    options: [.dotMatchesLineSeparators, .caseInsensitive])
-// swiftlint:disable:next force_try
 private let _nativeImageVisionFallbackRegex = try! NSRegularExpression(
     pattern: #"--- Image Analysis Data ---.*?--- End Image Analysis ---\s*User's question:\s*"#,
     options: [.dotMatchesLineSeparators, .caseInsensitive])
@@ -206,7 +202,7 @@ extension ChatViewModel {
     func stripSourcesFromText(_ text: String) -> String {
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
-        return _sourcesRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        return SharedRegexes.sourcesBlock.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

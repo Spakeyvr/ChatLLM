@@ -37,11 +37,6 @@ private struct ErrorCalloutView: View {
     }
 }
 
-// Cached regex for extractSourcesBlocks — compiled once at app launch
-// swiftlint:disable:next force_try
-private let _extractSourcesRegex = try! NSRegularExpression(
-    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
-
 // swiftlint:disable:next force_try
 private let _messageBubbleThinkTagRegex = try! NSRegularExpression(
     pattern: #"<(thinking|think)>([\s\S]*?)</\1>"#, options: [.caseInsensitive])
@@ -52,7 +47,7 @@ extension String {
     // Returns the visible text with all <sources>…</sources> blocks removed,
     // and a single combined sources string (if any) for UI presentation.
     func extractSourcesBlocks() -> (visible: String, sources: String?) {
-        let regex = _extractSourcesRegex
+        let regex = SharedRegexes.sourcesBlock
         let ns = self as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
 

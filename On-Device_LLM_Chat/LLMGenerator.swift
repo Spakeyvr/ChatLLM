@@ -23,12 +23,7 @@ extension LLMGenerator {
     }
 }
 
-private func buildEnhancedPrompt(for original: String) -> String {
-    guard original.contains("<thinking>"),
-          !original.contains("Reasoning Mode Instructions:") else {
-        return original
-    }
-    let preamble = """
+private let _reasoningPreamble = """
     Reasoning Mode Instructions:
     - Think step-by-step only inside <thinking> ... </thinking>.
     - If you encounter typos or unclear requests, interpret the user's intent.
@@ -42,7 +37,13 @@ private func buildEnhancedPrompt(for original: String) -> String {
     - Make sure your final answer is formal and complete.
 
     """
-    return preamble + original
+
+private func buildEnhancedPrompt(for original: String) -> String {
+    guard original.contains("<thinking>"),
+          !original.contains("Reasoning Mode Instructions:") else {
+        return original
+    }
+    return _reasoningPreamble + original
 }
 
 nonisolated private func makeSafetyBlockedError() -> NSError {
@@ -52,16 +53,15 @@ nonisolated private func makeSafetyBlockedError() -> NSError {
 
 final class OnDeviceLLMGenerator: LLMGenerator {
 
+    private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
+
     func isAvailable() -> Bool {
         SystemLanguageModel.default.availability == .available
     }
 
     nonisolated private func isSafetyModerationError(_ error: Error) -> Bool {
         let message = (error as NSError).localizedDescription.lowercased()
-        return message.contains("unsafe") ||
-               message.contains("safety") ||
-               message.contains("content filter") ||
-               message.contains("violates")
+        return Self.safetyKeywords.contains(where: message.contains)
     }
 
     func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {

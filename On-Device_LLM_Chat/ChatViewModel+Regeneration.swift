@@ -7,21 +7,18 @@
 
 import Foundation
 import SwiftData
+import os
 
 extension ChatViewModel {
 
     // MARK: - Scheduled Regeneration (Menu-Safe)
 
-    /// Schedule a regeneration that will execute even if the calling menu/task is cancelled
-    /// This uses DispatchQueue to completely bypass Swift Concurrency's cancellation mechanism
+    /// Schedule a regeneration that will execute even if the calling menu/task is cancelled.
+    /// Uses DispatchQueue to bypass Swift Concurrency's cancellation mechanism.
     nonisolated func scheduleRegeneration(messageID: UUID, instruction: String?) {
-        print("📅 Scheduling regeneration for message \(messageID)")
-
         // DispatchQueue scheduling is immune to Task cancellation from menu dismissal.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else {
-                // CRITICAL FIX (Bug 5): Log when regeneration fails due to deallocation
-                print("⚠️ Scheduled regeneration cancelled: ChatViewModel was deallocated")
                 return
             }
 
@@ -50,7 +47,7 @@ extension ChatViewModel {
         // CRITICAL: Prevent concurrent regenerations; caller may already hold the lock (skipLockCheck).
         if !skipLockCheck {
             guard !isRegenerating else {
-                print("⚠️ Regenerate failed: already regenerating (double-tap protection)")
+                logger.warning("Regenerate failed: already regenerating (double-tap protection)")
                 return
             }
             isRegenerating = true
@@ -64,7 +61,7 @@ extension ChatViewModel {
         await waitForStreamToFinish()
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
-            print("⚠️ Regenerate failed: message not found")
+            logger.warning("Regenerate failed: message not found")
             return
         }
         // Force SwiftData fault resolution before async boundaries
@@ -72,45 +69,33 @@ extension ChatViewModel {
         let messageOrder = conversation.messages[index].order
 
         guard messageRole == .assistant else {
-            print("⚠️ Regenerate failed: message is not an assistant message")
+            logger.warning("Regenerate failed: message is not an assistant message")
             return
         }
 
-        // waitForStreamToFinish may return slightly before isGenerating clears; give it a moment.
-        if isGenerating {
-            print("⚠️ Regenerate failed: still generating (waiting additional time)")
-            for _ in 0..<10 {
-                try? await Task.sleep(for: .milliseconds(50))
-                if !isGenerating { break }
-            }
-            guard !isGenerating else {
-                print("❌ Regenerate failed: generation in progress")
-                return
-            }
+        guard await waitForGenerationToFinish() else {
+            logger.error("Regenerate failed: generation still in progress")
+            return
         }
 
-        print("✅ Starting regeneration for message order \(messageOrder)")
-        print("📊 Current message count: \(conversation.messages.count)")
+        logger.debug("Starting regeneration for message order \(messageOrder, privacy: .public)")
 
         let messagesToDelete = conversation.messages
             .filter { $0.order > messageOrder }
 
-        print("🗑️ Deleting \(messagesToDelete.count) messages after order \(messageOrder)")
-
+        let idsToDelete = Set(messagesToDelete.map(\.id))
+        conversation.messages.removeAll { idsToDelete.contains($0.id) }
         for msg in messagesToDelete {
-            conversation.messages.removeAll(where: { $0.id == msg.id })
             context.delete(msg)
         }
 
         renumberMessagesByOrder()
-        print("📊 After renumbering: \(conversation.messages.count) messages")
 
         guard let updatedIndex = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
-            print("❌ Target message disappeared after renumbering!")
+            logger.error("Target message disappeared after renumbering")
             return
         }
         let updatedOrder = conversation.messages[updatedIndex].order
-        print("📍 Target message now at order \(updatedOrder) (was \(messageOrder))")
 
         conversation.lastUpdated = Date()
         immediateSave()
@@ -121,35 +106,19 @@ extension ChatViewModel {
             .sortedByOrder
             .last
 
-        let shouldUseReasoning: Bool
-        if let userMsg = precedingUserMessage {
-            do {
-                shouldUseReasoning = try await shouldUseReasoningForPrompt(userMsg.text)
-            } catch {
-                print("Unexpected error determining reasoning mode in regenerateAfterAssistant, using conversation fallback: \(error)")
-                shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-            }
-        } else {
-            shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-        }
+        let shouldUseReasoning = await resolvedReasoningMode(
+            for: precedingUserMessage, logContext: "regenerateAfterAssistant")
 
         guard !Task.isCancelled else {
-            print("⚠️ Regenerate cancelled after reasoning evaluation (unexpected in scheduled context)")
+            logger.warning("Regenerate cancelled after reasoning evaluation")
             return
         }
 
         // CRITICAL FIX: Look up by ID, not index; SwiftData can reorder the array between lookups.
         guard let targetMessage = conversation.messages.first(where: { $0.id == messageID }) else {
-            print("❌ Target message disappeared before applying reasoning mode!")
+            logger.error("Target message disappeared before applying reasoning mode")
             return
         }
-
-        print("🔍 Looking up message by ID \(messageID)")
-        print("🔍 Found message details:")
-        print("   - ID: \(targetMessage.id)")
-        print("   - Role: \(targetMessage.role)")
-        print("   - Order: \(targetMessage.order)")
-        print("   - Text chars: \(targetMessage.text.count)")
 
         targetMessage.isReasoningMode = shouldUseReasoning
         targetMessage.promptSnapshot = nil
@@ -159,16 +128,13 @@ extension ChatViewModel {
         let msg = targetMessage
         // CRITICAL FIX: Pass msg.order so buildPrompt excludes this assistant message itself
         // (basedOnHistoryUpTo is exclusive), correctly including all preceding user messages.
-        print("🚀 Calling streamAssistant with order \(msg.order) for message \(msg.id)")
-        print("📊 Message details: role=\(msg.role), text_chars=\(msg.text.count), isFinal=\(msg.isFinal)")
-        print("📊 All message orders in conversation: \(conversation.messages.map { "(\($0.role):\($0.order))" }.joined(separator: ", "))")
         await streamAssistant(into: msg, basedOnHistoryUpTo: msg.order)
-        print("✅ Regeneration completed for message order \(messageOrder)")
+        logger.debug("Regeneration completed for message order \(messageOrder, privacy: .public)")
     }
 
     func regenerateReplacingAssistant(messageID: UUID, instruction: String) async {
         guard !isRegenerating else {
-            print("⚠️ Regenerate with instruction failed: already regenerating (double-tap protection)")
+            logger.warning("Regenerate with instruction failed: already regenerating (double-tap protection)")
             return
         }
         isRegenerating = true
@@ -177,49 +143,37 @@ extension ChatViewModel {
         await waitForStreamToFinish()
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
-            print("⚠️ Regenerate with instruction failed: message not found")
+            logger.warning("Regenerate with instruction failed: message not found")
             return
         }
         // Force SwiftData fault resolution before async boundaries
         let messageRole = conversation.messages[index].role
 
         guard messageRole == .assistant else {
-            print("⚠️ Regenerate with instruction failed: message is not an assistant message")
+            logger.warning("Regenerate with instruction failed: message is not an assistant message")
             return
         }
 
-        if isGenerating {
-            print("⚠️ Regenerate with instruction failed: still generating (waiting additional time)")
-            for _ in 0..<10 {
-                try? await Task.sleep(for: .milliseconds(50))
-                if !isGenerating { break }
-            }
-            guard !isGenerating else {
-                print("❌ Regenerate with instruction failed: generation in progress")
-                return
-            }
+        guard await waitForGenerationToFinish() else {
+            logger.error("Regenerate with instruction failed: generation still in progress")
+            return
         }
 
-        print("✅ Starting regeneration with custom instruction")
+        logger.debug("Starting regeneration with custom instruction")
 
         let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let shouldUseReasoning: Bool
-        do {
-            shouldUseReasoning = try await shouldUseReasoningForPrompt(trimmed)
-        } catch {
-            print("Unexpected error determining reasoning mode in regenerateReplacingAssistant, using conversation fallback: \(error)")
-            shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-        }
+        let shouldUseReasoning = await resolvedReasoningMode(
+            for: trimmed, logContext: "regenerateReplacingAssistant")
 
         guard !Task.isCancelled else {
-            print("⚠️ Regenerate with instruction cancelled after reasoning evaluation (unexpected in scheduled context)")
+            logger.warning("Regenerate with instruction cancelled after reasoning evaluation")
             return
         }
 
         guard let targetMessage = conversation.messages.first(where: { $0.id == messageID }) else {
-            print("❌ Target message disappeared after reasoning evaluation!")
+            logger.error("Target message disappeared after reasoning evaluation")
             return
         }
         targetMessage.isReasoningMode = shouldUseReasoning
@@ -234,7 +188,7 @@ extension ChatViewModel {
 
     func editUserMessageAndRegenerate(from messageID: UUID, newText: String) async {
         guard !isRegenerating else {
-            print("⚠️ Edit and regenerate failed: already regenerating (double-tap protection)")
+            logger.warning("Edit and regenerate failed: already regenerating (double-tap protection)")
             return
         }
         isRegenerating = true
@@ -243,7 +197,7 @@ extension ChatViewModel {
         await waitForStreamToFinish()
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
-            print("⚠️ Edit and regenerate failed: message not found")
+            logger.warning("Edit and regenerate failed: message not found")
             return
         }
         // Force SwiftData fault resolution before async boundaries
@@ -251,12 +205,12 @@ extension ChatViewModel {
         let messageOrder = conversation.messages[index].order
 
         guard messageRole == .user else {
-            print("⚠️ Edit and regenerate failed: message is not a user message")
+            logger.warning("Edit and regenerate failed: message is not a user message")
             return
         }
 
         guard !Task.isCancelled else {
-            print("⚠️ Edit and regenerate failed: task was cancelled")
+            logger.warning("Edit and regenerate failed: task was cancelled")
             return
         }
 
@@ -273,11 +227,10 @@ extension ChatViewModel {
         let messagesToDelete = conversation.messages
             .filter { $0.order > messageOrder }
 
-        for msg in messagesToDelete {
-            if msg.id != assistantID {
-                conversation.messages.removeAll(where: { $0.id == msg.id })
-                context.delete(msg)
-            }
+        let idsToDelete = Set(messagesToDelete.lazy.filter { $0.id != assistantID }.map(\.id))
+        conversation.messages.removeAll { idsToDelete.contains($0.id) }
+        for msg in messagesToDelete where idsToDelete.contains(msg.id) {
+            context.delete(msg)
         }
 
         renumberMessagesByOrder()
@@ -286,7 +239,7 @@ extension ChatViewModel {
         if let targetID = assistantID {
             // Look up by ID after renumbering; index is stale.
             guard let assistant = conversation.messages.first(where: { $0.id == targetID }) else {
-                print("❌ Edit and regenerate failed: Assistant message disappeared after renumbering")
+                logger.error("Edit and regenerate failed: Assistant message disappeared after renumbering")
                 return
             }
             assistant.promptSnapshot = nil
@@ -294,28 +247,17 @@ extension ChatViewModel {
             // CRITICAL FIX (Bug 1): Inline instead of calling internal method to keep
             // isRegenerating true throughout the entire operation.
             let updatedOrder = assistant.order
-            print("✅ Starting regeneration (via edit) for message order \(updatedOrder)")
 
-    
             let precedingUserMessage = conversation.messages
                 .filter { $0.role == .user && $0.order < updatedOrder }
                 .sortedByOrder
                 .last
 
-            let shouldUseReasoning: Bool
-            if let userMsg = precedingUserMessage {
-                do {
-                    shouldUseReasoning = try await shouldUseReasoningForPrompt(userMsg.text)
-                } catch {
-                    print("Unexpected error determining reasoning mode in editAndRegenerate, using conversation fallback: \(error)")
-                    shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-                }
-            } else {
-                shouldUseReasoning = conversation.reasoningMode || conversation.smartReasoningMode
-            }
+            let shouldUseReasoning = await resolvedReasoningMode(
+                for: precedingUserMessage, logContext: "editAndRegenerate")
 
             guard !Task.isCancelled else {
-                print("⚠️ Edit and regenerate cancelled after reasoning evaluation")
+                logger.warning("Edit and regenerate cancelled after reasoning evaluation")
                 return
             }
 
@@ -324,7 +266,6 @@ extension ChatViewModel {
             immediateSave()
 
             await streamAssistant(into: assistant, basedOnHistoryUpTo: assistant.order)
-            print("✅ Edit and regeneration completed")
         }
     }
 
@@ -338,5 +279,18 @@ extension ChatViewModel {
         renumberMessagesByOrder()
         conversation.lastUpdated = Date()
         immediateSave()
+    }
+
+    // MARK: - Private Helpers
+
+    /// Waits up to 500ms for an in-progress generation to finish.
+    /// Returns true if generation stopped, false if still running.
+    private func waitForGenerationToFinish() async -> Bool {
+        guard isGenerating else { return true }
+        for _ in 0..<10 {
+            try? await Task.sleep(for: .milliseconds(50))
+            if !isGenerating { return true }
+        }
+        return !isGenerating
     }
 }

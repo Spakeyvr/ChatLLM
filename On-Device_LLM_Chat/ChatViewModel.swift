@@ -39,10 +39,8 @@ final class ChatViewModel: ObservableObject {
     private var keyChangeCancellable: AnyCancellable?
     private var modelPipelineResetCancellable: AnyCancellable?
 
-    // Thread-safe order calculation to prevent race conditions
     internal var nextOrder: Int {
-        let orders = conversation.messages.map { $0.order }
-        return (orders.max() ?? -1) + 1
+        (conversation.messages.max(by: { $0.order < $1.order })?.order ?? -1) + 1
     }
 
     private(set) var conversation: Conversation
@@ -129,7 +127,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        guard pendingSaveTask?.isCancelled != false else {
+        if let existing = pendingSaveTask, !existing.isCancelled {
             return // Task already scheduled, let it complete
         }
 
@@ -177,7 +175,7 @@ final class ChatViewModel: ObservableObject {
     ) -> [SearchInvocation] {
         guard !liveInvocations.isEmpty else { return [] }
 
-        let existingByID = Dictionary(uniqueKeysWithValues: existingInvocations.map { ($0.id, $0) })
+        let existingByID = Dictionary(existingInvocations.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
 
         return liveInvocations.map { invocation in
             if let existing = existingByID[invocation.id] {
@@ -226,9 +224,16 @@ final class ChatViewModel: ObservableObject {
         do {
             return try await shouldUseReasoningForPrompt(prompt)
         } catch {
-            print("Unexpected error determining reasoning mode\(logContext.isEmpty ? "" : " for \(logContext)"), using conversation fallback: \(error)")
+            logger.warning("Error determining reasoning mode\(logContext.isEmpty ? "" : " for \(logContext)"), using conversation fallback: \(error)")
             return conversation.reasoningMode || conversation.smartReasoningMode
         }
+    }
+
+    internal func resolvedReasoningMode(for userMessage: Message?, logContext: String) async -> Bool {
+        guard let userMsg = userMessage else {
+            return conversation.reasoningMode || conversation.smartReasoningMode
+        }
+        return await resolvedReasoningMode(for: userMsg.text, logContext: logContext)
     }
 
     internal func appendUserMessage(_ text: String) -> (message: Message, needsAutoNaming: Bool) {

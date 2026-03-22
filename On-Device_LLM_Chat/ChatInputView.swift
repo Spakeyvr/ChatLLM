@@ -142,13 +142,7 @@ struct NavigationTitleView: View {
             }
             .menuOrder(.fixed)
             .sheet(isPresented: $showModelManagement) {
-                if let mm = modelManager {
-                    if #available(iOS 16.0, *) {
-                        ModelManagementView(modelManager: mm)
-                    } else {
-                        Text("Model management requires iOS 16+")
-                    }
-                }
+                ModelSelectionView()
             }
         }
     }
@@ -180,133 +174,6 @@ struct NavigationTitleView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary.opacity(0.7))
             }
-        }
-    }
-}
-
-// MARK: - Model Management View
-
-@available(iOS 16.0, *)
-struct ModelManagementView: View {
-    @ObservedObject var modelManager: MLXModelManager
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(modelManager.availableModels, id: \.id) { model in
-                    ModelManagementRow(model: model, modelManager: modelManager)
-                }
-            }
-            .navigationTitle("Manage Models")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-}
-
-@available(iOS 16.0, *)
-struct ModelManagementRow: View {
-    let model: MLXModelManager.MLXModelInfo
-    @ObservedObject var modelManager: MLXModelManager
-
-    @State private var showDeleteAlert = false
-    @State private var showInfoSheet = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.displayName)
-                        .font(.headline)
-
-                    Text(model.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-
-                Spacer()
-
-                if model.isAvailable {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                }
-
-                Button {
-                    showInfoSheet = true
-                } label: {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundStyle(.blue)
-                        .imageScale(.large)
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Action buttons
-            HStack(spacing: 12) {
-                if model.isAvailable {
-                    Button(role: .destructive) {
-                        showDeleteAlert = true
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                    .buttonStyle(.bordered)
-                } else if modelManager.isDownloading(modelID: model.id) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: modelManager.downloadProgress)
-                        Text("\(Int(modelManager.downloadProgress * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Cancel") {
-                        modelManager.cancelDownload()
-                    }
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Button("Download (~3.9 GB)") {
-                            modelManager.startDownload(for: model)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .font(.caption)
-                        .disabled(modelManager.hasActiveDownload(excluding: model.id))
-                        if modelManager.hasActiveDownload(excluding: model.id),
-                           let activeModel = modelManager.activeDownloadModel {
-                            Text("\(activeModel.displayName) is downloading")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        } else if let error = modelManager.downloadError(for: model.id) {
-                            Text(error)
-                                .font(.caption2)
-                                .foregroundStyle(.red)
-                                .lineLimit(2)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .alert("Delete Model?", isPresented: $showDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                try? modelManager.deleteModel(model)
-            }
-        } message: {
-            Text("This will permanently delete \(model.displayName) from your device.")
-        }
-        .sheet(isPresented: $showInfoSheet) {
-            ModelInfoSheet(model: model)
         }
     }
 }

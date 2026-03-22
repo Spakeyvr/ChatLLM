@@ -114,6 +114,10 @@ final class MLXModelManager: ObservableObject {
         }
 
         var displayName: String { "\(name) (\(parameters))" }
+
+        var parameterCount: String {
+            parameters.components(separatedBy: " ").first ?? parameters
+        }
     }
 
     // MARK: - Published Properties
@@ -166,7 +170,7 @@ final class MLXModelManager: ObservableObject {
             parameters: "4B (3/6-bit mixed)",
             downloadSizeLabel: "2.50 GB",
             loadPolicy: .qwenMultimodal,
-            description: "Qwen 3.5 4B multimodal model with native reasoning and image support.",
+            description: "Qwen 3.5 4B multimodal model with native reasoning and vision.",
             contextLength: 262144,
             isAvailable: false,
             supportsReasoning: true,
@@ -183,7 +187,7 @@ final class MLXModelManager: ObservableObject {
             parameters: "2B (4-bit)",
             downloadSizeLabel: "1.75 GB",
             loadPolicy: .qwenMultimodal,
-            description: "Qwen 3.5 2B multimodal model with native reasoning and image support.",
+            description: "Qwen 3.5 2B multimodal model with native reasoning and vision.",
             contextLength: 262144,
             isAvailable: false,
             supportsReasoning: true,
