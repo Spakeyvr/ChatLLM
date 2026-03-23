@@ -530,6 +530,46 @@ struct On_Device_LLM_ChatTests {
         #expect(context.contains("exact date"))
     }
 
+    @Test func mlxSessionReusePolicyAllowsKeyedSessionReuseAcrossModes() {
+        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: false))
+        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: true, hasTools: false, hasMedia: false))
+        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: true, hasMedia: false))
+        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: true))
+    }
+
+    @Test func mlxTimeContextGateSkipsOrdinaryTurns() {
+        let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Explain Swift actors simply.",
+            forceWebSearch: false,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        )
+
+        #expect(!shouldInject)
+    }
+
+    @Test func mlxTimeContextGateIncludesTimeSensitiveTurns() {
+        let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "What is the latest Swift release today?",
+            forceWebSearch: false,
+            webSearchEnabled: false,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        )
+
+        #expect(shouldInject)
+    }
+
+    @Test func mlxTimeContextGateIncludesForcedWebSearchTurns() {
+        let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Compare the newest Xcode beta to stable.",
+            forceWebSearch: true,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        )
+
+        #expect(shouldInject)
+    }
+
     @Test func webSearchSystemPromptUsesCurrentCalendarYear() {
         let year = Calendar.current.component(.year, from: Date())
 
@@ -725,6 +765,48 @@ struct On_Device_LLM_ChatTests {
         #expect(assistantMessage.content == "Swift 6.2 is now available.")
         #expect(!assistantMessage.content.contains("I should think through the release timeline"))
         #expect(!assistantMessage.content.contains("<think>"))
+    }
+
+    @Test func buildQwenMessagesKeepsOrdinaryMLXPromptStable() async throws {
+        let viewModel = try makeViewModel()
+        let user = Message(
+            role: .user,
+            text: "Explain value types in Swift.",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let messages = try await viewModel.buildQwenMessages(
+            upToOrderExclusive: 1,
+            toolsAvailable: true,
+            forceWebSearch: false
+        )
+        let systemMessage = try #require(messages.first(where: { $0.role == .system }))
+
+        #expect(!systemMessage.content.contains("Current date and time:"))
+    }
+
+    @Test func buildQwenMessagesAddsTimeContextForTimeSensitiveMLXTurn() async throws {
+        let viewModel = try makeViewModel()
+        let user = Message(
+            role: .user,
+            text: "What is the latest Swift release today?",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let messages = try await viewModel.buildQwenMessages(
+            upToOrderExclusive: 1,
+            toolsAvailable: true,
+            forceWebSearch: false
+        )
+        let systemMessage = try #require(messages.first(where: { $0.role == .system }))
+
+        #expect(systemMessage.content.contains("Current date and time:"))
     }
 
     @Test func reasoningOnlyStreamingIsNotTreatedAsEmptyOutput() async throws {

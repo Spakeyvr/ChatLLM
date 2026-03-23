@@ -200,19 +200,19 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
 
     // MARK: - Helpers
 
-    static func searchLimitToolResponse(limit: Int) -> String {
+    nonisolated static func searchLimitToolResponse(limit: Int) -> String {
         "[webSearch internal error: limit reached after \(limit) searches for this response. Do not call webSearch again. Continue with the available information.]"
     }
 
-    static func isSearchLimitToolResponse(_ text: String) -> Bool {
+    nonisolated static func isSearchLimitToolResponse(_ text: String) -> Bool {
         text.hasPrefix("[webSearch internal error: limit reached")
     }
 
-    static func invalidArgumentsToolResponse() -> String {
+    nonisolated static func invalidArgumentsToolResponse() -> String {
         "[webSearch internal error: missing required 'query' argument. Call webSearch again with a concise query string and continue reasoning.]"
     }
 
-    static func isInternalToolErrorResponse(_ text: String) -> Bool {
+    nonisolated static func isInternalToolErrorResponse(_ text: String) -> Bool {
         text.hasPrefix("[webSearch internal error:")
     }
 

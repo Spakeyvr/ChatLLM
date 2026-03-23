@@ -124,6 +124,7 @@ extension ChatViewModel {
         targetMessage.promptSnapshot = nil
         conversation.lastUpdated = Date()
         immediateSave()
+        invalidateMLXConversationSession(reason: "regenerate_after_assistant")
 
         let msg = targetMessage
         // CRITICAL FIX: Pass msg.order so buildPrompt excludes this assistant message itself
@@ -180,6 +181,7 @@ extension ChatViewModel {
         targetMessage.promptSnapshot = nil
         conversation.lastUpdated = Date()
         immediateSave()
+        invalidateMLXConversationSession(reason: "regenerate_with_instruction")
 
         let msg = targetMessage
         // Do NOT insert a new user message; the instruction is passed transiently only.
@@ -264,6 +266,7 @@ extension ChatViewModel {
             assistant.isReasoningMode = shouldUseReasoning
             conversation.lastUpdated = Date()
             immediateSave()
+            invalidateMLXConversationSession(reason: "edit_user_message_and_regenerate")
 
             await streamAssistant(into: assistant, basedOnHistoryUpTo: assistant.order)
         }
@@ -279,6 +282,7 @@ extension ChatViewModel {
         renumberMessagesByOrder()
         conversation.lastUpdated = Date()
         immediateSave()
+        invalidateMLXConversationSession(reason: "message_deleted")
     }
 
     // MARK: - Private Helpers

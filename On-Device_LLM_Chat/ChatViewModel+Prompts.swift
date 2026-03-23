@@ -17,6 +17,14 @@ private let _nativeImageVisionFallbackRegex = try! NSRegularExpression(
 extension ChatViewModel {
 
     private static let imageAnalysisMarker = "--- Image Analysis Data ---"
+    private static let mlxTimeSensitiveKeywords = [
+        "today", "yesterday", "tomorrow", "this week", "this month", "this year", "this quarter",
+        "latest", "newest", "most recent", "currently", "current", "now", "breaking", "live",
+        "just released", "as of"
+    ]
+    private static let mlxExplicitSearchIntentKeywords = [
+        "please search", "search for", "look up"
+    ]
 
     internal static func currentDateTimeContext(
         referenceDate: Date = Date(),
@@ -77,21 +85,36 @@ extension ChatViewModel {
     }
 
     func setReasoningMode(_ enabled: Bool) {
+        let previousValue = conversation.reasoningMode
         conversation.reasoningMode = enabled
         if enabled {
             conversation.smartReasoningMode = false // Disable smart mode when manual mode is enabled
         }
         conversation.lastUpdated = Date()
         immediateSave()
+        if previousValue != enabled {
+            invalidateMLXConversationSession(reason: "reasoning_mode_changed")
+        }
     }
 
     func setSmartReasoningMode(_ enabled: Bool) {
+        let previousValue = conversation.smartReasoningMode
         conversation.smartReasoningMode = enabled
         if enabled {
             conversation.reasoningMode = false // Disable manual mode when smart mode is enabled
         }
         conversation.lastUpdated = Date()
         immediateSave()
+        if previousValue != enabled {
+            invalidateMLXConversationSession(reason: "smart_reasoning_mode_changed")
+        }
+    }
+
+    func invalidateMLXConversationSession(reason: String) {
+        ModelBackendBridge.shared.modelManager?.invalidateConversationSession(
+            conversation.id,
+            reason: reason
+        )
     }
 
     // MARK: - Prompt Builder
@@ -310,6 +333,57 @@ extension ChatViewModel {
     You are a helpful assistant. Answer clearly in the user's language. Be concise and direct.
     """
 
+    internal static func shouldInjectMLXCurrentDateTimeContext(
+        latestUserText: String?,
+        forceWebSearch: Bool,
+        webSearchEnabled: Bool,
+        referenceDate: Date = Date()
+    ) -> Bool {
+        let normalized = latestUserText?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+
+        guard !normalized.isEmpty else {
+            return forceWebSearch
+        }
+
+        if mlxTimeSensitiveKeywords.contains(where: { normalized.contains($0) }) {
+            return true
+        }
+
+        if timeSensitiveYearTokens(referenceDate: referenceDate).contains(where: { normalized.contains($0) }) {
+            return true
+        }
+
+        if forceWebSearch {
+            return true
+        }
+
+        return webSearchEnabled && mlxExplicitSearchIntentKeywords.contains(where: { normalized.contains($0) })
+    }
+
+    internal static func buildMLXSystemPrompt(
+        includeCurrentDateTime: Bool,
+        hasNativeImages: Bool,
+        webSearchEnabled: Bool,
+        forceWebSearch: Bool
+    ) -> String {
+        var systemPrompt = qwenCompactSystemPrompt
+        if includeCurrentDateTime {
+            systemPrompt += "\n\n" + currentDateTimeContext()
+        }
+        if hasNativeImages {
+            systemPrompt += "\n\n" + qwenNativeImageInstructions
+        }
+        if webSearchEnabled {
+            systemPrompt += "\n\n" + webSearchSystemPrompt(
+                reasoningEnabled: false,
+                forceSearchRequired: forceWebSearch
+            )
+        }
+        return systemPrompt
+    }
+
     private func nativeImageInputs(from attachments: [AttachmentSnapshot]) async throws -> [UserInput.Image] {
         var inputs: [UserInput.Image] = []
         var warnedForPreparationFailure = false
@@ -376,23 +450,26 @@ extension ChatViewModel {
             .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map(\.order)
             .max()
+        let latestUserText = snapshots
+            .filter { $0.role == .user && $0.order == latestUserOrder }
+            .map(\.text)
+            .last
 
         let hasNativeImages = snapshotsContainNativeImages(snapshots)
-
-        var systemPrompt = Self.qwenCompactSystemPrompt
-        systemPrompt += "\n\n" + Self.currentDateTimeContext()
-        if hasNativeImages {
-            systemPrompt += "\n\n" + Self.qwenNativeImageInstructions
-        }
-        if toolsAvailable {
-            systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
-                reasoningEnabled: false,
-                forceSearchRequired: forceWebSearch
-            )
-            // The tokenizer chat template already injects the exact MLX tool-call
-            // syntax for the active Qwen package. Duplicating it here risks
-            // contradicting the installed template and suppressing tool use.
-        }
+        let includeCurrentDateTime = Self.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: latestUserText,
+            forceWebSearch: forceWebSearch,
+            webSearchEnabled: toolsAvailable
+        )
+        let systemPrompt = Self.buildMLXSystemPrompt(
+            includeCurrentDateTime: includeCurrentDateTime,
+            hasNativeImages: hasNativeImages,
+            webSearchEnabled: toolsAvailable,
+            forceWebSearch: forceWebSearch
+        )
+        // The tokenizer chat template already injects the exact MLX tool-call
+        // syntax for the active Qwen package. Duplicating it here risks
+        // contradicting the installed template and suppressing tool use.
 
         var messages: [Chat.Message] = []
         messages.append(.system(systemPrompt))

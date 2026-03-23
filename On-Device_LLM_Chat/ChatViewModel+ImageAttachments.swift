@@ -348,5 +348,6 @@ extension ChatViewModel {
         context.delete(attachment)
         conversation.lastUpdated = Date()
         immediateSave()
+        invalidateMLXConversationSession(reason: "attachment_deleted")
     }
 }

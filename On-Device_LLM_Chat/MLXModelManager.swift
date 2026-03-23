@@ -8,10 +8,357 @@
 import Foundation
 import Combine
 import MLX
+import MLXNN
 import MLXLMCommon
 import MLXVLM
 import Tokenizers
 import OSLog
+import UIKit
+
+nonisolated private struct MLXVisibleMessageSignature: Equatable, Sendable {
+    let role: Chat.Message.Role
+    let content: String
+    let imageIdentifiers: [String]
+    let videoIdentifiers: [String]
+
+    init(message: Chat.Message) {
+        self.role = message.role
+        self.content = message.content
+        self.imageIdentifiers = message.images.map(Self.imageIdentifier(for:))
+        self.videoIdentifiers = message.videos.map(Self.videoIdentifier(for:))
+    }
+
+    nonisolated private static func imageIdentifier(for image: UserInput.Image) -> String {
+        switch image {
+        case .url(let url):
+            return "url:\(url.path)"
+        case .ciImage(let image):
+            return "ci:\(Int(image.extent.width.rounded()))x\(Int(image.extent.height.rounded()))"
+        case .array(let array):
+            return "array:\(array.shape.map(String.init).joined(separator: "x"))"
+        }
+    }
+
+    nonisolated private static func videoIdentifier(for video: UserInput.Video) -> String {
+        switch video {
+        case .url(let url):
+            return "url:\(url.path)"
+        case .avAsset(let asset):
+            return "asset:\(asset.description)"
+        case .frames(let frames):
+            return "frames:\(frames.count)"
+        }
+    }
+}
+
+nonisolated internal struct MLXPerformanceSample: Sendable {
+    let conversationID: UUID
+    let modelID: String
+    let promptTokenCount: Int
+    let outputTokenCount: Int
+    let toolInvocationCount: Int
+    let timeToFirstToken: TimeInterval?
+    let totalLatency: TimeInterval
+    let promptTokensPerSecond: Double?
+    let decodeTokensPerSecond: Double?
+    let stopReason: GenerateStopReason?
+    let memoryBefore: Memory.Snapshot
+    let memoryAfter: Memory.Snapshot
+    let peakActiveBytes: Int
+}
+
+nonisolated private struct MLXSessionKey: Hashable, Sendable {
+    let conversationID: UUID
+    let modelID: String
+    let enableThinking: Bool
+    let toolsEnabled: Bool
+    let includesMedia: Bool
+    let instructionFingerprint: Int
+}
+
+nonisolated private struct MLXLoadedModelState: @unchecked Sendable {
+    let container: ModelContainer
+    let model: MLXModelManager.MLXModelInfo
+    let wiredMemoryPolicy: MLXLMCommon.WiredSumPolicy
+    var reservationTicket: MLX.WiredMemoryTicket?
+    var weightBytes: Int
+    var activeBytesEstimate: Int
+    var prefillStepSize: Int
+    var measurement: MLXLMCommon.WiredMemoryMeasurement?
+}
+
+nonisolated private struct MLXInferenceRequest: @unchecked Sendable {
+    let conversationID: UUID
+    let sessionKey: MLXSessionKey
+    let model: MLXModelManager.MLXModelInfo
+    let messages: [Chat.Message]
+    let enableThinking: Bool
+    let additionalContext: [String: any Sendable]?
+    let processing: UserInput.Processing
+    let tools: [MLXToolSpec]
+    let params: GenerateParameters
+    let suppressWrappedXMLToolMarkup: Bool
+}
+
+nonisolated private struct MLXInferenceResponse: Sendable {
+    let toolInvocationCount: Int
+    let performanceSample: MLXPerformanceSample
+}
+
+private actor MLXInferenceWorker {
+    private struct SessionState {
+        let key: MLXSessionKey
+        let session: ChatSession
+        var visibleHistory: [MLXVisibleMessageSignature]
+        var latestPerformance: MLXPerformanceSample?
+    }
+
+    private actor ToolInvocationState {
+        private var count = 0
+
+        func increment() -> Int {
+            count += 1
+            return count
+        }
+
+        func currentCount() -> Int {
+            count
+        }
+    }
+
+    private let logger: Logger
+    private var loadedModel: MLXLoadedModelState?
+    private var sessions: [MLXSessionKey: SessionState] = [:]
+
+    init(subsystem: String, deviceSupportProfile: MLXDeviceSupportProfile) {
+        self.logger = Logger(subsystem: subsystem, category: "MLXInferenceWorker")
+        _ = deviceSupportProfile
+    }
+
+    func setLoadedModel(_ state: MLXLoadedModelState) {
+        loadedModel = state
+        sessions.removeAll()
+    }
+
+    func updateLoadedModelTuning(
+        modelID: String,
+        prefillStepSize: Int,
+        activeBytesEstimate: Int,
+        measurement: MLXLMCommon.WiredMemoryMeasurement?
+    ) {
+        guard var loadedModel, loadedModel.model.id == modelID else { return }
+        loadedModel.prefillStepSize = prefillStepSize
+        loadedModel.activeBytesEstimate = max(0, activeBytesEstimate)
+        loadedModel.measurement = measurement
+        self.loadedModel = loadedModel
+    }
+
+    func prefillStepSize(for modelID: String) -> Int {
+        guard let loadedModel, loadedModel.model.id == modelID else {
+            return MLXModelManager.defaultPrefillStepSize
+        }
+        return loadedModel.prefillStepSize
+    }
+
+    func clearLoadedModel() async {
+        if let reservationTicket = loadedModel?.reservationTicket {
+            _ = await reservationTicket.end()
+        }
+        loadedModel = nil
+        sessions.removeAll()
+    }
+
+    func invalidateConversation(_ conversationID: UUID, reason: String) {
+        let removedCount = sessions.keys.filter { $0.conversationID == conversationID }.count
+        guard removedCount > 0 else { return }
+        sessions = sessions.filter { $0.key.conversationID != conversationID }
+        logger.notice(
+            "MLX session invalidated: conversation=\(conversationID.uuidString, privacy: .public) removed=\(removedCount, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
+    func invalidateAll(reason: String) {
+        guard !sessions.isEmpty else { return }
+        sessions.removeAll()
+        logger.notice("MLX invalidated all sessions: reason=\(reason, privacy: .public)")
+    }
+
+    func generate(
+        request: MLXInferenceRequest,
+        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
+        onToken: @escaping @Sendable (String) -> Void,
+        onToolCall: @escaping @Sendable (MLXToolCall) -> Void
+    ) async throws -> MLXInferenceResponse {
+        guard let loadedModel, loadedModel.model.id == request.model.id else {
+            throw MLXModelManager.GenerationError.modelNotLoaded
+        }
+        guard let latestUserMessage = request.messages.last else {
+            throw MLXModelManager.GenerationError.invalidChatHistory
+        }
+
+        let prefixSignatures = request.messages.dropLast().map { MLXVisibleMessageSignature(message: $0) }
+
+        let session: ChatSession
+        if let existing = sessions[request.sessionKey],
+           existing.key == request.sessionKey,
+           existing.visibleHistory == prefixSignatures {
+            session = existing.session
+            logger.notice("MLX reusing persistent chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
+        } else {
+            session = ChatSession(
+                loadedModel.container,
+                history: Array(request.messages.dropLast()),
+                generateParameters: request.params,
+                processing: request.processing,
+                additionalContext: request.additionalContext,
+                tools: request.tools,
+                toolDispatch: nil
+            )
+            logger.notice("MLX created fresh chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
+        }
+
+        session.generateParameters = request.params
+        session.processing = request.processing
+        session.additionalContext = request.additionalContext
+        session.tools = request.tools
+
+        let toolInvocationState = ToolInvocationState()
+        let outputFilter = request.suppressWrappedXMLToolMarkup ? WrappedXMLToolCallStreamFilter() : nil
+        if let toolDispatch {
+            session.toolDispatch = { @Sendable toolCall in
+                let invocationCount = await toolInvocationState.increment()
+                onToolCall(toolCall)
+                if let outputFilter {
+                    await outputFilter.didDispatchToolCall()
+                }
+                if invocationCount > MLXModelManager.maxToolInvocationsPerResponse {
+                    return MLXModelManager.excessiveToolCallToolResponse(
+                        maximum: MLXModelManager.maxToolInvocationsPerResponse
+                    )
+                }
+                return try await toolDispatch(toolCall)
+            }
+        } else {
+            session.toolDispatch = nil
+        }
+
+        Memory.peakMemory = 0
+        let memoryBefore = Memory.snapshot()
+        let startedAt = Date()
+        var firstTokenAt: Date?
+        var assistantVisibleText = ""
+        var completionInfo: GenerateCompletionInfo?
+
+        let activeTicket = makeActiveInferenceTicket(from: loadedModel)
+        let iterateStream = {
+            for try await generation in session.streamDetails(
+                to: latestUserMessage.content,
+                role: latestUserMessage.role,
+                images: latestUserMessage.images,
+                videos: latestUserMessage.videos
+            ) {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                switch generation {
+                case .chunk(let text):
+                    if firstTokenAt == nil {
+                        firstTokenAt = Date()
+                    }
+                    if let outputFilter {
+                        if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
+                            assistantVisibleText += visibleChunk
+                            onToken(visibleChunk)
+                        }
+                    } else if !text.isEmpty {
+                        assistantVisibleText += text
+                        onToken(text)
+                    }
+                case .toolCall(let toolCall):
+                    onToolCall(toolCall)
+                    if let outputFilter {
+                        await outputFilter.didDispatchToolCall()
+                    }
+                case .info(let info):
+                    completionInfo = info
+                }
+            }
+        }
+
+        do {
+            if let activeTicket {
+                try await activeTicket.withWiredLimit {
+                    try await iterateStream()
+                }
+            } else {
+                try await iterateStream()
+            }
+        } catch {
+            sessions.removeValue(forKey: request.sessionKey)
+            throw error
+        }
+
+        if let outputFilter, let trailingText = await outputFilter.finish(), !trailingText.isEmpty {
+            if firstTokenAt == nil {
+                firstTokenAt = Date()
+            }
+            assistantVisibleText += trailingText
+            onToken(trailingText)
+        }
+
+        let finishedAt = Date()
+        let memoryAfter = Memory.snapshot()
+        let toolInvocationCount = await toolInvocationState.currentCount()
+        let performanceSample = MLXPerformanceSample(
+            conversationID: request.conversationID,
+            modelID: request.model.id,
+            promptTokenCount: completionInfo?.promptTokenCount ?? 0,
+            outputTokenCount: completionInfo?.generationTokenCount ?? max(0, Int(ceil(Double(assistantVisibleText.count) / 4.0))),
+            toolInvocationCount: toolInvocationCount,
+            timeToFirstToken: firstTokenAt.map { $0.timeIntervalSince(startedAt) },
+            totalLatency: finishedAt.timeIntervalSince(startedAt),
+            promptTokensPerSecond: completionInfo?.promptTokensPerSecond,
+            decodeTokensPerSecond: completionInfo?.tokensPerSecond,
+            stopReason: completionInfo?.stopReason,
+            memoryBefore: memoryBefore,
+            memoryAfter: memoryAfter,
+            peakActiveBytes: Memory.peakMemory
+        )
+
+        var visibleHistory = request.messages.map { MLXVisibleMessageSignature(message: $0) }
+        visibleHistory.append(
+            MLXVisibleMessageSignature(
+                message: .assistant(assistantVisibleText)
+            )
+        )
+        sessions[request.sessionKey] = SessionState(
+            key: request.sessionKey,
+            session: session,
+            visibleHistory: visibleHistory,
+            latestPerformance: performanceSample
+        )
+
+        logger.notice(
+            "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public)"
+        )
+
+        self.loadedModel = loadedModel
+        return MLXInferenceResponse(
+            toolInvocationCount: toolInvocationCount,
+            performanceSample: performanceSample
+        )
+    }
+
+    private func makeActiveInferenceTicket(from loadedModel: MLXLoadedModelState) -> MLX.WiredMemoryTicket? {
+        let size = max(0, loadedModel.activeBytesEstimate)
+        guard size > 0 else { return nil }
+        return MLX.WiredMemoryTicket(
+            size: size,
+            policy: loadedModel.wiredMemoryPolicy,
+            kind: .active
+        )
+    }
+}
 
 // MARK: - MLXModelManager
 
@@ -21,8 +368,8 @@ final class MLXModelManager: ObservableObject {
 
     // MARK: - Model Info
 
-    struct MLXModelInfo: Identifiable {
-        enum LoadPolicy: Equatable {
+    struct MLXModelInfo: Identifiable, Sendable {
+        enum LoadPolicy: Equatable, Sendable {
             case standard
             case qwenMultimodal
 
@@ -133,6 +480,7 @@ final class MLXModelManager: ObservableObject {
     @Published private(set) var activeDownloadModelID: String?
     @Published var downloadError: String?
     @Published private(set) var downloadErrorModelID: String?
+    @Published private(set) var latestPerformanceSample: MLXPerformanceSample?
 
     var supportsNativeThinking: Bool { true }
 
@@ -142,6 +490,7 @@ final class MLXModelManager: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private let downloader = ModelDownloader()
     private var downloaderTask: Task<Void, Never>?
+    private var memoryWarningCancellable: AnyCancellable?
     private var compatibilityErrors: [String: String] = [:]
     private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
@@ -150,15 +499,17 @@ final class MLXModelManager: ObservableObject {
     private var prewarmInFlightModelID: String?
     private var memoryMaintenanceTimer: Timer?
     private let deviceSupportProfile: MLXDeviceSupportProfile
+    private let inferenceWorker: MLXInferenceWorker
     private var simulatedDownloadedModelIDs: Set<String> = []
 
-    private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
-    private static let memoryMaintenanceInterval: TimeInterval = 3
-    private static let kvQuantizationBits = 8
-    private static let kvQuantizationGroupSize = 64
-    private static let kvQuantizationWarmupStep = 256
-    private static let toolMaxKVSize = 8192
-    private static let memoryConstrainedMaxKVSize = 4096
+    nonisolated private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
+    nonisolated static let defaultPrefillStepSize = 512
+    nonisolated private static let memoryMaintenanceInterval: TimeInterval = 3
+    nonisolated private static let kvQuantizationBits = 8
+    nonisolated private static let kvQuantizationGroupSize = 64
+    nonisolated private static let kvQuantizationWarmupStep = 256
+    nonisolated private static let toolMaxKVSize = 8192
+    nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
     private static let modelDefinitions: [MLXModelInfo] = [
@@ -360,6 +711,10 @@ final class MLXModelManager: ObservableObject {
 
     init(deviceSupportProfile: MLXDeviceSupportProfile? = nil) {
         self.deviceSupportProfile = deviceSupportProfile ?? MLXDeviceSupportProfile.current
+        self.inferenceWorker = MLXInferenceWorker(
+            subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
+            deviceSupportProfile: self.deviceSupportProfile
+        )
         availableModels = Self.modelDefinitions.map { definition in
             var model = definition
             let status = installationStatus(for: model)
@@ -369,6 +724,187 @@ final class MLXModelManager: ObservableObject {
             }
             return model
         }
+
+        memoryWarningCancellable = NotificationCenter.default.publisher(
+            for: UIApplication.didReceiveMemoryWarningNotification
+        )
+        .sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleMemoryWarning()
+            }
+        }
+    }
+
+    deinit {
+        memoryWarningCancellable?.cancel()
+    }
+
+    func invalidateConversationSession(_ conversationID: UUID, reason: String) {
+        Task {
+            await inferenceWorker.invalidateConversation(conversationID, reason: reason)
+        }
+    }
+
+    nonisolated internal static func shouldPersistSessionAcrossTurns(
+        enableThinking: Bool,
+        hasTools: Bool,
+        hasMedia: Bool
+    ) -> Bool {
+        _ = enableThinking
+        _ = hasTools
+        _ = hasMedia
+        return true
+    }
+
+    nonisolated private static func prefillTuningUserDefaultsKey(
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) -> String {
+        let deviceClass = deviceSupportProfile.isPhone ? "phone" : "other"
+        let bytesPerGiB: UInt64 = 1_073_741_824
+        let memoryTier = Int(deviceSupportProfile.physicalMemoryBytes / bytesPerGiB)
+        return "mlxPrefillStepSize.\(modelID).\(deviceClass).\(memoryTier)"
+    }
+
+    nonisolated private static func persistedPrefillStepSize(
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) -> Int? {
+        let key = prefillTuningUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+        let storedValue = UserDefaults.standard.integer(forKey: key)
+        guard [256, 512, 1024].contains(storedValue) else { return nil }
+        return storedValue
+    }
+
+    nonisolated private static func storePersistedPrefillStepSize(
+        _ prefillStepSize: Int,
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) {
+        let key = prefillTuningUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
+        UserDefaults.standard.set(prefillStepSize, forKey: key)
+    }
+
+    nonisolated private static func recommendedWiredMemoryCapBytes(
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) -> Int? {
+        GPU.maxRecommendedWorkingSetBytes() ?? Int(deviceSupportProfile.physicalMemoryBytes)
+    }
+
+    nonisolated private static func estimateWeightBytes(for container: ModelContainer) async -> Int {
+        await container.perform { context in
+            context.model.parameters().flattened().reduce(0) { partialResult, parameter in
+                partialResult + parameter.1.nbytes
+            }
+        }
+    }
+
+    nonisolated private static func startReservationTicketIfNeeded(
+        weightBytes: Int,
+        policy: MLXLMCommon.WiredSumPolicy
+    ) async -> MLX.WiredMemoryTicket? {
+        guard weightBytes > 0 else { return nil }
+        let ticket = MLX.WiredMemoryTicket(size: weightBytes, policy: policy, kind: .reservation)
+        _ = await ticket.start()
+        return ticket
+    }
+
+    private func schedulePrefillTuningIfNeeded(
+        container: ModelContainer,
+        model: MLXModelInfo,
+        initialPrefillStepSize: Int
+    ) {
+        let persistedPrefill = Self.persistedPrefillStepSize(
+            for: model.id,
+            deviceSupportProfile: deviceSupportProfile
+        )
+        let candidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
+        let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
+            deviceSupportProfile: deviceSupportProfile
+        )
+        let usesMultimodalTuning = model.loadPolicy == .qwenMultimodal
+
+        Task.detached(priority: .utility) { [deviceSupportProfile] in
+            struct CandidateResult {
+                let prefillStepSize: Int
+                let measurement: MLXLMCommon.WiredMemoryMeasurement
+            }
+
+            var measuredCandidates: [CandidateResult] = []
+            for candidate in candidates {
+                let parameters = GenerateParameters(
+                    maxTokens: 1,
+                    prefillStepSize: candidate
+                )
+                do {
+                    let measurement = try await container.perform { context in
+                        if usesMultimodalTuning {
+                            let userInput = UserInput(
+                                chat: [.user("Hello")],
+                                processing: UserInput.Processing()
+                            )
+                            return try await WiredMemoryUtils.tune(
+                                userInput: userInput,
+                                context: context,
+                                parameters: parameters
+                            )
+                        } else {
+                            return try await WiredMemoryUtils.tune(
+                                context: context,
+                                tokenCount: 2_048,
+                                parameters: parameters
+                            )
+                        }
+                    }
+                    measuredCandidates.append(
+                        CandidateResult(prefillStepSize: candidate, measurement: measurement)
+                    )
+                } catch {
+                    let logger = Logger(
+                        subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
+                        category: "MLXModelManager"
+                    )
+                    logger.error(
+                        "MLX prefill tuning candidate failed: model=\(model.id, privacy: .public) prefill=\(candidate, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+
+            guard !measuredCandidates.isEmpty else { return }
+
+            let safeCandidates = measuredCandidates.filter { candidate in
+                guard let wiredMemoryCap else { return true }
+                return candidate.measurement.totalBytes <= Int(Double(wiredMemoryCap) * 0.85)
+            }
+            let selectedCandidate =
+                safeCandidates.max(by: { $0.prefillStepSize < $1.prefillStepSize }) ??
+                measuredCandidates.min(by: { $0.measurement.totalBytes < $1.measurement.totalBytes }) ??
+                measuredCandidates[0]
+
+            Self.storePersistedPrefillStepSize(
+                selectedCandidate.prefillStepSize,
+                for: model.id,
+                deviceSupportProfile: deviceSupportProfile
+            )
+            await self.inferenceWorker.updateLoadedModelTuning(
+                modelID: model.id,
+                prefillStepSize: selectedCandidate.prefillStepSize,
+                activeBytesEstimate: selectedCandidate.measurement.kvBytes + selectedCandidate.measurement.workspaceBytes,
+                measurement: selectedCandidate.measurement
+            )
+            self.logger.notice(
+                "MLX prefill tuning selected: model=\(model.id, privacy: .public) prefill=\(selectedCandidate.prefillStepSize, privacy: .public) active_bytes=\(selectedCandidate.measurement.kvBytes + selectedCandidate.measurement.workspaceBytes, privacy: .public)"
+            )
+        }
+    }
+
+    private func handleMemoryWarning() {
+        logger.notice("MLX received memory warning; clearing caches and invalidating sessions")
+        Task {
+            await inferenceWorker.invalidateAll(reason: "memory_warning")
+        }
+        aggressivelyFreeMemory(reason: "memory.warning")
     }
 
     // MARK: - Loading
@@ -465,10 +1001,18 @@ final class MLXModelManager: ObservableObject {
         pendingModelToLoad = model
         isLoading = true
         loadError = nil
+        let recommendedPrefillStepSize = Self.persistedPrefillStepSize(
+            for: model.id,
+            deviceSupportProfile: deviceSupportProfile
+        ) ?? Self.defaultPrefillStepSize
+        let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
+            deviceSupportProfile: deviceSupportProfile
+        )
 
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
+                await self.inferenceWorker.clearLoadedModel()
                 await MainActor.run {
                     self.prepareMemoryForModelLoadTransition()
                 }
@@ -478,9 +1022,28 @@ final class MLXModelManager: ObservableObject {
                 )
                 let loaded = try await loadModelContainer(directory: modelURL)
                 await self.applyPreferredToolCallFormatIfNeeded(to: loaded, for: model)
+                let weightBytes = await Self.estimateWeightBytes(for: loaded)
+                let wiredMemoryPolicy = MLXLMCommon.WiredSumPolicy(cap: wiredMemoryCap)
+                let reservationTicket = await Self.startReservationTicketIfNeeded(
+                    weightBytes: weightBytes,
+                    policy: wiredMemoryPolicy
+                )
+                await self.inferenceWorker.setLoadedModel(
+                    MLXLoadedModelState(
+                        container: loaded,
+                        model: model,
+                        wiredMemoryPolicy: wiredMemoryPolicy,
+                        reservationTicket: reservationTicket,
+                        weightBytes: weightBytes,
+                        activeBytesEstimate: 0,
+                        prefillStepSize: recommendedPrefillStepSize,
+                        measurement: nil
+                    )
+                )
                 guard !Task.isCancelled else { return }
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
+                    await self.inferenceWorker.clearLoadedModel()
                     await MainActor.run {
                         self.cleanupMemoryAfterLoadInterruption()
                     }
@@ -492,13 +1055,17 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.applySteadyStateMemoryCachePolicy()
-                    self.startMemoryMaintenanceTimer()
                     self.loadTask = nil
                 }
                 print("✅ MLX model loaded: \(model.displayName)")
                 self.logger.notice("MLX container load finished: id=\(model.id, privacy: .public)")
                 await MainActor.run {
                     self.logToolTemplateSupport(for: model)
+                    self.schedulePrefillTuningIfNeeded(
+                        container: loaded,
+                        model: model,
+                        initialPrefillStepSize: recommendedPrefillStepSize
+                    )
                 }
                 if model.loadPolicy.defersAutomaticPrewarm {
                     self.deferredPrewarmModelID = model.id
@@ -711,13 +1278,14 @@ final class MLXModelManager: ObservableObject {
     // MARK: - Generation
 
     func generateTextStream(
+        conversationID: UUID,
         messages: [Chat.Message],
         enableThinking: Bool,
         memoryConstrained: Bool = false,
         tools: [MLXToolSpec] = [],
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)? = nil,
-        onToken: @escaping (String) -> Void,
-        onToolCall: @escaping (MLXToolCall) -> Void = { _ in }
+        onToken: @escaping @Sendable (String) -> Void,
+        onToolCall: @escaping @Sendable (MLXToolCall) -> Void = { _ in }
     ) async throws -> MLXGenerationResult {
         guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
@@ -726,7 +1294,7 @@ final class MLXModelManager: ObservableObject {
             await prewarmModelShaders(for: currentModel, reason: "first-generation")
         }
         logger.notice(
-            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
+            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
         )
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
@@ -736,13 +1304,7 @@ final class MLXModelManager: ObservableObject {
         if suppressWrappedXMLToolMarkup {
             logger.notice("MLX wrapped XML tool-call filter enabled: model=\(currentModel.localDirName, privacy: .public)")
         }
-        // Always free the Metal buffer pool before inference — on a device where the model
-        // alone consumes ~3 GB, every megabyte matters during the activation spike.
         prepareMemoryForGeneration()
-        _ = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
-        defer {
-            cleanupMemoryAfterGeneration()
-        }
 
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
         let configuredContextWindow = UserDefaults.standard.mlxContextWindowTokens(
@@ -755,138 +1317,57 @@ final class MLXModelManager: ObservableObject {
             configuredMaxOutputTokens: configuredMaxOutputTokens,
             configuredContextWindow: configuredContextWindow
         )
-        let maxTokens = generationConfiguration.maxTokens
-        let maxKVSize = generationConfiguration.maxKVSize
-        let kvQuantization = generationConfiguration.kvQuantization
-        if !tools.isEmpty && UserDefaults.standard.mlxEnableKVCacheQuantization {
-            logger.notice(
-                "MLX tool KV cache request: quantization_requested=true strategy=\(generationConfiguration.usesQuantizedToolCacheStrategy ? "quantized_unbounded" : "legacy_capped", privacy: .public) max_kv_size=\(String(describing: maxKVSize), privacy: .public)"
-            )
-        }
-        let params: GenerateParameters
-        if enableThinking && currentModel.id == "qwen3.5-2b-4bit" {
-            // Match the supported subset of Qwen's recommended 2B thinking settings.
-            params = GenerateParameters(
-                maxTokens: maxTokens,
-                maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
-                temperature: 1.0,
-                topP: 0.95
-            )
-        } else if enableThinking {
-            params = GenerateParameters(
-                maxTokens: maxTokens,
-                maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
-                temperature: 0.6,
-                topP: 0.95
-            )
-        } else {
-            params = GenerateParameters(
-                maxTokens: maxTokens,
-                maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
-                temperature: 0.7,
-                topP: 0.8
-            )
-        }
-        if !tools.isEmpty {
-            logger.notice(
-                "MLX tool KV cache active: quantized=\(kvQuantization != nil, privacy: .public) max_kv_size=\(String(describing: maxKVSize), privacy: .public)"
-            )
-        }
+        let prefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
+        let params = Self.makeGenerateParameters(
+            maxTokens: generationConfiguration.maxTokens,
+            maxKVSize: generationConfiguration.maxKVSize,
+            kvQuantization: generationConfiguration.kvQuantization,
+            enableThinking: enableThinking,
+            currentModelID: currentModel.id,
+            prefillStepSize: prefillStepSize
+        )
         let additionalContext: [String: any Sendable]? = ["enable_thinking": enableThinking]
         let processing = UserInput.Processing()
 
-        if tools.isEmpty {
-            logger.notice("MLX generation using plain path (no tools)")
-            let userInput = UserInput(chat: messages, processing: processing, additionalContext: additionalContext)
-            let input = try await container.prepare(input: userInput)
-            logger.notice("MLX plain path prepared input successfully")
-            let stream = try await container.generate(input: input, parameters: params)
-            for await generation in stream {
-                if Task.isCancelled {
-                    throw CancellationError()
-                }
-                if case .chunk(let text) = generation {
-                    onToken(text)
-                }
-            }
-            logger.notice("MLX plain path completed")
-            return MLXGenerationResult(toolInvocationCount: 0)
+        if !tools.isEmpty {
+            try validateToolTemplateSupport(for: currentModel)
         }
 
-        try validateToolTemplateSupport(for: currentModel)
-        guard let lastMessage = messages.last else {
-            throw GenerationError.invalidChatHistory
-        }
-        logger.notice(
-            "MLX tool path enabled: last_role=\(lastMessage.role.rawValue, privacy: .public) last_chars=\(lastMessage.content.count, privacy: .public)"
+        let sessionKey = MLXSessionKey(
+            conversationID: conversationID,
+            modelID: currentModel.id,
+            enableThinking: enableThinking,
+            toolsEnabled: !tools.isEmpty,
+            includesMedia: messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty },
+            instructionFingerprint: messages.first(where: { $0.role == .system })?.content.hashValue ?? 0
+        )
+        let request = MLXInferenceRequest(
+            conversationID: conversationID,
+            sessionKey: sessionKey,
+            model: currentModel,
+            messages: messages,
+            enableThinking: enableThinking,
+            additionalContext: additionalContext,
+            processing: processing,
+            tools: tools,
+            params: params,
+            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup
         )
 
         do {
-            let result = try await runToolGeneration(
-                container: container,
-                messages: messages,
-                processing: processing,
-                additionalContext: additionalContext,
-                tools: tools,
-                params: params,
-                suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+            let response = try await inferenceWorker.generate(
+                request: request,
                 toolDispatch: toolDispatch,
                 onToken: onToken,
                 onToolCall: onToolCall
             )
-            logger.notice("MLX tool path completed: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
-            return result
+            latestPerformanceSample = response.performanceSample
+            cleanupMemoryAfterGeneration()
+            return MLXGenerationResult(toolInvocationCount: response.toolInvocationCount)
         } catch {
-            guard generationConfiguration.usesQuantizedToolCacheStrategy else {
-                logger.error("MLX tool path failed: \(error.localizedDescription, privacy: .public)")
-                cleanupMemoryAfterGenerationError()
-                throw error
-            }
-
-            logger.error(
-                "MLX quantized tool KV cache strategy failed; retrying with legacy capped cache: error=\(error.localizedDescription, privacy: .public)"
-            )
+            logger.error("MLX generation failed: \(error.localizedDescription, privacy: .public)")
             cleanupMemoryAfterGenerationError()
-            let fallbackConfiguration = Self.generationConfiguration(
-                isEnabled: false,
-                hasTools: true,
-                memoryConstrained: memoryConstrained,
-                configuredMaxOutputTokens: configuredMaxOutputTokens,
-                configuredContextWindow: configuredContextWindow
-            )
-            let fallbackParams = Self.makeGenerateParameters(
-                maxTokens: fallbackConfiguration.maxTokens,
-                maxKVSize: fallbackConfiguration.maxKVSize,
-                kvQuantization: fallbackConfiguration.kvQuantization,
-                enableThinking: enableThinking,
-                currentModelID: currentModel.id
-            )
-            logger.notice(
-                "MLX tool KV cache fallback active: quantized=false max_kv_size=\(String(describing: fallbackConfiguration.maxKVSize), privacy: .public)"
-            )
-            let result = try await runToolGeneration(
-                container: container,
-                messages: messages,
-                processing: processing,
-                additionalContext: additionalContext,
-                tools: tools,
-                params: fallbackParams,
-                suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
-                toolDispatch: toolDispatch,
-                onToken: onToken,
-                onToolCall: onToolCall
-            )
-            logger.notice("MLX tool path completed after KV fallback: tool_invocations=\(result.toolInvocationCount, privacy: .public)")
-            return result
+            throw error
         }
     }
 
@@ -973,17 +1454,17 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    internal static let maxToolInvocationsPerResponse = 6
+    nonisolated internal static let maxToolInvocationsPerResponse = 6
 
-    internal static func shouldDisableTools(after toolResult: String) -> Bool {
+    nonisolated internal static func shouldDisableTools(after toolResult: String) -> Bool {
         AppWebSearchToolBridge.isSearchLimitToolResponse(toolResult)
     }
 
-    internal static func excessiveToolCallToolResponse(maximum: Int) -> String {
+    nonisolated internal static func excessiveToolCallToolResponse(maximum: Int) -> String {
         "[tool internal error: limit reached after \(maximum) tool invocations for this response. Do not call tools again. Continue with the available information already available.]"
     }
 
-    internal static func generationConfiguration(
+    nonisolated internal static func generationConfiguration(
         isEnabled: Bool,
         hasTools: Bool,
         memoryConstrained: Bool,
@@ -1003,7 +1484,7 @@ final class MLXModelManager: ObservableObject {
             hasTools: hasTools,
             memoryConstrained: memoryConstrained
         )
-        let maxKVSize = min(baseMaxKVSize ?? configuredContextWindow, configuredContextWindow)
+        let maxKVSize = baseMaxKVSize.map { min($0, configuredContextWindow) }
         return GenerationConfiguration(
             maxTokens: maxTokens,
             maxKVSize: maxKVSize,
@@ -1017,7 +1498,7 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
-    internal static func effectiveMaxKVSize(
+    nonisolated internal static func effectiveMaxKVSize(
         isEnabled: Bool,
         hasTools: Bool,
         memoryConstrained: Bool
@@ -1033,7 +1514,7 @@ final class MLXModelManager: ObservableObject {
         return nil
     }
 
-    internal static func kvQuantizationConfiguration(
+    nonisolated internal static func kvQuantizationConfiguration(
         isEnabled: Bool,
         hasTools: Bool,
         memoryConstrained: Bool,
@@ -1050,12 +1531,13 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
-    private static func makeGenerateParameters(
+    nonisolated private static func makeGenerateParameters(
         maxTokens: Int?,
         maxKVSize: Int?,
         kvQuantization: KVQuantizationConfiguration?,
         enableThinking: Bool,
-        currentModelID: String
+        currentModelID: String,
+        prefillStepSize: Int
     ) -> GenerateParameters {
         if enableThinking && currentModelID == "qwen3.5-2b-4bit" {
             return GenerateParameters(
@@ -1065,7 +1547,8 @@ final class MLXModelManager: ObservableObject {
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
                 quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 1.0,
-                topP: 0.95
+                topP: 0.95,
+                prefillStepSize: prefillStepSize
             )
         } else if enableThinking {
             return GenerateParameters(
@@ -1075,7 +1558,8 @@ final class MLXModelManager: ObservableObject {
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
                 quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 0.6,
-                topP: 0.95
+                topP: 0.95,
+                prefillStepSize: prefillStepSize
             )
         } else {
             return GenerateParameters(
@@ -1085,7 +1569,8 @@ final class MLXModelManager: ObservableObject {
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
                 quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
                 temperature: 0.7,
-                topP: 0.8
+                topP: 0.8,
+                prefillStepSize: prefillStepSize
             )
         }
     }
@@ -1239,7 +1724,7 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private static func assistantToolCallMessage(
+    nonisolated private static func assistantToolCallMessage(
         content: String,
         toolCall: MLXToolCall
     ) -> MLXLMCommon.Message {
@@ -1256,14 +1741,14 @@ final class MLXModelManager: ObservableObject {
         return message
     }
 
-    private static func toolResponseMessage(_ content: String) -> MLXLMCommon.Message {
+    nonisolated private static func toolResponseMessage(_ content: String) -> MLXLMCommon.Message {
         [
             "role": Chat.Message.Role.tool.rawValue,
             "content": content
         ]
     }
 
-    internal static func normalizedToolArguments(
+    nonisolated internal static func normalizedToolArguments(
         _ arguments: [String: any Sendable]
     ) -> [String: any Sendable] {
         arguments.reduce(into: [String: any Sendable]()) { partialResult, entry in
@@ -1271,7 +1756,7 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private static func normalizedToolArgumentValue(_ value: any Sendable) -> any Sendable {
+    nonisolated private static func normalizedToolArgumentValue(_ value: any Sendable) -> any Sendable {
         switch value {
         case let jsonValue as JSONValue:
             return normalized(jsonValue)
@@ -1292,7 +1777,7 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private static func normalized(_ value: JSONValue) -> any Sendable {
+    nonisolated private static func normalized(_ value: JSONValue) -> any Sendable {
         switch value {
         case .null:
             return "null"
@@ -1481,7 +1966,7 @@ final class MLXModelManager: ObservableObject {
         return metadata
     }
 
-    internal static func inferToolCallFormat(
+    nonisolated internal static func inferToolCallFormat(
         packageContents: String,
         modelType: String?
     ) -> ToolCallFormat? {
@@ -1509,7 +1994,7 @@ final class MLXModelManager: ObservableObject {
         return nil
     }
 
-    internal static func usesWrappedXMLToolCallTemplate(packageContents: String) -> Bool {
+    nonisolated internal static func usesWrappedXMLToolCallTemplate(packageContents: String) -> Bool {
         let lowered = packageContents.lowercased()
         return lowered.contains("<tool_call>") &&
             lowered.contains("<function=") &&
@@ -1517,9 +2002,6 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func resetMemoryCaches() {
-        Memory.clearCache()
-        Memory.cacheLimit = 0
-        Memory.clearCache()
         Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
         URLCache.shared.removeAllCachedResponses()
     }
@@ -1533,31 +2015,33 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func cleanupMemoryAfterPrewarm() {
-        resetMemoryCaches()
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func prepareMemoryForGeneration() {
-        aggressivelyFreeMemory(reason: "generation.prepare")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryAfterGeneration() {
-        resetMemoryCaches()
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryAfterGenerationError() {
-        resetMemoryCaches()
+        aggressivelyFreeMemory(reason: "generation.error")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryAfterToolPreflight() {
-        aggressivelyFreeMemory(reason: "tool.preflight.cleanup")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryBeforeToolDispatch() {
-        aggressivelyFreeMemory(reason: "tool.dispatch.prepare")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryAfterLoadInterruption() {
-        resetMemoryCaches()
+        aggressivelyFreeMemory(reason: "load.interrupted")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func prepareMemoryForModelLoadTransition() {
@@ -1565,11 +2049,11 @@ final class MLXModelManager: ObservableObject {
     }
 
     private func cleanupMemoryBeforeToolStreamIteration() {
-        aggressivelyFreeMemory(reason: "tool.iteration.prepare")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func cleanupMemoryAfterToolRoundTrip() {
-        aggressivelyFreeMemory(reason: "tool.roundtrip.cleanup")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func tearDownCurrentModel(reason: String) {
@@ -1581,18 +2065,21 @@ final class MLXModelManager: ObservableObject {
         currentModel = nil
         deferredPrewarmModelID = nil
         prewarmInFlightModelID = nil
+        Task {
+            await inferenceWorker.clearLoadedModel()
+        }
         cleanupMemoryAfterUnload()
     }
 
     private func cleanupMemoryAfterUnload() {
-        resetMemoryCaches()
+        aggressivelyFreeMemory(reason: "model.unload")
+        applySteadyStateMemoryCachePolicy()
     }
 
     private func aggressivelyFreeMemory(reason: String) {
         logger.notice("MLX memory cleanup: reason=\(reason, privacy: .public)")
         Memory.clearCache()
-        Memory.cacheLimit = 0
-        Memory.clearCache()
+        Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
         URLCache.shared.removeAllCachedResponses()
     }
 
@@ -1617,7 +2104,6 @@ final class MLXModelManager: ObservableObject {
             stopMemoryMaintenanceTimer()
             return
         }
-        aggressivelyFreeMemory(reason: "periodic.maintenance")
         applySteadyStateMemoryCachePolicy()
     }
 }

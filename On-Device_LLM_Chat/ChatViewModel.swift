@@ -488,6 +488,7 @@ final class ChatViewModel: ObservableObject {
     private enum StreamBackendRequest {
         case mlx(
             manager: MLXModelManager,
+            conversationID: UUID,
             messages: [Chat.Message],
             enableThinking: Bool,
             tools: [MLXToolSpec],
@@ -727,6 +728,7 @@ final class ChatViewModel: ObservableObject {
                 )
                 backendRequest = .mlx(
                     manager: manager,
+                    conversationID: conversation.id,
                     messages: messages,
                     enableThinking: resetState.target.isReasoningMode,
                     tools: mlxTools,
@@ -800,7 +802,7 @@ final class ChatViewModel: ObservableObject {
         let modelName: String?
 
         switch preparation.backendRequest {
-        case .mlx(let manager, _, _, _, _):
+        case .mlx(let manager, _, _, _, _, _):
             backendLabel = "MLX"
             modelName = manager.currentModel?.displayName
         case .foundation:
@@ -916,7 +918,7 @@ final class ChatViewModel: ObservableObject {
 
     private func makeGenerationStream(from preparation: StreamPreparation) async throws -> AsyncThrowingStream<StreamEvent, Error> {
         switch preparation.backendRequest {
-        case .mlx(let manager, let messages, let enableThinking, let tools, let toolDispatch):
+        case .mlx(let manager, let conversationID, let messages, let enableThinking, let tools, let toolDispatch):
             logger.notice("streamAssistant entering MLX generation path")
             while manager.isLoading && !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
@@ -931,9 +933,12 @@ final class ChatViewModel: ObservableObject {
             }
 
             return TaskBackedAsyncThrowingStream.make { continuation in
-                Task { @MainActor in
+                let logger = self.logger
+                let questionLogPreview = preparation.questionLogPreview
+                return Task.detached(priority: .userInitiated) {
                     do {
                         let generationResult = try await manager.generateTextStream(
+                            conversationID: conversationID,
                             messages: messages,
                             enableThinking: enableThinking,
                             tools: tools,
@@ -941,8 +946,8 @@ final class ChatViewModel: ObservableObject {
                             onToken: { token in continuation.yield(.text(token)) },
                             onToolCall: { toolCall in continuation.yield(.toolCall(toolCall)) }
                         )
-                        self.logger.notice(
-                            "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public)"
+                        logger.notice(
+                            "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview_chars=\(questionLogPreview.count, privacy: .public)"
                         )
                         continuation.finish()
                     } catch is CancellationError {
