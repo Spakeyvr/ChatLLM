@@ -1355,6 +1355,23 @@ final class MLXModelManager: ObservableObject {
         )
 
         do {
+            if !tools.isEmpty {
+                let result = try await runToolGeneration(
+                    container: container,
+                    messages: messages,
+                    processing: processing,
+                    additionalContext: additionalContext,
+                    tools: tools,
+                    params: params,
+                    suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+                    toolDispatch: toolDispatch,
+                    onToken: onToken,
+                    onToolCall: onToolCall
+                )
+                cleanupMemoryAfterGeneration()
+                return result
+            }
+
             let response = try await inferenceWorker.generate(
                 request: request,
                 toolDispatch: toolDispatch,
@@ -1741,10 +1758,14 @@ final class MLXModelManager: ObservableObject {
         return message
     }
 
+    nonisolated internal static func wrappedToolResponseContent(_ content: String) -> String {
+        "<tool_response>\n\(content)\n</tool_response>"
+    }
+
     nonisolated private static func toolResponseMessage(_ content: String) -> MLXLMCommon.Message {
         [
-            "role": Chat.Message.Role.tool.rawValue,
-            "content": content
+            "role": Chat.Message.Role.user.rawValue,
+            "content": Self.wrappedToolResponseContent(content)
         ]
     }
 

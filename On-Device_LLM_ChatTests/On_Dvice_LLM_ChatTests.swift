@@ -170,6 +170,14 @@ struct On_Device_LLM_ChatTests {
         )
     }
 
+    @Test func qwenWrappedToolResponseContentUsesExpectedEnvelope() {
+        let content = MLXModelManager.wrappedToolResponseContent("Search result body")
+
+        #expect(content == "<tool_response>\nSearch result body\n</tool_response>")
+        #expect(content.starts(with: "<tool_response>"))
+        #expect(content.hasSuffix("</tool_response>"))
+    }
+
     @Test func mlxToolLoopHasHardStopResponse() {
         let response = MLXModelManager.excessiveToolCallToolResponse(
             maximum: MLXModelManager.maxToolInvocationsPerResponse
