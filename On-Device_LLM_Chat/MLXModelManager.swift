@@ -51,6 +51,36 @@ nonisolated private struct MLXVisibleMessageSignature: Equatable, Sendable {
     }
 }
 
+nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
+    case persistentSimple
+    case persistentQuantizedSimple
+    case boundedRotating(maxKVSize: Int)
+
+    var maxKVSize: Int? {
+        switch self {
+        case .persistentSimple, .persistentQuantizedSimple:
+            return nil
+        case .boundedRotating(let maxKVSize):
+            return maxKVSize
+        }
+    }
+
+    var usesDynamicKVQuantization: Bool {
+        switch self {
+        case .persistentQuantizedSimple:
+            return true
+        case .persistentSimple, .boundedRotating:
+            return false
+        }
+    }
+}
+
+nonisolated internal struct MLXKVBenchmarkMetadata: Sendable, Equatable {
+    let cachePolicy: MLXCachePolicy
+    let prefillStepSize: Int
+    let quantizedKVStart: Int?
+}
+
 nonisolated internal struct MLXPerformanceSample: Sendable {
     let conversationID: UUID
     let modelID: String
@@ -65,6 +95,7 @@ nonisolated internal struct MLXPerformanceSample: Sendable {
     let memoryBefore: Memory.Snapshot
     let memoryAfter: Memory.Snapshot
     let peakActiveBytes: Int
+    let kvBenchmarkMetadata: MLXKVBenchmarkMetadata
 }
 
 nonisolated private struct MLXSessionKey: Hashable, Sendable {
@@ -84,6 +115,7 @@ nonisolated private struct MLXLoadedModelState: @unchecked Sendable {
     var weightBytes: Int
     var activeBytesEstimate: Int
     var prefillStepSize: Int
+    var quantizedKVStart: Int
     var measurement: MLXLMCommon.WiredMemoryMeasurement?
 }
 
@@ -143,11 +175,13 @@ private actor MLXInferenceWorker {
     func updateLoadedModelTuning(
         modelID: String,
         prefillStepSize: Int,
+        quantizedKVStart: Int,
         activeBytesEstimate: Int,
         measurement: MLXLMCommon.WiredMemoryMeasurement?
     ) {
         guard var loadedModel, loadedModel.model.id == modelID else { return }
         loadedModel.prefillStepSize = prefillStepSize
+        loadedModel.quantizedKVStart = quantizedKVStart
         loadedModel.activeBytesEstimate = max(0, activeBytesEstimate)
         loadedModel.measurement = measurement
         self.loadedModel = loadedModel
@@ -158,6 +192,13 @@ private actor MLXInferenceWorker {
             return MLXModelManager.defaultPrefillStepSize
         }
         return loadedModel.prefillStepSize
+    }
+
+    func quantizedKVStart(for modelID: String) -> Int {
+        guard let loadedModel, loadedModel.model.id == modelID else {
+            return MLXModelManager.defaultQuantizedKVStartStep
+        }
+        return loadedModel.quantizedKVStart
     }
 
     func clearLoadedModel() async {
@@ -220,68 +261,137 @@ private actor MLXInferenceWorker {
         session.generateParameters = request.params
         session.processing = request.processing
         session.additionalContext = request.additionalContext
-        session.tools = request.tools
-
-        let toolInvocationState = ToolInvocationState()
-        let outputFilter = request.suppressWrappedXMLToolMarkup ? WrappedXMLToolCallStreamFilter() : nil
-        if let toolDispatch {
-            session.toolDispatch = { @Sendable toolCall in
-                let invocationCount = await toolInvocationState.increment()
-                onToolCall(toolCall)
-                if let outputFilter {
-                    await outputFilter.didDispatchToolCall()
-                }
-                if invocationCount > MLXModelManager.maxToolInvocationsPerResponse {
-                    return MLXModelManager.excessiveToolCallToolResponse(
-                        maximum: MLXModelManager.maxToolInvocationsPerResponse
-                    )
-                }
-                return try await toolDispatch(toolCall)
-            }
-        } else {
-            session.toolDispatch = nil
-        }
+        session.toolDispatch = nil
 
         Memory.peakMemory = 0
         let memoryBefore = Memory.snapshot()
         let startedAt = Date()
         var firstTokenAt: Date?
         var assistantVisibleText = ""
-        var completionInfo: GenerateCompletionInfo?
+        var stopReason: GenerateStopReason?
+        var cumulativePromptTokenCount = 0
+        var cumulativeOutputTokenCount = 0
+        var cumulativePromptTime: TimeInterval = 0
+        var cumulativeGenerationTime: TimeInterval = 0
+        var activePromptContent = latestUserMessage.content
+        var activePromptRole = latestUserMessage.role
+        var activePromptImages = latestUserMessage.images
+        var activePromptVideos = latestUserMessage.videos
+        var activeTools = request.tools
+        let toolInvocationState = ToolInvocationState()
+        let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
+            cachePolicy: MLXModelManager.cachePolicy(
+                isEnabled: request.params.kvBits != nil,
+                hasTools: !request.tools.isEmpty,
+                memoryConstrained: request.params.maxKVSize != nil
+            ),
+            prefillStepSize: request.params.prefillStepSize,
+            quantizedKVStart: request.params.kvBits == nil ? nil : request.params.quantizedKVStart
+        )
 
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
         let iterateStream = {
-            for try await generation in session.streamDetails(
-                to: latestUserMessage.content,
-                role: latestUserMessage.role,
-                images: latestUserMessage.images,
-                videos: latestUserMessage.videos
-            ) {
-                if Task.isCancelled {
-                    throw CancellationError()
+            while true {
+                session.tools = activeTools
+                let outputFilter = request.suppressWrappedXMLToolMarkup
+                    ? WrappedXMLToolCallStreamFilter()
+                    : nil
+                var completionInfo: GenerateCompletionInfo?
+                var emittedToolCall: MLXToolCall?
+
+                for try await generation in session.streamDetails(
+                    to: activePromptContent,
+                    role: activePromptRole,
+                    images: activePromptImages,
+                    videos: activePromptVideos
+                ) {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    switch generation {
+                    case .chunk(let text):
+                        if firstTokenAt == nil {
+                            firstTokenAt = Date()
+                        }
+                        if let outputFilter {
+                            if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
+                                assistantVisibleText += visibleChunk
+                                onToken(visibleChunk)
+                            }
+                        } else if !text.isEmpty {
+                            assistantVisibleText += text
+                            onToken(text)
+                        }
+                    case .toolCall(let toolCall):
+                        emittedToolCall = toolCall
+                        onToolCall(toolCall)
+                        if let outputFilter {
+                            await outputFilter.didDispatchToolCall()
+                        }
+                        break
+                    case .info(let info):
+                        completionInfo = info
+                    }
+
+                    if emittedToolCall != nil {
+                        break
+                    }
                 }
-                switch generation {
-                case .chunk(let text):
+
+                if let outputFilter,
+                   let trailingText = await outputFilter.finish(),
+                   !trailingText.isEmpty {
                     if firstTokenAt == nil {
                         firstTokenAt = Date()
                     }
-                    if let outputFilter {
-                        if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
-                            assistantVisibleText += visibleChunk
-                            onToken(visibleChunk)
-                        }
-                    } else if !text.isEmpty {
-                        assistantVisibleText += text
-                        onToken(text)
-                    }
-                case .toolCall(let toolCall):
-                    onToolCall(toolCall)
-                    if let outputFilter {
-                        await outputFilter.didDispatchToolCall()
-                    }
-                case .info(let info):
-                    completionInfo = info
+                    assistantVisibleText += trailingText
+                    onToken(trailingText)
                 }
+
+                if let completionInfo {
+                    cumulativePromptTokenCount += completionInfo.promptTokenCount
+                    cumulativeOutputTokenCount += completionInfo.generationTokenCount
+                    cumulativePromptTime += completionInfo.promptTime
+                    cumulativeGenerationTime += completionInfo.generateTime
+                    stopReason = completionInfo.stopReason
+                }
+
+                guard let emittedToolCall else {
+                    break
+                }
+
+                await session.synchronize()
+
+                let invocationCount = await toolInvocationState.increment()
+                let toolResult: String
+                if invocationCount > MLXModelManager.maxToolInvocationsPerResponse {
+                    self.logger.error(
+                        "MLX forcing tool shutdown after excessive tool calls: count=\(invocationCount, privacy: .public) max=\(MLXModelManager.maxToolInvocationsPerResponse, privacy: .public)"
+                    )
+                    toolResult = MLXModelManager.excessiveToolCallToolResponse(
+                        maximum: MLXModelManager.maxToolInvocationsPerResponse
+                    )
+                    activeTools = []
+                } else {
+                    guard let toolDispatch else {
+                        throw MLXModelManager.GenerationError.missingToolDispatch
+                    }
+
+                    self.logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
+                    toolResult = try await toolDispatch(emittedToolCall)
+                    if MLXModelManager.shouldDisableTools(after: toolResult) {
+                        self.logger.notice("MLX disabling tools for remainder of response after search limit was reached")
+                        activeTools = []
+                    } else if AppWebSearchToolBridge.isInternalToolErrorResponse(toolResult) {
+                        self.logger.notice("MLX received recoverable internal tool error; leaving tools enabled so the model can retry with corrected arguments")
+                        activeTools = request.tools
+                    }
+                }
+
+                activePromptContent = toolResult
+                activePromptRole = .tool
+                activePromptImages = []
+                activePromptVideos = []
             }
         }
 
@@ -298,31 +408,31 @@ private actor MLXInferenceWorker {
             throw error
         }
 
-        if let outputFilter, let trailingText = await outputFilter.finish(), !trailingText.isEmpty {
-            if firstTokenAt == nil {
-                firstTokenAt = Date()
-            }
-            assistantVisibleText += trailingText
-            onToken(trailingText)
-        }
-
         let finishedAt = Date()
         let memoryAfter = Memory.snapshot()
         let toolInvocationCount = await toolInvocationState.currentCount()
         let performanceSample = MLXPerformanceSample(
             conversationID: request.conversationID,
             modelID: request.model.id,
-            promptTokenCount: completionInfo?.promptTokenCount ?? 0,
-            outputTokenCount: completionInfo?.generationTokenCount ?? max(0, Int(ceil(Double(assistantVisibleText.count) / 4.0))),
+            promptTokenCount: cumulativePromptTokenCount,
+            outputTokenCount: max(
+                cumulativeOutputTokenCount,
+                max(0, Int(ceil(Double(assistantVisibleText.count) / 4.0)))
+            ),
             toolInvocationCount: toolInvocationCount,
             timeToFirstToken: firstTokenAt.map { $0.timeIntervalSince(startedAt) },
             totalLatency: finishedAt.timeIntervalSince(startedAt),
-            promptTokensPerSecond: completionInfo?.promptTokensPerSecond,
-            decodeTokensPerSecond: completionInfo?.tokensPerSecond,
-            stopReason: completionInfo?.stopReason,
+            promptTokensPerSecond: cumulativePromptTime > 0
+                ? Double(cumulativePromptTokenCount) / cumulativePromptTime
+                : nil,
+            decodeTokensPerSecond: cumulativeGenerationTime > 0
+                ? Double(cumulativeOutputTokenCount) / cumulativeGenerationTime
+                : nil,
+            stopReason: stopReason,
             memoryBefore: memoryBefore,
             memoryAfter: memoryAfter,
-            peakActiveBytes: Memory.peakMemory
+            peakActiveBytes: Memory.peakMemory,
+            kvBenchmarkMetadata: kvBenchmarkMetadata
         )
 
         var visibleHistory = request.messages.map { MLXVisibleMessageSignature(message: $0) }
@@ -491,12 +601,18 @@ final class MLXModelManager: ObservableObject {
     private let downloader = ModelDownloader()
     private var downloaderTask: Task<Void, Never>?
     private var memoryWarningCancellable: AnyCancellable?
+    private var appWillResignActiveCancellable: AnyCancellable?
+    private var appDidEnterBackgroundCancellable: AnyCancellable?
     private var compatibilityErrors: [String: String] = [:]
     private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
+    private var promptTokenCountCache: [PromptTokenCountCacheKey: Int] = [:]
     private var activeLoadID: UUID?
     private var deferredPrewarmModelID: String?
+    private var deferredTuningModelID: String?
     private var prewarmInFlightModelID: String?
+    private var tuningTask: Task<Void, Never>?
+    private var hasSeenMemoryWarningSinceCurrentLoad = false
     private var memoryMaintenanceTimer: Timer?
     private let deviceSupportProfile: MLXDeviceSupportProfile
     private let inferenceWorker: MLXInferenceWorker
@@ -504,11 +620,11 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
     nonisolated static let defaultPrefillStepSize = 512
+    nonisolated static let defaultQuantizedKVStartStep = 256
     nonisolated private static let memoryMaintenanceInterval: TimeInterval = 3
+    nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
     nonisolated private static let kvQuantizationBits = 8
     nonisolated private static let kvQuantizationGroupSize = 64
-    nonisolated private static let kvQuantizationWarmupStep = 256
-    nonisolated private static let toolMaxKVSize = 8192
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
@@ -563,6 +679,11 @@ final class MLXModelManager: ObservableObject {
         let modelType: String?
     }
 
+    private struct PromptTokenCountCacheKey: Hashable {
+        let modelID: String
+        let fingerprint: Int
+    }
+
     struct MLXGenerationResult: Sendable {
         let toolInvocationCount: Int
     }
@@ -575,9 +696,16 @@ final class MLXModelManager: ObservableObject {
 
     struct GenerationConfiguration: Equatable, Sendable {
         let maxTokens: Int?
-        let maxKVSize: Int?
+        let cachePolicy: MLXCachePolicy
         let kvQuantization: KVQuantizationConfiguration?
-        let usesQuantizedToolCacheStrategy: Bool
+
+        var maxKVSize: Int? {
+            cachePolicy.maxKVSize
+        }
+
+        var usesQuantizedToolCacheStrategy: Bool {
+            cachePolicy == .persistentQuantizedSimple
+        }
     }
 
     private enum ToolTemplateSupport: Equatable {
@@ -733,16 +861,63 @@ final class MLXModelManager: ObservableObject {
                 self?.handleMemoryWarning()
             }
         }
+
+        appWillResignActiveCancellable = NotificationCenter.default.publisher(
+            for: UIApplication.willResignActiveNotification
+        )
+        .sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleApplicationInactivity(reason: "application.will_resign_active")
+            }
+        }
+
+        appDidEnterBackgroundCancellable = NotificationCenter.default.publisher(
+            for: UIApplication.didEnterBackgroundNotification
+        )
+        .sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleApplicationInactivity(reason: "application.did_enter_background")
+            }
+        }
     }
 
     deinit {
         memoryWarningCancellable?.cancel()
+        appWillResignActiveCancellable?.cancel()
+        appDidEnterBackgroundCancellable?.cancel()
     }
 
     func invalidateConversationSession(_ conversationID: UUID, reason: String) {
         Task {
             await inferenceWorker.invalidateConversation(conversationID, reason: reason)
         }
+    }
+
+    nonisolated internal static func promptTokenCountFingerprint(
+        role: Chat.Message.Role,
+        content: String
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(role.rawValue)
+        hasher.combine(content)
+        return hasher.finalize()
+    }
+
+    func tokenCountForLoadedModelText(
+        role: Chat.Message.Role,
+        content: String
+    ) async -> Int? {
+        guard let currentModel, let container else { return nil }
+        let cacheKey = PromptTokenCountCacheKey(
+            modelID: currentModel.id,
+            fingerprint: Self.promptTokenCountFingerprint(role: role, content: content)
+        )
+        if let cachedCount = promptTokenCountCache[cacheKey] {
+            return cachedCount
+        }
+        let tokenCount = await container.encode(content).count
+        promptTokenCountCache[cacheKey] = tokenCount
+        return tokenCount
     }
 
     nonisolated internal static func shouldPersistSessionAcrossTurns(
@@ -810,56 +985,254 @@ final class MLXModelManager: ObservableObject {
         return ticket
     }
 
-    private func schedulePrefillTuningIfNeeded(
+    nonisolated internal struct TuningBenchmarkResult: Sendable {
+        let candidate: Int
+        let promptTokensPerSecond: Double
+        let decodeTokensPerSecond: Double
+        let totalLatency: TimeInterval
+        let totalBytes: Int
+        let measurement: MLXLMCommon.WiredMemoryMeasurement
+    }
+
+    nonisolated private static func quantizedKVStartUserDefaultsKey(
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) -> String {
+        let deviceClass = deviceSupportProfile.isPhone ? "phone" : "other"
+        let bytesPerGiB: UInt64 = 1_073_741_824
+        let memoryTier = Int(deviceSupportProfile.physicalMemoryBytes / bytesPerGiB)
+        return "mlxQuantizedKVStart.\(modelID).\(deviceClass).\(memoryTier)"
+    }
+
+    nonisolated private static func persistedQuantizedKVStart(
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) -> Int? {
+        let key = quantizedKVStartUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+        let storedValue = UserDefaults.standard.integer(forKey: key)
+        guard [128, 256, 512].contains(storedValue) else { return nil }
+        return storedValue
+    }
+
+    nonisolated private static func storePersistedQuantizedKVStart(
+        _ quantizedKVStart: Int,
+        for modelID: String,
+        deviceSupportProfile: MLXDeviceSupportProfile
+    ) {
+        let key = quantizedKVStartUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
+        UserDefaults.standard.set(quantizedKVStart, forKey: key)
+    }
+
+    nonisolated internal static func selectFastestSafeCandidate(
+        _ candidates: [TuningBenchmarkResult],
+        wiredMemoryCap: Int?,
+        preferLargerCandidateOnTie: Bool
+    ) -> TuningBenchmarkResult {
+        let safeCandidates = candidates.filter { candidate in
+            guard let wiredMemoryCap else { return true }
+            return candidate.totalBytes <= Int(Double(wiredMemoryCap) * 0.85)
+        }
+        let performanceCandidates = safeCandidates.isEmpty ? candidates : safeCandidates
+        let bestDecodeSpeed = performanceCandidates.map(\.decodeTokensPerSecond).max() ?? 0
+        let decodeFloor = bestDecodeSpeed > 0 ? bestDecodeSpeed * 0.95 : 0
+        let decodeSafeCandidates = performanceCandidates.filter { candidate in
+            bestDecodeSpeed == 0 || candidate.decodeTokensPerSecond >= decodeFloor
+        }
+        let rankedCandidates = decodeSafeCandidates.isEmpty ? performanceCandidates : decodeSafeCandidates
+
+        return rankedCandidates.max { lhs, rhs in
+            if lhs.promptTokensPerSecond != rhs.promptTokensPerSecond {
+                return lhs.promptTokensPerSecond < rhs.promptTokensPerSecond
+            }
+            if lhs.totalLatency != rhs.totalLatency {
+                return lhs.totalLatency > rhs.totalLatency
+            }
+            if lhs.decodeTokensPerSecond != rhs.decodeTokensPerSecond {
+                return lhs.decodeTokensPerSecond < rhs.decodeTokensPerSecond
+            }
+            return preferLargerCandidateOnTie
+                ? lhs.candidate < rhs.candidate
+                : lhs.candidate > rhs.candidate
+        } ?? candidates[0]
+    }
+
+    private func makeBenchmarkUserInput(
         container: ModelContainer,
+        targetTokenCount: Int = 2_048
+    ) async -> UserInput {
+        var prompt = " hello"
+        var tokenCount = await container.encode(prompt).count
+        while tokenCount < targetTokenCount {
+            prompt += prompt
+            tokenCount = await container.encode(prompt).count
+        }
+        return UserInput(
+            chat: [.user(prompt)],
+            processing: UserInput.Processing()
+        )
+    }
+
+    private func benchmarkGeneration(
+        container: ModelContainer,
+        userInput: UserInput,
+        parameters: GenerateParameters
+    ) async throws -> (promptTokensPerSecond: Double, decodeTokensPerSecond: Double, totalLatency: TimeInterval) {
+        try Task.checkCancellation()
+        let prepared = try await container.prepare(input: userInput)
+        let startedAt = Date()
+        let stream = try await container.generate(input: prepared, parameters: parameters)
+        var completionInfo: GenerateCompletionInfo?
+        for await generation in stream {
+            try Task.checkCancellation()
+            if case .info(let info) = generation {
+                completionInfo = info
+            }
+        }
+        let totalLatency = Date().timeIntervalSince(startedAt)
+        guard let completionInfo else {
+            throw GenerationError.invalidChatHistory
+        }
+        return (
+            promptTokensPerSecond: completionInfo.promptTokensPerSecond,
+            decodeTokensPerSecond: completionInfo.tokensPerSecond,
+            totalLatency: totalLatency
+        )
+    }
+
+    private func measureTuningCandidate(
+        container: ModelContainer,
+        userInput: UserInput,
+        parameters: GenerateParameters,
+        candidate: Int
+    ) async throws -> TuningBenchmarkResult {
+        let performanceResult = try await benchmarkGeneration(
+            container: container,
+            userInput: userInput,
+            parameters: parameters
+        )
+        try Task.checkCancellation()
+        aggressivelyFreeMemory(reason: "tuning.candidate.between")
+        let memoryMeasurement: MLXLMCommon.WiredMemoryMeasurement = try await container.perform { context in
+            try await WiredMemoryUtils.tune(
+                userInput: userInput,
+                context: context,
+                parameters: parameters
+            )
+        }
+
+        return TuningBenchmarkResult(
+            candidate: candidate,
+            promptTokensPerSecond: performanceResult.promptTokensPerSecond,
+            decodeTokensPerSecond: performanceResult.decodeTokensPerSecond,
+            totalLatency: performanceResult.totalLatency,
+            totalBytes: memoryMeasurement.totalBytes,
+            measurement: memoryMeasurement
+        )
+    }
+
+    private func schedulePrefillTuningIfNeeded(
         model: MLXModelInfo,
         initialPrefillStepSize: Int
     ) {
+        guard tuningNeedsRetry(for: model) else {
+            deferredTuningModelID = nil
+            return
+        }
+
+        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
+        deferredTuningModelID = model.id
+        logger.notice(
+            "MLX tuning deferred until after first successful generation: id=\(model.id, privacy: .public) prefill=\(initialPrefillStepSize, privacy: .public) kv_quantization=\(shouldTuneQuantizedKV, privacy: .public)"
+        )
+    }
+
+    private func startDeferredTuningIfNeeded(
+        container: ModelContainer,
+        model: MLXModelInfo
+    ) async {
+        guard deferredTuningModelID == model.id else { return }
+        guard currentModel?.id == model.id else { return }
+        guard isApplicationActiveForGPUWork else {
+            logger.notice(
+                "MLX keeping deferred tuning paused until app is active: id=\(model.id, privacy: .public)"
+            )
+            return
+        }
+        guard !hasSeenMemoryWarningSinceCurrentLoad else {
+            logger.notice(
+                "MLX skipping deferred tuning after load-time memory pressure: id=\(model.id, privacy: .public)"
+            )
+            deferredTuningModelID = nil
+            return
+        }
+        guard tuningTask == nil else { return }
+
+        deferredTuningModelID = nil
+
+        let initialPrefillStepSize = await inferenceWorker.prefillStepSize(for: model.id)
         let persistedPrefill = Self.persistedPrefillStepSize(
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let candidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
+        let persistedQuantizedKVStart = Self.persistedQuantizedKVStart(
+            for: model.id,
+            deviceSupportProfile: deviceSupportProfile
+        )
+        let prefillCandidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
+        let quantizedKVStartCandidates = persistedQuantizedKVStart.map { [$0] } ?? [128, 256, 512]
         let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
             deviceSupportProfile: deviceSupportProfile
         )
-        let usesMultimodalTuning = model.loadPolicy == .qwenMultimodal
+        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
 
-        Task.detached(priority: .utility) { [deviceSupportProfile] in
-            struct CandidateResult {
-                let prefillStepSize: Int
-                let measurement: MLXLMCommon.WiredMemoryMeasurement
+        tuningTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.tuningTask = nil
+                }
             }
 
-            var measuredCandidates: [CandidateResult] = []
-            for candidate in candidates {
+            try? await Task.sleep(nanoseconds: Self.tuningStartupDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+
+            let canUseGPU = await MainActor.run { [weak self] in
+                self?.isApplicationActiveForGPUWork == true
+            }
+            guard canUseGPU else {
+                await MainActor.run {
+                    if self.tuningNeedsRetry(for: model) {
+                        self.deferredTuningModelID = model.id
+                    }
+                    self.logger.notice(
+                        "MLX deferred tuning skipped after app left foreground: id=\(model.id, privacy: .public)"
+                    )
+                }
+                return
+            }
+
+            await MainActor.run {
+                self.aggressivelyFreeMemory(reason: "tuning.start")
+            }
+
+            let benchmarkInput = await self.makeBenchmarkUserInput(container: container)
+            var prefillResults: [TuningBenchmarkResult] = []
+
+            for candidate in prefillCandidates {
+                guard !Task.isCancelled else { return }
                 let parameters = GenerateParameters(
-                    maxTokens: 1,
+                    maxTokens: 16,
                     prefillStepSize: candidate
                 )
                 do {
-                    let measurement = try await container.perform { context in
-                        if usesMultimodalTuning {
-                            let userInput = UserInput(
-                                chat: [.user("Hello")],
-                                processing: UserInput.Processing()
-                            )
-                            return try await WiredMemoryUtils.tune(
-                                userInput: userInput,
-                                context: context,
-                                parameters: parameters
-                            )
-                        } else {
-                            return try await WiredMemoryUtils.tune(
-                                context: context,
-                                tokenCount: 2_048,
-                                parameters: parameters
-                            )
-                        }
-                    }
-                    measuredCandidates.append(
-                        CandidateResult(prefillStepSize: candidate, measurement: measurement)
+                    let result = try await self.measureTuningCandidate(
+                        container: container,
+                        userInput: benchmarkInput,
+                        parameters: parameters,
+                        candidate: candidate
                     )
+                    prefillResults.append(result)
                 } catch {
                     let logger = Logger(
                         subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
@@ -868,43 +1241,138 @@ final class MLXModelManager: ObservableObject {
                     logger.error(
                         "MLX prefill tuning candidate failed: model=\(model.id, privacy: .public) prefill=\(candidate, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
+                    await MainActor.run {
+                        self.aggressivelyFreeMemory(reason: "tuning.prefill.failure")
+                    }
                 }
             }
 
-            guard !measuredCandidates.isEmpty else { return }
+            guard !Task.isCancelled else { return }
+            guard !prefillResults.isEmpty else { return }
 
-            let safeCandidates = measuredCandidates.filter { candidate in
-                guard let wiredMemoryCap else { return true }
-                return candidate.measurement.totalBytes <= Int(Double(wiredMemoryCap) * 0.85)
+            let selectedPrefill = Self.selectFastestSafeCandidate(
+                prefillResults,
+                wiredMemoryCap: wiredMemoryCap,
+                preferLargerCandidateOnTie: true
+            )
+
+            var selectedQuantizedKVStart = persistedQuantizedKVStart ?? Self.defaultQuantizedKVStartStep
+            var selectedMeasurement = selectedPrefill.measurement
+
+            if shouldTuneQuantizedKV {
+                var quantizedResults: [TuningBenchmarkResult] = []
+                for candidate in quantizedKVStartCandidates {
+                    guard !Task.isCancelled else { return }
+                    let parameters = GenerateParameters(
+                        maxTokens: 16,
+                        kvBits: Self.kvQuantizationBits,
+                        kvGroupSize: Self.kvQuantizationGroupSize,
+                        quantizedKVStart: candidate,
+                        prefillStepSize: selectedPrefill.candidate
+                    )
+                    do {
+                        let result = try await self.measureTuningCandidate(
+                            container: container,
+                            userInput: benchmarkInput,
+                            parameters: parameters,
+                            candidate: candidate
+                        )
+                        quantizedResults.append(result)
+                    } catch {
+                        let logger = Logger(
+                            subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
+                            category: "MLXModelManager"
+                        )
+                        logger.error(
+                            "MLX quantized KV start candidate failed: model=\(model.id, privacy: .public) start=\(candidate, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                        await MainActor.run {
+                            self.aggressivelyFreeMemory(reason: "tuning.quantized.failure")
+                        }
+                    }
+                }
+
+                if let selectedQuantizedResult = quantizedResults.isEmpty
+                    ? nil
+                    : Self.selectFastestSafeCandidate(
+                        quantizedResults,
+                        wiredMemoryCap: wiredMemoryCap,
+                        preferLargerCandidateOnTie: false
+                    ) {
+                    selectedQuantizedKVStart = selectedQuantizedResult.candidate
+                    selectedMeasurement = selectedQuantizedResult.measurement
+                }
             }
-            let selectedCandidate =
-                safeCandidates.max(by: { $0.prefillStepSize < $1.prefillStepSize }) ??
-                measuredCandidates.min(by: { $0.measurement.totalBytes < $1.measurement.totalBytes }) ??
-                measuredCandidates[0]
 
             Self.storePersistedPrefillStepSize(
-                selectedCandidate.prefillStepSize,
+                selectedPrefill.candidate,
                 for: model.id,
-                deviceSupportProfile: deviceSupportProfile
+                deviceSupportProfile: self.deviceSupportProfile
+            )
+            Self.storePersistedQuantizedKVStart(
+                selectedQuantizedKVStart,
+                for: model.id,
+                deviceSupportProfile: self.deviceSupportProfile
             )
             await self.inferenceWorker.updateLoadedModelTuning(
                 modelID: model.id,
-                prefillStepSize: selectedCandidate.prefillStepSize,
-                activeBytesEstimate: selectedCandidate.measurement.kvBytes + selectedCandidate.measurement.workspaceBytes,
-                measurement: selectedCandidate.measurement
+                prefillStepSize: selectedPrefill.candidate,
+                quantizedKVStart: selectedQuantizedKVStart,
+                activeBytesEstimate: selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes,
+                measurement: selectedMeasurement
             )
-            self.logger.notice(
-                "MLX prefill tuning selected: model=\(model.id, privacy: .public) prefill=\(selectedCandidate.prefillStepSize, privacy: .public) active_bytes=\(selectedCandidate.measurement.kvBytes + selectedCandidate.measurement.workspaceBytes, privacy: .public)"
-            )
+            await MainActor.run {
+                self.logger.notice(
+                    "MLX tuning selected: model=\(model.id, privacy: .public) prefill=\(selectedPrefill.candidate, privacy: .public) quantized_kv_start=\(selectedQuantizedKVStart, privacy: .public) active_bytes=\(selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes, privacy: .public)"
+                )
+                self.aggressivelyFreeMemory(reason: "tuning.complete")
+            }
         }
     }
 
     private func handleMemoryWarning() {
         logger.notice("MLX received memory warning; clearing caches and invalidating sessions")
+        hasSeenMemoryWarningSinceCurrentLoad = true
+        deferredTuningModelID = nil
+        tuningTask?.cancel()
+        tuningTask = nil
         Task {
             await inferenceWorker.invalidateAll(reason: "memory_warning")
         }
         aggressivelyFreeMemory(reason: "memory.warning")
+    }
+
+    private var isApplicationActiveForGPUWork: Bool {
+        UIApplication.shared.applicationState == .active
+    }
+
+    private func tuningNeedsRetry(for model: MLXModelInfo) -> Bool {
+        let persistedPrefill = Self.persistedPrefillStepSize(
+            for: model.id,
+            deviceSupportProfile: deviceSupportProfile
+        )
+        let persistedQuantizedKVStart = Self.persistedQuantizedKVStart(
+            for: model.id,
+            deviceSupportProfile: deviceSupportProfile
+        )
+        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
+        let needsPrefillTuning = persistedPrefill == nil
+        let needsQuantizedTuning = shouldTuneQuantizedKV && persistedQuantizedKVStart == nil
+        return needsPrefillTuning || needsQuantizedTuning
+    }
+
+    private func handleApplicationInactivity(reason: String) {
+        guard tuningTask != nil || deferredTuningModelID != nil else { return }
+
+        if let model = currentModel, tuningNeedsRetry(for: model), !hasSeenMemoryWarningSinceCurrentLoad {
+            deferredTuningModelID = model.id
+        } else {
+            deferredTuningModelID = nil
+        }
+
+        tuningTask?.cancel()
+        tuningTask = nil
+        logger.notice("MLX paused deferred tuning: reason=\(reason, privacy: .public)")
     }
 
     // MARK: - Loading
@@ -932,6 +1400,7 @@ final class MLXModelManager: ObservableObject {
         }
 
         let loadID = UUID()
+        hasSeenMemoryWarningSinceCurrentLoad = false
         logger.notice("MLX load requested: id=\(model.id, privacy: .public) source=\(source, privacy: .public)")
 
         if let architecture = packageArchitecture(for: model) {
@@ -1037,6 +1506,10 @@ final class MLXModelManager: ObservableObject {
                         weightBytes: weightBytes,
                         activeBytesEstimate: 0,
                         prefillStepSize: recommendedPrefillStepSize,
+                        quantizedKVStart: Self.persistedQuantizedKVStart(
+                            for: model.id,
+                            deviceSupportProfile: deviceSupportProfile
+                        ) ?? Self.defaultQuantizedKVStartStep,
                         measurement: nil
                     )
                 )
@@ -1062,7 +1535,6 @@ final class MLXModelManager: ObservableObject {
                 await MainActor.run {
                     self.logToolTemplateSupport(for: model)
                     self.schedulePrefillTuningIfNeeded(
-                        container: loaded,
                         model: model,
                         initialPrefillStepSize: recommendedPrefillStepSize
                     )
@@ -1318,10 +1790,18 @@ final class MLXModelManager: ObservableObject {
             configuredContextWindow: configuredContextWindow
         )
         let prefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
+        let quantizedKVStart = await inferenceWorker.quantizedKVStart(for: currentModel.id)
+        let tunedKVQuantization = generationConfiguration.kvQuantization.map { kvQuantization in
+            KVQuantizationConfiguration(
+                bits: kvQuantization.bits,
+                groupSize: kvQuantization.groupSize,
+                startStep: quantizedKVStart
+            )
+        }
         let params = Self.makeGenerateParameters(
             maxTokens: generationConfiguration.maxTokens,
             maxKVSize: generationConfiguration.maxKVSize,
-            kvQuantization: generationConfiguration.kvQuantization,
+            kvQuantization: tunedKVQuantization,
             enableThinking: enableThinking,
             currentModelID: currentModel.id,
             prefillStepSize: prefillStepSize
@@ -1355,23 +1835,6 @@ final class MLXModelManager: ObservableObject {
         )
 
         do {
-            if !tools.isEmpty {
-                let result = try await runToolGeneration(
-                    container: container,
-                    messages: messages,
-                    processing: processing,
-                    additionalContext: additionalContext,
-                    tools: tools,
-                    params: params,
-                    suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
-                    toolDispatch: toolDispatch,
-                    onToken: onToken,
-                    onToolCall: onToolCall
-                )
-                cleanupMemoryAfterGeneration()
-                return result
-            }
-
             let response = try await inferenceWorker.generate(
                 request: request,
                 toolDispatch: toolDispatch,
@@ -1380,6 +1843,9 @@ final class MLXModelManager: ObservableObject {
             )
             latestPerformanceSample = response.performanceSample
             cleanupMemoryAfterGeneration()
+            if !memoryConstrained {
+                await startDeferredTuningIfNeeded(container: container, model: currentModel)
+            }
             return MLXGenerationResult(toolInvocationCount: response.toolInvocationCount)
         } catch {
             logger.error("MLX generation failed: \(error.localizedDescription, privacy: .public)")
@@ -1488,7 +1954,6 @@ final class MLXModelManager: ObservableObject {
         configuredMaxOutputTokens: Int?,
         configuredContextWindow: Int
     ) -> GenerationConfiguration {
-        let usesQuantizedToolCacheStrategy = isEnabled && hasTools && !memoryConstrained
         let maxTokens: Int? = if hasTools {
             4096
         } else if memoryConstrained {
@@ -1496,23 +1961,34 @@ final class MLXModelManager: ObservableObject {
         } else {
             configuredMaxOutputTokens
         }
-        let baseMaxKVSize = effectiveMaxKVSize(
+        let cachePolicy = cachePolicy(
             isEnabled: isEnabled,
             hasTools: hasTools,
             memoryConstrained: memoryConstrained
         )
-        let maxKVSize = baseMaxKVSize.map { min($0, configuredContextWindow) }
         return GenerationConfiguration(
             maxTokens: maxTokens,
-            maxKVSize: maxKVSize,
-            kvQuantization: kvQuantizationConfiguration(
-                isEnabled: isEnabled,
-                hasTools: hasTools,
-                memoryConstrained: memoryConstrained,
-                maxKVSize: maxKVSize
+            cachePolicy: clampedCachePolicy(
+                cachePolicy,
+                configuredContextWindow: configuredContextWindow
             ),
-            usesQuantizedToolCacheStrategy: usesQuantizedToolCacheStrategy
+            kvQuantization: kvQuantizationConfiguration(
+                cachePolicy: cachePolicy
+            )
         )
+    }
+
+    nonisolated internal static func cachePolicy(
+        isEnabled: Bool,
+        hasTools: Bool,
+        memoryConstrained: Bool
+    ) -> MLXCachePolicy {
+        _ = hasTools
+        if memoryConstrained {
+            return .boundedRotating(maxKVSize: memoryConstrainedMaxKVSize)
+        }
+
+        return isEnabled ? .persistentQuantizedSimple : .persistentSimple
     }
 
     nonisolated internal static func effectiveMaxKVSize(
@@ -1520,31 +1996,36 @@ final class MLXModelManager: ObservableObject {
         hasTools: Bool,
         memoryConstrained: Bool
     ) -> Int? {
-        if hasTools {
-            return isEnabled && !memoryConstrained ? nil : toolMaxKVSize
-        }
+        cachePolicy(
+            isEnabled: isEnabled,
+            hasTools: hasTools,
+            memoryConstrained: memoryConstrained
+        ).maxKVSize
+    }
 
-        if memoryConstrained {
-            return memoryConstrainedMaxKVSize
+    nonisolated private static func clampedCachePolicy(
+        _ cachePolicy: MLXCachePolicy,
+        configuredContextWindow: Int
+    ) -> MLXCachePolicy {
+        switch cachePolicy {
+        case .boundedRotating(let maxKVSize):
+            return .boundedRotating(maxKVSize: min(maxKVSize, configuredContextWindow))
+        case .persistentSimple, .persistentQuantizedSimple:
+            return cachePolicy
         }
-
-        return nil
     }
 
     nonisolated internal static func kvQuantizationConfiguration(
-        isEnabled: Bool,
-        hasTools: Bool,
-        memoryConstrained: Bool,
-        maxKVSize: Int?
+        cachePolicy: MLXCachePolicy
     ) -> KVQuantizationConfiguration? {
-        guard isEnabled, !memoryConstrained, maxKVSize == nil else {
+        guard cachePolicy.usesDynamicKVQuantization else {
             return nil
         }
 
         return KVQuantizationConfiguration(
             bits: kvQuantizationBits,
             groupSize: kvQuantizationGroupSize,
-            startStep: kvQuantizationWarmupStep
+            startStep: defaultQuantizedKVStartStep
         )
     }
 
@@ -1562,7 +2043,7 @@ final class MLXModelManager: ObservableObject {
                 maxKVSize: maxKVSize,
                 kvBits: kvQuantization?.bits,
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 temperature: 1.0,
                 topP: 0.95,
                 prefillStepSize: prefillStepSize
@@ -1573,7 +2054,7 @@ final class MLXModelManager: ObservableObject {
                 maxKVSize: maxKVSize,
                 kvBits: kvQuantization?.bits,
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 temperature: 0.6,
                 topP: 0.95,
                 prefillStepSize: prefillStepSize
@@ -1584,7 +2065,7 @@ final class MLXModelManager: ObservableObject {
                 maxKVSize: maxKVSize,
                 kvBits: kvQuantization?.bits,
                 kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.kvQuantizationWarmupStep,
+                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 temperature: 0.7,
                 topP: 0.8,
                 prefillStepSize: prefillStepSize
@@ -1592,181 +2073,8 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private func runToolGeneration(
-        container: ModelContainer,
-        messages: [Chat.Message],
-        processing: UserInput.Processing,
-        additionalContext: [String: any Sendable]?,
-        tools: [MLXToolSpec],
-        params: GenerateParameters,
-        suppressWrappedXMLToolMarkup: Bool,
-        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
-        onToken: @escaping (String) -> Void,
-        onToolCall: @escaping (MLXToolCall) -> Void
-    ) async throws -> MLXGenerationResult {
-        do {
-            let preflightInput = UserInput(
-                chat: messages,
-                processing: processing,
-                tools: tools,
-                additionalContext: additionalContext
-            )
-            let prepared = try await container.prepare(input: preflightInput)
-            logger.notice(
-                "MLX tool preflight prepare succeeded: token_count=\(prepared.text.tokens.size, privacy: .public) has_image=\(prepared.image != nil, privacy: .public) has_video=\(prepared.video != nil, privacy: .public)"
-            )
-            cleanupMemoryAfterToolPreflight()
-        } catch {
-            logger.error("MLX tool preflight prepare failed: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
-
-        return try await generateToolTextStream(
-            container: container,
-            messages: messages,
-            processing: processing,
-            additionalContext: additionalContext,
-            tools: tools,
-            params: params,
-            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
-            toolDispatch: toolDispatch,
-            onToken: onToken,
-            onToolCall: onToolCall
-        )
-    }
-
-    private func generateToolTextStream(
-        container: ModelContainer,
-        messages: [Chat.Message],
-        processing: UserInput.Processing,
-        additionalContext: [String: any Sendable]?,
-        tools: [MLXToolSpec],
-        params: GenerateParameters,
-        suppressWrappedXMLToolMarkup: Bool,
-        toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
-        onToken: @escaping (String) -> Void,
-        onToolCall: @escaping (MLXToolCall) -> Void
-    ) async throws -> MLXGenerationResult {
-        var rawMessages = Qwen3VLMessageGenerator().generate(messages: messages)
-        let conversationImages = messages.flatMap(\.images)
-        let conversationVideos = messages.flatMap(\.videos)
-        var toolInvocationCount = 0
-        var activeTools = tools
-
-        while true {
-            cleanupMemoryBeforeToolStreamIteration()
-            var userInput = UserInput(
-                messages: rawMessages,
-                images: conversationImages,
-                videos: conversationVideos,
-                tools: activeTools,
-                additionalContext: additionalContext
-            )
-            userInput.processing = processing
-
-            let input = try await container.prepare(input: userInput)
-            let stream = try await container.generate(input: input, parameters: params)
-            logger.notice(
-                "MLX tool path stream opened: wrapped_xml_filter=\(suppressWrappedXMLToolMarkup, privacy: .public) active_tools=\(activeTools.count, privacy: .public)"
-            )
-
-            let outputFilter = suppressWrappedXMLToolMarkup ? WrappedXMLToolCallStreamFilter() : nil
-            var assistantVisibleText = ""
-            var emittedToolCall: MLXToolCall?
-
-            for await generation in stream {
-                if Task.isCancelled {
-                    throw CancellationError()
-                }
-                switch generation {
-                case .chunk(let text):
-                    if let outputFilter {
-                        if let visibleChunk = await outputFilter.consume(text) {
-                            assistantVisibleText += visibleChunk
-                            onToken(visibleChunk)
-                        }
-                    } else {
-                        assistantVisibleText += text
-                        onToken(text)
-                    }
-                case .toolCall(let toolCall):
-                    emittedToolCall = toolCall
-                    onToolCall(toolCall)
-                    if let outputFilter {
-                        await outputFilter.didDispatchToolCall()
-                    }
-                case .info:
-                    break
-                }
-            }
-
-            if let outputFilter, let trailingText = await outputFilter.finish() {
-                assistantVisibleText += trailingText
-                onToken(trailingText)
-            }
-
-            guard let emittedToolCall else {
-                return MLXGenerationResult(toolInvocationCount: toolInvocationCount)
-            }
-
-            toolInvocationCount += 1
-            logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
-            cleanupMemoryBeforeToolDispatch()
-            let toolResult: String
-            if toolInvocationCount > Self.maxToolInvocationsPerResponse {
-                logger.error(
-                    "MLX forcing tool shutdown after excessive tool calls: count=\(toolInvocationCount, privacy: .public) max=\(Self.maxToolInvocationsPerResponse, privacy: .public)"
-                )
-                toolResult = Self.excessiveToolCallToolResponse(maximum: Self.maxToolInvocationsPerResponse)
-                activeTools = []
-            } else {
-                guard let toolDispatch else {
-                    throw GenerationError.missingToolDispatch
-                }
-
-                toolResult = try await toolDispatch(emittedToolCall)
-                if Self.shouldDisableTools(after: toolResult) {
-                    logger.notice("MLX disabling tools for remainder of response after search limit was reached")
-                    activeTools = []
-                } else if AppWebSearchToolBridge.isInternalToolErrorResponse(toolResult) {
-                    logger.notice("MLX received recoverable internal tool error; leaving tools enabled so the model can retry with corrected arguments")
-                }
-            }
-            rawMessages.append(Self.assistantToolCallMessage(
-                content: assistantVisibleText,
-                toolCall: emittedToolCall
-            ))
-            rawMessages.append(Self.toolResponseMessage(toolResult))
-            cleanupMemoryAfterToolRoundTrip()
-        }
-    }
-
-    nonisolated private static func assistantToolCallMessage(
-        content: String,
-        toolCall: MLXToolCall
-    ) -> MLXLMCommon.Message {
-        var message: MLXLMCommon.Message = [
-            "role": Chat.Message.Role.assistant.rawValue,
-            "content": content
-        ]
-        message["tool_calls"] = [[
-            "function": [
-                "name": toolCall.function.name,
-                "arguments": Self.normalizedToolArguments(toolCall.function.arguments)
-            ]
-        ]]
-        return message
-    }
-
     nonisolated internal static func wrappedToolResponseContent(_ content: String) -> String {
         "<tool_response>\n\(content)\n</tool_response>"
-    }
-
-    nonisolated private static func toolResponseMessage(_ content: String) -> MLXLMCommon.Message {
-        [
-            "role": Chat.Message.Role.user.rawValue,
-            "content": Self.wrappedToolResponseContent(content)
-        ]
     }
 
     nonisolated internal static func normalizedToolArguments(
@@ -2052,14 +2360,6 @@ final class MLXModelManager: ObservableObject {
         applySteadyStateMemoryCachePolicy()
     }
 
-    private func cleanupMemoryAfterToolPreflight() {
-        applySteadyStateMemoryCachePolicy()
-    }
-
-    private func cleanupMemoryBeforeToolDispatch() {
-        applySteadyStateMemoryCachePolicy()
-    }
-
     private func cleanupMemoryAfterLoadInterruption() {
         aggressivelyFreeMemory(reason: "load.interrupted")
         applySteadyStateMemoryCachePolicy()
@@ -2069,23 +2369,20 @@ final class MLXModelManager: ObservableObject {
         aggressivelyFreeMemory(reason: "model.load.transition")
     }
 
-    private func cleanupMemoryBeforeToolStreamIteration() {
-        applySteadyStateMemoryCachePolicy()
-    }
-
-    private func cleanupMemoryAfterToolRoundTrip() {
-        applySteadyStateMemoryCachePolicy()
-    }
-
     private func tearDownCurrentModel(reason: String) {
-        if container != nil || currentModel != nil || deferredPrewarmModelID != nil || prewarmInFlightModelID != nil {
+        if container != nil || currentModel != nil || deferredPrewarmModelID != nil || deferredTuningModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
         }
         stopMemoryMaintenanceTimer()
         container = nil
         currentModel = nil
+        promptTokenCountCache.removeAll(keepingCapacity: false)
         deferredPrewarmModelID = nil
+        deferredTuningModelID = nil
         prewarmInFlightModelID = nil
+        tuningTask?.cancel()
+        tuningTask = nil
+        hasSeenMemoryWarningSinceCurrentLoad = false
         Task {
             await inferenceWorker.clearLoadedModel()
         }

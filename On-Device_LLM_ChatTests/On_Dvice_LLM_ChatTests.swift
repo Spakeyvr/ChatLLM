@@ -187,83 +187,50 @@ struct On_Device_LLM_ChatTests {
         #expect(response.contains("\(MLXModelManager.maxToolInvocationsPerResponse)"))
     }
 
-    @Test func kvQuantizationConfigurationIsDisabledWhenSettingIsOff() {
+    @Test func kvQuantizationConfigurationIsDisabledForPersistentSimpleCachePolicy() {
         let config = MLXModelManager.kvQuantizationConfiguration(
-            isEnabled: false,
-            hasTools: false,
-            memoryConstrained: false,
-            maxKVSize: nil
+            cachePolicy: .persistentSimple
         )
 
         #expect(config == nil)
     }
 
-    @Test func kvQuantizationConfigurationUsesExpectedDefaultsOnNormalPath() {
+    @Test func kvQuantizationConfigurationUsesExpectedDefaultsOnQuantizedPersistentCachePolicy() {
         let config = MLXModelManager.kvQuantizationConfiguration(
-            isEnabled: true,
-            hasTools: false,
-            memoryConstrained: false,
-            maxKVSize: nil
+            cachePolicy: .persistentQuantizedSimple
         )
 
         #expect(config?.bits == 8)
         #expect(config?.groupSize == 64)
-        #expect(config?.startStep == 256)
+        #expect(config?.startStep == MLXModelManager.defaultQuantizedKVStartStep)
     }
 
-    @Test func kvQuantizationConfigurationIsEnabledForToolRunsWhenWindowingIsDisabled() {
+    @Test func kvQuantizationConfigurationIsDisabledForBoundedRotatingCachePolicy() {
         let config = MLXModelManager.kvQuantizationConfiguration(
-            isEnabled: true,
-            hasTools: true,
-            memoryConstrained: false,
-            maxKVSize: nil
-        )
-
-        #expect(config?.bits == 8)
-        #expect(config?.groupSize == 64)
-        #expect(config?.startStep == 256)
-    }
-
-    @Test func kvQuantizationConfigurationIsDisabledForMemoryConstrainedRuns() {
-        let config = MLXModelManager.kvQuantizationConfiguration(
-            isEnabled: true,
-            hasTools: false,
-            memoryConstrained: true,
-            maxKVSize: nil
+            cachePolicy: .boundedRotating(maxKVSize: 4096)
         )
 
         #expect(config == nil)
     }
 
-    @Test func kvQuantizationConfigurationIsDisabledWhenMaxKVSizeIsSet() {
-        let config = MLXModelManager.kvQuantizationConfiguration(
-            isEnabled: true,
-            hasTools: false,
-            memoryConstrained: false,
-            maxKVSize: 4096
-        )
-
-        #expect(config == nil)
-    }
-
-    @Test func effectiveMaxKVSizePreservesLegacyToolCapWithoutQuantization() {
-        let maxKVSize = MLXModelManager.effectiveMaxKVSize(
+    @Test func cachePolicyKeepsNormalTurnsOnPersistentSimpleCacheWhenQuantizationIsOff() {
+        let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: false,
             hasTools: true,
             memoryConstrained: false
         )
 
-        #expect(maxKVSize == 8192)
+        #expect(cachePolicy == .persistentSimple)
     }
 
-    @Test func effectiveMaxKVSizeDropsToolCapWhenQuantizationIsEnabled() {
-        let maxKVSize = MLXModelManager.effectiveMaxKVSize(
+    @Test func cachePolicyUsesBoundedRotatingFallbackWhenMemoryConstrained() {
+        let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: true,
             hasTools: true,
-            memoryConstrained: false
+            memoryConstrained: true
         )
 
-        #expect(maxKVSize == nil)
+        #expect(cachePolicy == .boundedRotating(maxKVSize: 4096))
     }
 
     @Test func generationConfigurationUsesQuantizedToolCacheStrategy() {
@@ -278,10 +245,11 @@ struct On_Device_LLM_ChatTests {
         #expect(configuration.maxTokens == 4096)
         #expect(configuration.maxKVSize == nil)
         #expect(configuration.kvQuantization?.bits == 8)
+        #expect(configuration.cachePolicy == .persistentQuantizedSimple)
         #expect(configuration.usesQuantizedToolCacheStrategy)
     }
 
-    @Test func generationConfigurationFallsBackToLegacyToolCacheWhenQuantizationIsOff() {
+    @Test func generationConfigurationKeepsToolTurnsUnboundedWhenQuantizationIsOff() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: false,
             hasTools: true,
@@ -291,9 +259,86 @@ struct On_Device_LLM_ChatTests {
         )
 
         #expect(configuration.maxTokens == 4096)
-        #expect(configuration.maxKVSize == 8192)
+        #expect(configuration.maxKVSize == nil)
         #expect(configuration.kvQuantization == nil)
+        #expect(configuration.cachePolicy == .persistentSimple)
         #expect(!configuration.usesQuantizedToolCacheStrategy)
+    }
+
+    @Test func selectFastestSafeCandidateRejectsDecodeRegressions() {
+        let candidates = [
+            MLXModelManager.TuningBenchmarkResult(
+                candidate: 128,
+                promptTokensPerSecond: 800,
+                decodeTokensPerSecond: 100,
+                totalLatency: 1.6,
+                totalBytes: 100,
+                measurement: .init(
+                    weightBytes: 0,
+                    kvBytes: 60,
+                    workspaceBytes: 40,
+                    peakActiveBytes: 100,
+                    tokenCount: 2048,
+                    prefillStepSize: 512
+                )
+            ),
+            MLXModelManager.TuningBenchmarkResult(
+                candidate: 256,
+                promptTokensPerSecond: 900,
+                decodeTokensPerSecond: 90,
+                totalLatency: 1.4,
+                totalBytes: 100,
+                measurement: .init(
+                    weightBytes: 0,
+                    kvBytes: 60,
+                    workspaceBytes: 40,
+                    peakActiveBytes: 100,
+                    tokenCount: 2048,
+                    prefillStepSize: 512
+                )
+            ),
+            MLXModelManager.TuningBenchmarkResult(
+                candidate: 512,
+                promptTokensPerSecond: 850,
+                decodeTokensPerSecond: 96,
+                totalLatency: 1.5,
+                totalBytes: 100,
+                measurement: .init(
+                    weightBytes: 0,
+                    kvBytes: 60,
+                    workspaceBytes: 40,
+                    peakActiveBytes: 100,
+                    tokenCount: 2048,
+                    prefillStepSize: 512
+                )
+            )
+        ]
+
+        let selected = MLXModelManager.selectFastestSafeCandidate(
+            candidates,
+            wiredMemoryCap: 200,
+            preferLargerCandidateOnTie: false
+        )
+
+        #expect(selected.candidate == 512)
+    }
+
+    @Test func promptTokenCostFallsBackToHeuristicWhenTokenizerCountUnavailable() {
+        let cost = ChatViewModel.promptTokenCost(
+            tokenizedContentTokenCount: nil,
+            fallbackContent: "1234567890"
+        )
+
+        #expect(cost == 24)
+    }
+
+    @Test func promptTokenCostUsesTokenizerCountWhenAvailable() {
+        let cost = ChatViewModel.promptTokenCost(
+            tokenizedContentTokenCount: 40,
+            fallbackContent: "short"
+        )
+
+        #expect(cost == 52)
     }
 
     @Test func qwen4BRequiresEightGigabytesOnIPhone() {
@@ -302,7 +347,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
 
         #expect(!profile.supportsModel(model))
         #expect(profile.availabilityIssue(for: model)?.contains("8 GB") == true)
@@ -314,7 +359,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
 
         #expect(profile.supportsModel(model))
         #expect(!manager.supportsToolCalls(for: model))
@@ -355,7 +400,7 @@ struct On_Device_LLM_ChatTests {
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
         let twoBModel = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
-        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
 
         #expect(profile.supportsModel(twoBModel))
         #expect(manager.supportsToolCalls(for: twoBModel))
@@ -369,7 +414,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit"))
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
 
         #expect(profile.supportsModel(fourBModel))
         #expect(manager.supportsToolCalls(for: fourBModel))

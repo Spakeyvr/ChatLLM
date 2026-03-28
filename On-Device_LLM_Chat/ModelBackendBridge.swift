@@ -13,6 +13,9 @@ import FoundationModels
 /// Manages backend/model selection and backend-specific capabilities.
 @MainActor
 class ModelBackendBridge: ObservableObject {
+    private static let legacyModelIDMap: [String: String] = [
+        "qwen3.5-4b-4bit": "qwen3.5-4b-mixed36"
+    ]
 
     // MARK: - Published Properties
 
@@ -84,7 +87,13 @@ class ModelBackendBridge: ObservableObject {
         }
 
         // Load saved model ID
-        self.selectedModelID = UserDefaults.standard.string(forKey: "selectedCustomModelID")
+        if let savedModelID = UserDefaults.standard.string(forKey: "selectedCustomModelID") {
+            let normalizedModelID = Self.legacyModelIDMap[savedModelID] ?? savedModelID
+            if normalizedModelID != savedModelID {
+                UserDefaults.standard.set(normalizedModelID, forKey: "selectedCustomModelID")
+            }
+            self.selectedModelID = normalizedModelID
+        }
 
         // Always create the manager so model availability can be checked
         // in the picker regardless of which backend is currently selected.
@@ -237,7 +246,7 @@ class ModelBackendBridge: ObservableObject {
         }
         guard let modelID = selectedModelID else { return nil }
         switch modelID {
-        case "qwen3.5-4b-4bit":
+        case "qwen3.5-4b-mixed36":
             return "Qwen 3.5 (4B)"
         case "qwen3.5-2b-4bit":
             return "Qwen 3.5 (2B)"
@@ -367,7 +376,7 @@ extension ModelBackendBridge {
     static var preview: ModelBackendBridge {
         let bridge = ModelBackendBridge()
         bridge.selectedBackend = .mlx
-        bridge.selectedModelID = "qwen3.5-4b-4bit"
+        bridge.selectedModelID = "qwen3.5-4b-mixed36"
         return bridge
     }
 }

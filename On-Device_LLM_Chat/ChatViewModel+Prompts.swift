@@ -124,6 +124,8 @@ extension ChatViewModel {
     private static let maxContextMessages = 30
     private static let minimumPromptBudgetTokens = 512
     private static let promptOverheadReserveTokens = 256
+    nonisolated private static let promptMessageReserveTokens = 12
+    nonisolated private static let minimumPromptMessageCost = 24
 
     private func snapshotsContainVisionImageAnalysisData(_ snapshots: [MessageSnapshot]) -> Bool {
         snapshots.contains { snapshot in
@@ -175,9 +177,7 @@ extension ChatViewModel {
                 continue
             }
 
-            let estimatedTokens = estimatedPromptTokenCost(
-                for: snapshot
-            )
+            let estimatedTokens = estimatedPromptTokenCost(for: snapshot)
 
             if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
                 break
@@ -194,26 +194,113 @@ extension ChatViewModel {
         return Array(keptSnapshots.reversed())
     }
 
+    private func trimmedSnapshotsForMLXPrompt(
+        from snapshots: [MessageSnapshot],
+        maxMessages: Int?
+    ) async -> [MessageSnapshot] {
+        var trimmedSnapshots = snapshots
+        let limit = min(maxMessages ?? Self.maxContextMessages, Self.maxContextMessages)
+        if trimmedSnapshots.count > limit {
+            trimmedSnapshots = Array(trimmedSnapshots.suffix(limit))
+        }
+
+        let tokenBudget = effectivePromptBudgetTokenLimit()
+        var keptSnapshots: [MessageSnapshot] = []
+        var usedTokens = 0
+
+        for snapshot in trimmedSnapshots.reversed() {
+            guard snapshot.role != .system else { continue }
+            if snapshot.role == .assistant && !snapshot.isFinal { continue }
+            guard !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+
+            let estimatedTokens = await tokenizerAwarePromptTokenCost(for: snapshot)
+            if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
+                break
+            }
+
+            keptSnapshots.append(snapshot)
+            usedTokens += estimatedTokens
+
+            if usedTokens > tokenBudget {
+                break
+            }
+        }
+
+        return Array(keptSnapshots.reversed())
+    }
+
+    private func tokenizerAwarePromptTokenCost(
+        for snapshot: MessageSnapshot
+    ) async -> Int {
+        let content = promptBudgetContent(for: snapshot)
+        let chatRole: Chat.Message.Role
+        switch snapshot.role {
+        case .assistant:
+            chatRole = .assistant
+        case .system:
+            chatRole = .system
+        case .user:
+            chatRole = .user
+        }
+        let tokenizedContentTokenCount: Int?
+        if let modelManager = ModelBackendBridge.shared.modelManager {
+            tokenizedContentTokenCount = await modelManager.tokenCountForLoadedModelText(
+                role: chatRole,
+                content: content
+            )
+        } else {
+            tokenizedContentTokenCount = nil
+        }
+        return Self.promptTokenCost(
+            tokenizedContentTokenCount: tokenizedContentTokenCount,
+            fallbackContent: content
+        )
+    }
+
     private func estimatedPromptTokenCost(
         for snapshot: MessageSnapshot
     ) -> Int {
-        let content: String
+        Self.promptTokenCost(
+            tokenizedContentTokenCount: nil,
+            fallbackContent: promptBudgetContent(for: snapshot)
+        )
+    }
+
+    private func promptBudgetContent(
+        for snapshot: MessageSnapshot
+    ) -> String {
         switch snapshot.role {
         case .user:
-            content = snapshot.text
+            snapshot.text
         case .assistant:
             if snapshot.isReasoningMode,
                let answer = snapshot.finalAnswer {
-                content = answer
+                answer
             } else {
-                content = snapshot.text
+                snapshot.text
             }
-        default:
-            content = snapshot.text
+        case .system:
+            snapshot.text
         }
+    }
 
-        let estimatedContentTokens = Int(ceil(Double(content.count) / 4.0))
-        return max(24, estimatedContentTokens + 12)
+    nonisolated internal static func heuristicPromptTokenCount(
+        for content: String
+    ) -> Int {
+        Int(ceil(Double(content.count) / 4.0))
+    }
+
+    nonisolated internal static func promptTokenCost(
+        tokenizedContentTokenCount: Int?,
+        fallbackContent: String
+    ) -> Int {
+        let contentTokens = tokenizedContentTokenCount ?? heuristicPromptTokenCount(for: fallbackContent)
+        return max(
+            minimumPromptMessageCost,
+            contentTokens + promptMessageReserveTokens
+        )
     }
 
     func buildPrompt(
@@ -442,7 +529,7 @@ extension ChatViewModel {
         toolsAvailable: Bool = false,
         forceWebSearch: Bool = false
     ) async throws -> [Chat.Message] {
-        let snapshots = trimmedSnapshotsForPrompt(
+        let snapshots = await trimmedSnapshotsForMLXPrompt(
             from: messageSnapshots(upToOrderExclusive: maxOrderExclusive),
             maxMessages: maxMessages
         )
