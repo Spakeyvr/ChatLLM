@@ -15,6 +15,7 @@ actor ImageStore {
 
     private let logger = Logger(subsystem: "com.yourapp.chatllm", category: "ImageStore")
     private let nativeInferenceMaxDimension: CGFloat = 336
+    private let cleanupProtectionWindow: TimeInterval = 15
 
     struct ImageMetrics: Sendable {
         let width: Int
@@ -138,6 +139,7 @@ actor ImageStore {
 
         for fileURL in canonicalContents where fileURL.pathExtension == "jpg" {
             if !referencedURLs.contains(fileURL) {
+                guard shouldDeleteDuringCleanup(fileURL) else { continue }
                 // Orphaned file found
                 if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                     freedBytes += Int64(size)
@@ -156,6 +158,7 @@ actor ImageStore {
         if let inferenceContents = try? fileManager.contentsOfDirectory(at: inferenceDir, includingPropertiesForKeys: [.fileSizeKey]) {
             for fileURL in inferenceContents where fileURL.pathExtension == "jpg" {
                 if !expectedInferenceNames.contains(fileURL.lastPathComponent) {
+                    guard shouldDeleteDuringCleanup(fileURL) else { continue }
                     if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                         freedBytes += Int64(size)
                     }
@@ -168,6 +171,19 @@ actor ImageStore {
         if deletedCount > 0 {
             logger.info("🧹 Cleaned up \(deletedCount) orphaned images (freed \(ByteCountFormatter.string(fromByteCount: freedBytes, countStyle: .file)))")
         }
+    }
+
+    private func shouldDeleteDuringCleanup(_ fileURL: URL) -> Bool {
+        let resourceValues = try? fileURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        let freshestDate = [resourceValues?.contentModificationDate, resourceValues?.creationDate]
+            .compactMap { $0 }
+            .max()
+
+        guard let freshestDate else {
+            return true
+        }
+
+        return Date().timeIntervalSince(freshestDate) >= cleanupProtectionWindow
     }
 
     private func directory() throws -> URL {

@@ -379,6 +379,8 @@ struct OnboardingView: View {
             let trimmedKey = tavilyKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedKey.isEmpty {
                 TavilyAPIKeyStore.save(trimmedKey)
+            } else {
+                TavilyAPIKeyStore.clear()
             }
             step = .mlx
         case .mlx:

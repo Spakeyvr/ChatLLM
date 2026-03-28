@@ -33,6 +33,7 @@ struct ContentView: View {
     @State private var showExportSheet: Bool = false
     @State private var exportURL: URL?
     @FocusState private var isSearchFocused: Bool
+    @State private var attachmentCleanupTask: Task<Void, Never>?
 
     // App-wide preferences
     @AppStorage("defaultSystemPrompt") private var defaultSystemPrompt: String = ""
@@ -240,8 +241,12 @@ struct ContentView: View {
     }
 
     private func scheduleAttachmentStorageCleanup(excludingConversationIDs excludedConversationIDs: Set<UUID> = []) {
-        let referencedURLs = referencedAttachmentURLs(excludingConversationIDs: excludedConversationIDs)
-        Task {
+        attachmentCleanupTask?.cancel()
+        attachmentCleanupTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+
+            let referencedURLs = referencedAttachmentURLs(excludingConversationIDs: excludedConversationIDs)
             try? await ImageStore.shared.cleanupOrphanedFiles(referencedURLs: referencedURLs)
         }
     }
