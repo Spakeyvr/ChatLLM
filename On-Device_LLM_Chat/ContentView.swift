@@ -362,77 +362,157 @@ struct ContentView: View {
         }
     }
 
+    private struct ConversationRecencySection: Identifiable {
+        let id: String
+        let title: LocalizedStringKey
+        let conversations: [Conversation]
+    }
+
+    private struct ConversationSectionHeader: View {
+        let title: LocalizedStringKey
+
+        var body: some View {
+            Text(title)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
+        }
+    }
+
+    private var groupedConversations: [ConversationRecencySection] {
+        let calendar = Calendar.current
+        let now = Date()
+
+        let buckets: [(id: String, title: LocalizedStringKey, conversations: [Conversation])] = [
+            (
+                id: "today",
+                title: "Today",
+                conversations: filteredConversations.filter { calendar.isDateInToday($0.lastUpdated) }
+            ),
+            (
+                id: "yesterday",
+                title: "Yesterday",
+                conversations: filteredConversations.filter { calendar.isDateInYesterday($0.lastUpdated) }
+            ),
+            (
+                id: "last7Days",
+                title: "Last 7 Days",
+                conversations: filteredConversations.filter {
+                    guard !calendar.isDateInToday($0.lastUpdated),
+                          !calendar.isDateInYesterday($0.lastUpdated) else {
+                        return false
+                    }
+                    guard let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now) else {
+                        return false
+                    }
+                    return $0.lastUpdated >= sevenDaysAgo
+                }
+            ),
+            (
+                id: "last30Days",
+                title: "Last 30 Days",
+                conversations: filteredConversations.filter {
+                    guard let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now),
+                          let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) else {
+                        return false
+                    }
+                    return $0.lastUpdated < sevenDaysAgo && $0.lastUpdated >= thirtyDaysAgo
+                }
+            ),
+            (
+                id: "older",
+                title: "Older",
+                conversations: filteredConversations.filter {
+                    guard let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) else {
+                        return false
+                    }
+                    return $0.lastUpdated < thirtyDaysAgo
+                }
+            )
+        ]
+
+        return buckets.compactMap { bucket in
+            guard !bucket.conversations.isEmpty else { return nil }
+            return ConversationRecencySection(
+                id: bucket.id,
+                title: bucket.title,
+                conversations: bucket.conversations
+            )
+        }
+    }
+
     @ViewBuilder
     private var sidebar: some View {
         ZStack(alignment: .bottom) {
             // Main list content — keep selection binding for NavigationSplitView
             List(selection: $selection) {
-                // Conversations
-                Section {
-                    if filteredConversations.isEmpty && !searchText.isEmpty {
-                        // Empty search results state
-                        VStack(spacing: 12) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
-                            Text(String(localized: "No matching chats"))
-                                .font(.headline)
-                            Text(String(localized: "Try adjusting your search terms"))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    } else {
-                        // Give ForEach an explicit id to avoid inference issues
-                        ForEach(filteredConversations, id: \.id) { convo in
-                            // Capture the ID to avoid stale reference issues in closures
-                            let conversationID = convo.id
-                            
-                            // No NavigationLink, we drive selection ourselves.
-                            ConversationRow(conversation: convo)
-                                .contentShape(Rectangle()) // full row tap target
-                                .onTapGesture {
-                                    // Light haptic for selection
-                                    let haptic = UISelectionFeedbackGenerator()
-                                    haptic.selectionChanged()
-                                    // Manual selection triggers NavigationSplitView navigation (including compact).
-                                    selection = convo
-                                }
-                                .contextMenu {
-                                    Button {
-                                        // Find conversation by ID to ensure it still exists
-                                        if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                            rename(conversation)
-                                        }
-                                    } label: {
-                                        Label(String(localized: "Rename"), systemImage: "pencil")
-                                    }
+                if filteredConversations.isEmpty && !searchText.isEmpty {
+                    // Empty search results state
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text(String(localized: "No matching chats"))
+                            .font(.headline)
+                        Text(String(localized: "Try adjusting your search terms"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } else {
+                    ForEach(groupedConversations) { section in
+                        Section {
+                            ForEach(section.conversations, id: \.id) { convo in
+                                let conversationID = convo.id
 
-                                    Button(role: .destructive) { 
-                                        // Find conversation by ID to ensure it still exists
-                                        if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                            delete(conversation)
-                                        }
-                                    } label: {
-                                        Label(String(localized: "Delete"), systemImage: "trash")
+                                ConversationRow(conversation: convo)
+                                    .contentShape(Rectangle())
+                                    .overlay(alignment: .bottom) {
+                                        Divider()
+                                            .padding(.leading, 12)
                                     }
-                                }
-                                .swipeActions(edge: HorizontalEdge.trailing) {
-                                    Button(role: .destructive) {
-                                        // Find conversation by ID to ensure it still exists
-                                        if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                            delete(conversation)
-                                        }
-                                    } label: {
-                                        Label(String(localized: "Delete"), systemImage: "trash")
+                                    .onTapGesture {
+                                        let haptic = UISelectionFeedbackGenerator()
+                                        haptic.selectionChanged()
+                                        selection = convo
                                     }
-                                }
+                                    .contextMenu {
+                                        Button {
+                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+                                                rename(conversation)
+                                            }
+                                        } label: {
+                                            Label(String(localized: "Rename"), systemImage: "pencil")
+                                        }
+
+                                        Button(role: .destructive) {
+                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+                                                delete(conversation)
+                                            }
+                                        } label: {
+                                            Label(String(localized: "Delete"), systemImage: "trash")
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing) {
+                                        Button(role: .destructive) {
+                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+                                                delete(conversation)
+                                            }
+                                        } label: {
+                                            Label(String(localized: "Delete"), systemImage: "trash")
+                                        }
+                                    }
+                            }
+                        } header: {
+                            ConversationSectionHeader(title: section.title)
                         }
-                        .onDelete(perform: deleteOffsets)
+                        .listSectionSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
                 }
             }
@@ -451,16 +531,6 @@ struct ContentView: View {
             bottomSearchBar
                 .padding(.horizontal, 12)
                 .padding(.bottom, 24) // lift it off the bottom to float
-        }
-        // Pin the Apple Intelligence banner to the top; it won't scroll off-screen.
-        .safeAreaInset(edge: .top) {
-            SidebarHeader(
-                isAvailable: SystemLanguageModel.default.availability == .available,
-                openSettings: { showSettings = true },
-                hasChats: !conversations.isEmpty
-            )
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
     }
 
@@ -521,21 +591,37 @@ struct ContentView: View {
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .contentShape(.capsule)
 
-                Button {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        startDraftChat()
+                HStack(spacing: 10) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .scaleEffect(isSearchFocused ? 0.9 : 1.0)
+                            .frame(width: 50, height: 50)
+                            .contentShape(Circle())
                     }
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 22, weight: .semibold))
-                        .scaleEffect(isSearchFocused ? 0.9 : 1.0)
-                        .frame(width: 54, height: 54)
-                        .contentShape(Circle())
+                    .contentShape(Circle())
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel(String(localized: "Settings"))
+
+                    Button {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            startDraftChat()
+                        }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 20, weight: .semibold))
+                            .scaleEffect(isSearchFocused ? 0.9 : 1.0)
+                            .frame(width: 50, height: 50)
+                            .contentShape(Circle())
+                    }
+                    .contentShape(Circle())
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel(String(localized: "New Chat"))
                 }
-                .contentShape(Circle())
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .accessibilityLabel(String(localized: "New Chat"))
                 .shadow(color: .clear.opacity(0.2), radius: 12, x: 0, y: 6)
             }
         }
