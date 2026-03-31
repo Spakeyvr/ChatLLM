@@ -178,6 +178,57 @@ struct On_Device_LLM_ChatTests {
         #expect(content.hasSuffix("</tool_response>"))
     }
 
+    @Test func qwenToolResponsesReuseWrappedUserPromptCompatibilityPath() {
+        let manager = MLXModelManager()
+        let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
+
+        let content = MLXModelManager.toolResponsePromptContent(
+            for: model,
+            toolResult: "Search result body"
+        )
+        let role = MLXModelManager.toolResponsePromptRole(for: model)
+
+        #expect(content == "<tool_response>\nSearch result body\n</tool_response>")
+        #expect(role == .user)
+    }
+
+    @Test func qwenToolResponsesRequireExplicitMessageHistoryAcrossToolLoop() {
+        let manager = MLXModelManager()
+        let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
+
+        #expect(MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
+    }
+
+    @Test func nonQwenModelsKeepNativeToolRoleForToolResponses() {
+        let nonQwenModel = MLXModelManager.MLXModelInfo(
+            id: "test-model",
+            name: "Test",
+            localDirName: "TestModel",
+            hfRepoId: "example/test-model",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            loadPolicy: .qwenMultimodal,
+            description: "Test model",
+            contextLength: 4096,
+            isAvailable: true,
+            supportsReasoning: false,
+            supportsNativeImages: false,
+            requiredProcessorClass: nil,
+            minimumPhoneMemoryBytes: nil,
+            minimumPhoneMemoryForToolCallsBytes: nil
+        )
+
+        let content = MLXModelManager.toolResponsePromptContent(
+            for: nonQwenModel,
+            toolResult: "Search result body"
+        )
+        let role = MLXModelManager.toolResponsePromptRole(for: nonQwenModel)
+
+        #expect(content == "Search result body")
+        #expect(role == .tool)
+        #expect(!MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: nonQwenModel))
+    }
+
     @Test func mlxToolLoopHasHardStopResponse() {
         let response = MLXModelManager.excessiveToolCallToolResponse(
             maximum: MLXModelManager.maxToolInvocationsPerResponse

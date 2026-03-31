@@ -251,14 +251,23 @@ private actor MLXInferenceWorker {
 
         let prefixSignatures = request.messages.dropLast().map { MLXVisibleMessageSignature(message: $0) }
 
-        let session: ChatSession
-        if let existing = sessions[request.sessionKey],
-           existing.key == request.sessionKey,
-           existing.visibleHistory == prefixSignatures {
-            session = existing.session
+        let usesExplicitMessageHistory =
+            !request.tools.isEmpty &&
+            MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: loadedModel.model)
+
+        let reusableSession: ChatSession?
+        if usesExplicitMessageHistory {
+            reusableSession = nil
+            logger.notice(
+                "MLX using explicit message-history tool loop: conversation=\(request.conversationID.uuidString, privacy: .public)"
+            )
+        } else if let existing = sessions[request.sessionKey],
+                  existing.key == request.sessionKey,
+                  existing.visibleHistory == prefixSignatures {
+            reusableSession = existing.session
             logger.notice("MLX reusing persistent chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
         } else {
-            session = ChatSession(
+            reusableSession = ChatSession(
                 loadedModel.container,
                 history: Array(request.messages.dropLast()),
                 generateParameters: request.params,
@@ -270,10 +279,10 @@ private actor MLXInferenceWorker {
             logger.notice("MLX created fresh chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
         }
 
-        session.generateParameters = request.params
-        session.processing = request.processing
-        session.additionalContext = request.additionalContext
-        session.toolDispatch = nil
+        reusableSession?.generateParameters = request.params
+        reusableSession?.processing = request.processing
+        reusableSession?.additionalContext = request.additionalContext
+        reusableSession?.toolDispatch = nil
 
         Memory.peakMemory = 0
         let memoryBefore = Memory.snapshot()
@@ -290,6 +299,9 @@ private actor MLXInferenceWorker {
         var activePromptImages = latestUserMessage.images
         var activePromptVideos = latestUserMessage.videos
         var activeTools = request.tools
+        var explicitMessageHistory = usesExplicitMessageHistory
+            ? Array(request.messages.dropLast())
+            : []
         let toolInvocationState = ToolInvocationState()
         let effectiveCachePolicy = MLXModelManager.cachePolicy(for: request.params)
         let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
@@ -302,7 +314,21 @@ private actor MLXInferenceWorker {
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
         let iterateStream = {
             while true {
-                session.tools = activeTools
+                let session: ChatSession
+                if let reusableSession {
+                    session = reusableSession
+                    session.tools = activeTools
+                } else {
+                    session = ChatSession(
+                        loadedModel.container,
+                        history: explicitMessageHistory,
+                        generateParameters: request.params,
+                        processing: request.processing,
+                        additionalContext: request.additionalContext,
+                        tools: activeTools,
+                        toolDispatch: nil
+                    )
+                }
                 let outputFilter = request.suppressWrappedXMLToolMarkup
                     ? WrappedXMLToolCallStreamFilter()
                     : nil
@@ -398,8 +424,22 @@ private actor MLXInferenceWorker {
                     }
                 }
 
-                activePromptContent = toolResult
-                activePromptRole = .tool
+                if usesExplicitMessageHistory {
+                    explicitMessageHistory.append(
+                        Chat.Message(
+                            role: activePromptRole,
+                            content: activePromptContent,
+                            images: activePromptImages,
+                            videos: activePromptVideos
+                        )
+                    )
+                }
+
+                activePromptContent = MLXModelManager.toolResponsePromptContent(
+                    for: loadedModel.model,
+                    toolResult: toolResult
+                )
+                activePromptRole = MLXModelManager.toolResponsePromptRole(for: loadedModel.model)
                 activePromptImages = []
                 activePromptVideos = []
             }
@@ -451,12 +491,14 @@ private actor MLXInferenceWorker {
                 message: .assistant(assistantVisibleText)
             )
         )
-        sessions[request.sessionKey] = SessionState(
-            key: request.sessionKey,
-            session: session,
-            visibleHistory: visibleHistory,
-            latestPerformance: performanceSample
-        )
+        if let reusableSession {
+            sessions[request.sessionKey] = SessionState(
+                key: request.sessionKey,
+                session: reusableSession,
+                visibleHistory: visibleHistory,
+                latestPerformance: performanceSample
+            )
+        }
 
         logger.notice(
             "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(performanceSample.kvBenchmarkMetadata.effectiveMaxKVSize ?? -1, privacy: .public)"
@@ -2133,6 +2175,28 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func wrappedToolResponseContent(_ content: String) -> String {
         "<tool_response>\n\(content)\n</tool_response>"
+    }
+
+    nonisolated internal static func toolResponsePromptContent(
+        for model: MLXModelInfo,
+        toolResult: String
+    ) -> String {
+        guard prefersUserWrappedToolResponses(for: model) else {
+            return toolResult
+        }
+        return wrappedToolResponseContent(toolResult)
+    }
+
+    nonisolated internal static func toolResponsePromptRole(for model: MLXModelInfo) -> Chat.Message.Role {
+        prefersUserWrappedToolResponses(for: model) ? .user : .tool
+    }
+
+    nonisolated internal static func prefersUserWrappedToolResponses(for model: MLXModelInfo) -> Bool {
+        model.id.hasPrefix("qwen3.5-")
+    }
+
+    nonisolated internal static func requiresExplicitMessageHistoryForToolLoop(for model: MLXModelInfo) -> Bool {
+        prefersUserWrappedToolResponses(for: model)
     }
 
     nonisolated internal static func normalizedToolArguments(
