@@ -109,21 +109,12 @@ struct ContentView: View {
             )
             .settingsCover(
                 isPresented: $showSettings,
-                initialDefaultSystemPrompt: defaultSystemPrompt,
-                initialAppearance: appAppearance,
-                initialLanguage: appLanguage,
                 hasChats: !conversations.isEmpty,
                 canDeleteAllExceptCurrent: conversations.count > 1,
                 onDeleteAll: { showDeleteAllAlert = true },
                 onDeleteAllExceptCurrent: { deleteAllExceptCurrent() },
                 onExportChats: { exportAllChats() },
-                onSave: { newPrompt, newAppearance, newLanguage in
-                    defaultSystemPrompt = newPrompt
-                    appAppearance = newAppearance
-                    appLanguage = newLanguage
-                    showSettings = false
-                },
-                onCancel: { showSettings = false }
+                onDismiss: { showSettings = false }
             )
             .sheet(isPresented: $showExportSheet, onDismiss: cleanupExportFile) {
                 if let url = exportURL {
@@ -320,50 +311,21 @@ struct ContentView: View {
     private var filteredConversations: [Conversation] {
         let trimmed = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return conversations }
-        
-        // Pre-compute search terms once
+
         let searchTerms = trimmed.lowercased().components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
         guard !searchTerms.isEmpty else { return conversations }
-        
-        // Optimize search with early exits and better memory usage
+
         return conversations.filter { convo in
-            // Fast path: check title first (most common match)
             let titleLowercased = convo.title.lowercased()
-            
-            // Use range(of:) for better performance than localizedCaseInsensitiveContains
             let titleMatches = searchTerms.allSatisfy { term in
                 titleLowercased.range(of: term) != nil
             }
             if titleMatches { return true }
-            
-            // Only search messages if title doesn't match
-            // CRITICAL FIX: Safely access message properties to avoid SwiftData fault errors
-            // Access properties carefully - SwiftData may return stale data for deleted objects
-            let recentMessageSnapshots = convo.messages
-                .compactMap { msg -> (order: Int, text: String)? in
-                    // Access properties - SwiftData will handle faults internally
-                    let role = msg.role
-                    let order = msg.order
-                    let text = msg.text
-                    
-                    guard role != .system else { return nil }
-                    return (order: order, text: text)
-                }
-                .sorted(by: { $0.order > $1.order })
-                .prefix(5) // Reduced from 10 to 5 for even better performance
-            
-            // Early exit on first matching message
-            for snapshot in recentMessageSnapshots {
-                let messageLowercased = snapshot.text.lowercased()
-                let matches = searchTerms.allSatisfy { term in
-                    messageLowercased.range(of: term) != nil
-                }
-                if matches {
-                    return true
-                }
+
+            let searchableText = convo.searchableVisibleText.lowercased()
+            return searchTerms.allSatisfy { term in
+                searchableText.range(of: term) != nil
             }
-            
-            return false
         }
     }
 
@@ -482,8 +444,7 @@ struct ContentView: View {
                                             .padding(.leading, 12)
                                     }
                                     .onTapGesture {
-                                        let haptic = UISelectionFeedbackGenerator()
-                                        haptic.selectionChanged()
+                                        AppHaptics.selectionChanged()
                                         selection = convo
                                     }
                                     .contextMenu {
@@ -575,9 +536,7 @@ struct ContentView: View {
 
                     if !searchText.isEmpty {
                         Button {
-                            // Light haptic for clearing search
-                            let haptic = UIImpactFeedbackGenerator(style: .light)
-                            haptic.impactOccurred()
+                            AppHaptics.impact(.light)
                             searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -650,8 +609,7 @@ struct ContentView: View {
     private func startDraftChat() {
         // Only one draft at a time — the button is disabled when a draft is already open.
         guard draftConversation == nil else { return }
-        let haptic = UIImpactFeedbackGenerator(style: .medium)
-        haptic.impactOccurred()
+        AppHaptics.impact(.medium)
         Task { @MainActor in
             currentViewModel?.cancelGeneration()
             let convo = Conversation(title: String(localized: "New Chat"))
@@ -713,14 +671,10 @@ struct ContentView: View {
             
             do {
                 try self.modelContext.save()
-                // Success haptic for rename
-                let haptic = UINotificationFeedbackGenerator()
-                haptic.notificationOccurred(.success)
+                AppHaptics.notification(.success)
             } catch {
                 print("Failed to save renamed conversation: \(error)")
-                // Error haptic
-                let haptic = UINotificationFeedbackGenerator()
-                haptic.notificationOccurred(.error)
+                AppHaptics.notification(.error)
                 self.errorMessage = String(localized: "Failed to rename conversation. Please try again.")
             }
         })
@@ -760,9 +714,7 @@ struct ContentView: View {
             }
         }
         
-        // Haptic feedback for deletion
-        let haptic = UIImpactFeedbackGenerator(style: .medium)
-        haptic.impactOccurred()
+        AppHaptics.impact(.medium)
         
         // Cancel operations for conversations being deleted - do this BEFORE updating selection
         for convo in toDelete {
@@ -793,14 +745,10 @@ struct ContentView: View {
         do {
             try modelContext.save()
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
-            // Success haptic for deletion
-            let successHaptic = UINotificationFeedbackGenerator()
-            successHaptic.notificationOccurred(.success)
+            AppHaptics.notification(.success)
         } catch {
             print("Failed to save after deleting conversations: \(error)")
-            // Error haptic
-            let errorHaptic = UINotificationFeedbackGenerator()
-            errorHaptic.notificationOccurred(.error)
+            AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete conversations. Please try again.")
         }
     }
@@ -823,9 +771,7 @@ struct ContentView: View {
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
         let excludedConversationIDs: Set<UUID> = [conversationID]
         
-        // Haptic feedback for deletion
-        let haptic = UIImpactFeedbackGenerator(style: .medium)
-        haptic.impactOccurred()
+        AppHaptics.impact(.medium)
         
         // Cancel any ongoing operations for this conversation - do this BEFORE updating selection
         if let currentVM = currentViewModel, currentVM.conversation.id == conversationID {
@@ -849,14 +795,10 @@ struct ContentView: View {
         do {
             try modelContext.save()
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
-            // Success haptic for deletion
-            let successHaptic = UINotificationFeedbackGenerator()
-            successHaptic.notificationOccurred(.success)
+            AppHaptics.notification(.success)
         } catch {
             print("Failed to save after deleting conversation: \(error)")
-            // Error haptic
-            let errorHaptic = UINotificationFeedbackGenerator()
-            errorHaptic.notificationOccurred(.error)
+            AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete conversation. Please try again.")
             
             // Try to recover by reloading the context
@@ -869,9 +811,7 @@ struct ContentView: View {
     }
 
     private func deleteAllChats() {
-        // Heavy haptic for bulk delete action
-        let haptic = UIImpactFeedbackGenerator(style: .heavy)
-        haptic.impactOccurred()
+        AppHaptics.impact(.heavy)
         
         // Cancel any ongoing operations
         currentViewModel?.cancelGeneration()
@@ -890,22 +830,16 @@ struct ContentView: View {
         do {
             try modelContext.save()
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
-            // Success haptic for bulk deletion
-            let successHaptic = UINotificationFeedbackGenerator()
-            successHaptic.notificationOccurred(.success)
+            AppHaptics.notification(.success)
         } catch {
             print("Failed to save after deleting all conversations: \(error)")
-            // Error haptic
-            let errorHaptic = UINotificationFeedbackGenerator()
-            errorHaptic.notificationOccurred(.error)
+            AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete all conversations. Please try again.")
         }
     }
 
     private func deleteAllExceptCurrent() {
-        // Heavy haptic for bulk delete action
-        let haptic = UIImpactFeedbackGenerator(style: .heavy)
-        haptic.impactOccurred()
+        AppHaptics.impact(.heavy)
         
         // If there's a selection, keep it; otherwise keep the most recent conversation
         let current = selection ?? conversations.first
@@ -934,16 +868,12 @@ struct ContentView: View {
         do {
             try modelContext.save()
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
-            // Success haptic for bulk deletion
-            let successHaptic = UINotificationFeedbackGenerator()
-            successHaptic.notificationOccurred(.success)
+            AppHaptics.notification(.success)
             // Ensure the kept conversation is selected after deletion
             selection = current
         } catch {
             print("Failed to save after deleting conversations except current: \(error)")
-            // Error haptic
-            let errorHaptic = UINotificationFeedbackGenerator()
-            errorHaptic.notificationOccurred(.error)
+            AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete conversations. Please try again.")
         }
     }
@@ -1046,54 +976,36 @@ struct ContentView: View {
 
 // A container that owns temporary copies for Settings, enabling Cancel (discard) and Save (commit).
 private struct SettingsSheetContainer: View {
-    let initialDefaultSystemPrompt: String
-    let initialAppearance: String
-    let initialLanguage: String
     let hasChats: Bool
     let canDeleteAllExceptCurrent: Bool
     let onDeleteAll: () -> Void
     let onDeleteAllExceptCurrent: () -> Void
     let onExportChats: () -> Void
-    let onSave: (String, String, String) -> Void
-    let onCancel: () -> Void
+    let onDismiss: () -> Void
 
-    @State private var tempDefaultSystemPrompt: String
-    @State private var tempAppearance: String
-    @State private var tempLanguage: String
+    @State private var draft: AppSettingsDraft
 
     init(
-        initialDefaultSystemPrompt: String,
-        initialAppearance: String,
-        initialLanguage: String,
         hasChats: Bool,
         canDeleteAllExceptCurrent: Bool,
         onDeleteAll: @escaping () -> Void,
         onDeleteAllExceptCurrent: @escaping () -> Void,
         onExportChats: @escaping () -> Void,
-        onSave: @escaping (String, String, String) -> Void,
-        onCancel: @escaping () -> Void
+        onDismiss: @escaping () -> Void
     ) {
-        self.initialDefaultSystemPrompt = initialDefaultSystemPrompt
-        self.initialAppearance = initialAppearance
-        self.initialLanguage = initialLanguage
         self.hasChats = hasChats
         self.canDeleteAllExceptCurrent = canDeleteAllExceptCurrent
         self.onDeleteAll = onDeleteAll
         self.onDeleteAllExceptCurrent = onDeleteAllExceptCurrent
         self.onExportChats = onExportChats
-        self.onSave = onSave
-        self.onCancel = onCancel
-        _tempDefaultSystemPrompt = State(initialValue: initialDefaultSystemPrompt)
-        _tempAppearance = State(initialValue: initialAppearance)
-        _tempLanguage = State(initialValue: initialLanguage)
+        self.onDismiss = onDismiss
+        _draft = State(initialValue: AppSettingsDraft.load())
     }
 
     var body: some View {
         NavigationStack {
             SettingsSheet(
-                defaultSystemPrompt: $tempDefaultSystemPrompt,
-                appAppearance: $tempAppearance,
-                appLanguage: $tempLanguage,
+                settings: $draft,
                 hasChats: hasChats,
                 canDeleteAllExceptCurrent: canDeleteAllExceptCurrent,
                 onDeleteAll: onDeleteAll,
@@ -1103,23 +1015,21 @@ private struct SettingsSheetContainer: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(String(localized: "Cancel")) {
-                        // Discard changes
-                        onCancel()
+                        onDismiss()
                     }
                     .fontWeight(.semibold)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(String(localized: "Save")) {
-                        // Commit changes
-                        onSave(tempDefaultSystemPrompt, tempAppearance, tempLanguage)
+                        draft.persist()
+                        onDismiss()
                     }
                     .fontWeight(.semibold)
                 }
             }
         }
-        // Drive the sheet’s appearance and language from the temporary selections
-        .preferredColorScheme(colorScheme(for: tempAppearance))
-        .environment(\.locale, Locale(identifier: tempLanguage))
+        .preferredColorScheme(colorScheme(for: draft.appAppearance))
+        .environment(\.locale, Locale(identifier: draft.appLanguage))
     }
 
     private func colorScheme(for appearance: String) -> ColorScheme? {
@@ -1273,29 +1183,21 @@ private extension View {
     
     func settingsCover(
         isPresented: Binding<Bool>,
-        initialDefaultSystemPrompt: String,
-        initialAppearance: String,
-        initialLanguage: String,
         hasChats: Bool,
         canDeleteAllExceptCurrent: Bool,
         onDeleteAll: @escaping () -> Void,
         onDeleteAllExceptCurrent: @escaping () -> Void,
         onExportChats: @escaping () -> Void,
-        onSave: @escaping (String, String, String) -> Void,
-        onCancel: @escaping () -> Void
+        onDismiss: @escaping () -> Void
     ) -> some View {
         fullScreenCover(isPresented: isPresented) {
             SettingsSheetContainer(
-                initialDefaultSystemPrompt: initialDefaultSystemPrompt,
-                initialAppearance: initialAppearance,
-                initialLanguage: initialLanguage,
                 hasChats: hasChats,
                 canDeleteAllExceptCurrent: canDeleteAllExceptCurrent,
                 onDeleteAll: onDeleteAll,
                 onDeleteAllExceptCurrent: onDeleteAllExceptCurrent,
                 onExportChats: onExportChats,
-                onSave: onSave,
-                onCancel: onCancel
+                onDismiss: onDismiss
             )
         }
     }

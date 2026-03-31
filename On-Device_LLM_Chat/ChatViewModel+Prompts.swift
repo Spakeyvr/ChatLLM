@@ -629,6 +629,7 @@ extension ChatViewModel {
 
     internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
         let currentYear = Calendar.current.component(.year, from: Date())
+        let maxSearches = AppWebSearchToolBridge.maxInvocations
         var lines = [
             "WEB SEARCH:",
             "- You have a webSearch tool available.",
@@ -644,9 +645,9 @@ extension ChatViewModel {
 
         if reasoningEnabled {
             lines.append("- During reasoning, you may search iteratively: identify what to check, call webSearch with a concise query, inspect the results, and refine if needed.")
-            lines.append("- You may perform up to and only up to 3 searches for a single response when follow-up verification is needed.")
+            lines.append("- You may perform up to and only up to \(maxSearches) searches for a single response when follow-up verification is needed.")
         } else {
-            lines.append("- You may perform up to 3 searches for a single response when follow-up verification is needed.")
+            lines.append("- You may perform up to \(maxSearches) searches for a single response when follow-up verification is needed.")
         }
 
         return lines.joined(separator: "\n")

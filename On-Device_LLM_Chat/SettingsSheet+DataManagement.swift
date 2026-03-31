@@ -90,13 +90,11 @@ extension SettingsSheet {
     // MARK: - Actions
 
     func deletePreset(_ preset: SystemPromptPreset) {
-        var items = customPresets
-        items.removeAll { $0.id == preset.id }
-        updateCustomPresets(items)
+        settings.customPresets.removeAll { $0.id == preset.id }
     }
 
     func saveCurrentAsPreset() {
-        let trimmed = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = settings.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         editingPreset = SystemPromptPreset(name: "", text: trimmed)
         isEditingSheetPresented = true
@@ -107,26 +105,7 @@ extension SettingsSheet {
     }
 
     func resetSettings() {
-        // Restore defaults
-        appAppearance = "system"
-        appLanguage = "en"
-        defaultSystemPrompt = ""
-        customPresetsData = Data()
-        tavilyApiKey = ""
-
-        // QoL defaults
-        sendOnReturn = false
-        enableHaptics = true
-        reasoningModeDefault = false
-        messageFontSize = 16.0
-        mlxMaxOutputTokens = 1024
-        mlxEnableKVCacheQuantization = true
-        autoDeleteOldChats = false
-        autoDeleteDays = 30
-        developerModeEnabled = false
-
-        // Vision Framework defaults
-        visionConfidenceThreshold = 0.5
+        settings.resetToDefaults()
     }
 
     func openDiscordInvite() {

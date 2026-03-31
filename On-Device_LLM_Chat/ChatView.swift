@@ -39,13 +39,9 @@ struct ChatView: View {
     // Camera state
     @State private var showCameraCapture = false
 
-    // Pickers state
-    @State private var selectedPickerItems: [PhotosPickerItem] = []
-
     // Network monitoring
     @ObservedObject private var networkMonitor = NetworkMonitor.shared
     @State private var isFileImporterPresented = false
-    @State private var showPhotosPicker = false
 
     // Image attachment state
     @State private var showImagePicker = false
@@ -108,6 +104,14 @@ struct ChatView: View {
         let title: String
         let message: String
         let retry: (() -> Void)?
+    }
+
+    static func shouldPresentInAppBrowser(for url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+
+        return scheme == "http" || scheme == "https"
     }
 
     var body: some View {
@@ -322,15 +326,6 @@ struct ChatView: View {
                 )
             }
         }
-        .onChange(of: selectedPickerItems) { _, newItems in
-            Task {
-                do {
-                    try await handlePickedPhotos(items: newItems)
-                } catch {
-                    await handleError(error, title: "Photo Import Failed", retry: nil)
-                }
-            }
-        }
         .fileImporter(
             isPresented: $isFileImporterPresented,
             allowedContentTypes: [.image],
@@ -344,12 +339,6 @@ struct ChatView: View {
                 }
             }
         }
-        .photosPicker(
-            isPresented: $showPhotosPicker,
-            selection: $selectedPickerItems,
-            matching: .images,
-            photoLibrary: .shared()
-        )
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
@@ -378,10 +367,13 @@ struct ChatView: View {
                 forceSearch = false
             }
         }
-        // In-app browser: intercept link taps and present SafariView
         .environment(\.openURL, OpenURLAction { url in
-            activeURL = url
-            return .handled
+            if Self.shouldPresentInAppBrowser(for: url) {
+                activeURL = url
+                return .handled
+            }
+
+            return .systemAction(url)
         })
         .sheet(item: $activeURL) { url in
             SafariView(url: url)
@@ -524,25 +516,6 @@ struct ChatView: View {
     }
 
     // MARK: - Image and File Handling
-
-    private func handlePickedPhotos(items: [PhotosPickerItem]) async throws {
-        guard !items.isEmpty else { return }
-        for item in items {
-            do {
-                guard let image = try await loadThumbnailImage(
-                    from: item,
-                    maxPixelSize: 2_048
-                ) else {
-                    throw ImageError.invalidFormat
-                }
-                await handleImageForOCR(image)
-            } catch {
-                logger.error("Failed to process photo item: \(error.localizedDescription)")
-                throw error
-            }
-        }
-        await MainActor.run { selectedPickerItems = [] }
-    }
 
     private func handleFileImporterResult(_ result: Result<[URL], Error>) async throws {
         switch result {

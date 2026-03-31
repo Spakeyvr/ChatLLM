@@ -1145,11 +1145,7 @@ final class ChatViewModel: ObservableObject {
         )
 
         Task { @MainActor in
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.prepare()
-            generator.impactOccurred(intensity: 0.7)
-            try? await Task.sleep(for: .milliseconds(80))
-            generator.impactOccurred(intensity: 1.0)
+            await AppHaptics.generationCompleted()
         }
 
         return outcome

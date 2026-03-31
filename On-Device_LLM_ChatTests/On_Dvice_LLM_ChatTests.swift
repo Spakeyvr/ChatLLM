@@ -569,41 +569,106 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func resetSettingsRestoresKVQuantizationDefault() {
-        UserDefaults.standard.mlxEnableKVCacheQuantization = false
+        var draft = AppSettingsDraft.defaults()
+        draft.mlxEnableKVCacheQuantization = false
 
-        let settings = SettingsSheet(
-            defaultSystemPrompt: .constant("System prompt"),
-            appAppearance: .constant("dark"),
-            appLanguage: .constant("en"),
-            hasChats: false,
-            canDeleteAllExceptCurrent: false,
-            onDeleteAll: {},
-            onDeleteAllExceptCurrent: {},
-            onExportChats: {}
-        )
+        draft.resetToDefaults()
 
-        settings.resetSettings()
-
-        #expect(UserDefaults.standard.mlxEnableKVCacheQuantization == true)
+        #expect(draft.mlxEnableKVCacheQuantization)
     }
 
     @Test func resetSettingsRestoresDeveloperModeDefault() {
-        UserDefaults.standard.set(true, forKey: "developerModeEnabled")
+        var draft = AppSettingsDraft.defaults()
+        draft.developerModeEnabled = true
 
-        let settings = SettingsSheet(
-            defaultSystemPrompt: .constant("System prompt"),
-            appAppearance: .constant("dark"),
-            appLanguage: .constant("en"),
-            hasChats: false,
-            canDeleteAllExceptCurrent: false,
-            onDeleteAll: {},
-            onDeleteAllExceptCurrent: {},
-            onExportChats: {}
+        draft.resetToDefaults()
+
+        #expect(!draft.developerModeEnabled)
+    }
+
+    @Test func resetSettingsRestoresContextWindowAndToolCallDefaults() {
+        var draft = AppSettingsDraft.defaults()
+        draft.mlxContextWindowTokens = 4_096
+        draft.disableToolCalls = true
+        draft.sendOnReturn = true
+
+        draft.resetToDefaults()
+
+        #expect(draft.mlxContextWindowTokens == 0)
+        #expect(!draft.disableToolCalls)
+        #expect(!draft.sendOnReturn)
+    }
+
+    @Test func appSettingsDraftDoesNotPersistUntilSave() throws {
+        let suiteName = "settings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("Existing prompt", forKey: AppSettingsKeys.defaultSystemPrompt)
+        defaults.set(false, forKey: AppSettingsKeys.developerModeEnabled)
+        defaults.set(false, forKey: AppSettingsKeys.disableToolCalls)
+
+        var draft = AppSettingsDraft.load(from: defaults)
+        draft.defaultSystemPrompt = "Draft only"
+        draft.developerModeEnabled = true
+        draft.disableToolCalls = true
+
+        #expect(defaults.string(forKey: AppSettingsKeys.defaultSystemPrompt) == "Existing prompt")
+        #expect(defaults.bool(forKey: AppSettingsKeys.developerModeEnabled) == false)
+        #expect(defaults.bool(forKey: AppSettingsKeys.disableToolCalls) == false)
+
+        draft.persist(to: defaults)
+
+        #expect(defaults.string(forKey: AppSettingsKeys.defaultSystemPrompt) == "Draft only")
+        #expect(defaults.bool(forKey: AppSettingsKeys.developerModeEnabled))
+        #expect(defaults.bool(forKey: AppSettingsKeys.disableToolCalls))
+    }
+
+    @Test func tavilyKeyMigratesOutOfPlaintextUserDefaults() throws {
+        let suiteName = "tavily-migration-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let service = "test.service.\(UUID().uuidString)"
+        let account = "test.account"
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            TavilyAPIKeyStore.clear(userDefaults: defaults, service: service, account: account, postNotification: false)
+        }
+
+        defaults.set(" legacy-key ", forKey: TavilyAPIKeyStore.userDefaultsKey)
+
+        let migrated = TavilyAPIKeyStore.currentKey(
+            userDefaults: defaults,
+            service: service,
+            account: account
         )
 
-        settings.resetSettings()
+        #expect(migrated == "legacy-key")
+        #expect(defaults.object(forKey: TavilyAPIKeyStore.userDefaultsKey) == nil)
+        #expect(TavilyAPIKeyStore.currentKey(userDefaults: defaults, service: service, account: account) == "legacy-key")
+    }
 
-        #expect(UserDefaults.standard.bool(forKey: "developerModeEnabled") == false)
+    @Test func tavilySaveDoesNotLeavePlaintextCopyBehind() throws {
+        let suiteName = "tavily-save-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let service = "test.service.\(UUID().uuidString)"
+        let account = "test.account"
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            TavilyAPIKeyStore.clear(userDefaults: defaults, service: service, account: account, postNotification: false)
+        }
+
+        TavilyAPIKeyStore.save(
+            "test-secret",
+            userDefaults: defaults,
+            service: service,
+            account: account
+        )
+
+        #expect(defaults.object(forKey: TavilyAPIKeyStore.userDefaultsKey) == nil)
+        #expect(TavilyAPIKeyStore.currentKey(userDefaults: defaults, service: service, account: account) == "test-secret")
     }
 
     @Test func resetForRegenerationClearsDeveloperMetadata() {
@@ -766,6 +831,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func webSearchSystemPromptUsesCurrentCalendarYear() {
         let year = Calendar.current.component(.year, from: Date())
+        let sentinelYear = year == 2026 ? 2025 : 2026
 
         let prompt = ChatViewModel.webSearchSystemPrompt(
             reasoningEnabled: false,
@@ -773,7 +839,112 @@ struct On_Device_LLM_ChatTests {
         )
 
         #expect(prompt.contains("add \(year) to the search query"))
-        #expect(!prompt.contains("add 2026 to the search query"))
+        #expect(!prompt.contains("add \(sentinelYear) to the search query"))
+    }
+
+    @Test func webSearchSystemPromptMatchesSearchInvocationLimit() {
+        let prompt = ChatViewModel.webSearchSystemPrompt(
+            reasoningEnabled: true,
+            forceSearchRequired: false
+        )
+
+        #expect(prompt.contains("up to and only up to \(AppWebSearchToolBridge.maxInvocations) searches"))
+    }
+
+    @Test func conversationSearchableVisibleTextUsesDisplayedContent() {
+        let conversation = Conversation(title: "Vision")
+        let user = Message(
+            role: .user,
+            text: """
+            [HIDDEN_IMAGE_CONTEXT]ocr: secret token[/HIDDEN_IMAGE_CONTEXT]
+            What does the sign say?
+            """,
+            order: 0,
+            conversation: conversation,
+            isFinal: true
+        )
+        let assistant = Message(
+            role: .assistant,
+            text: "intermediate",
+            order: 1,
+            conversation: conversation,
+            isFinal: true,
+            reasoning: "internal reasoning",
+            finalAnswer: "The sign says Welcome.",
+            isReasoningMode: true
+        )
+        conversation.messages = [user, assistant]
+
+        #expect(conversation.searchableVisibleText.contains("What does the sign say?"))
+        #expect(conversation.searchableVisibleText.contains("The sign says Welcome."))
+        #expect(!conversation.searchableVisibleText.contains("secret token"))
+        #expect(!conversation.searchableVisibleText.contains("internal reasoning"))
+    }
+
+    @Test func chatViewOnlyInterceptsWebURLsForInAppBrowser() throws {
+        #expect(ChatView.shouldPresentInAppBrowser(for: try #require(URL(string: "https://example.com"))))
+        #expect(!ChatView.shouldPresentInAppBrowser(for: try #require(URL(string: "mailto:test@example.com"))))
+        #expect(!ChatView.shouldPresentInAppBrowser(for: try #require(URL(string: "tel:+123456"))))
+    }
+
+    @Test func networkMonitorStartsOfflineUntilFirstPathResolves() async {
+        let monitor = FakePathMonitor()
+        let networkMonitor = NetworkMonitor(
+            monitor: monitor,
+            queue: DispatchQueue(label: "test.network.monitor")
+        )
+
+        #expect(!networkMonitor.isConnected)
+
+        monitor.emit(.satisfied)
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        #expect(networkMonitor.isConnected)
+    }
+
+    @Test func composerReturnKeyBehaviorSendsOnlyWhenEnabledAndSendable() {
+        #expect(
+            ComposerReturnKeyBehavior.action(
+                sendOnReturn: true,
+                canSend: true,
+                isGenerating: false,
+                replacementText: "\n"
+            ) == .send
+        )
+        #expect(
+            ComposerReturnKeyBehavior.action(
+                sendOnReturn: false,
+                canSend: true,
+                isGenerating: false,
+                replacementText: "\n"
+            ) == .insertNewline
+        )
+        #expect(
+            ComposerReturnKeyBehavior.action(
+                sendOnReturn: true,
+                canSend: false,
+                isGenerating: false,
+                replacementText: "\n"
+            ) == .insertNewline
+        )
+    }
+
+    @Test func disabledHapticsSuppressFeedbackDispatch() throws {
+        let suiteName = "haptics-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.enableHapticsPreference = false
+        var invoked = false
+
+        let didPerform = AppHaptics.performIfEnabled(defaults: defaults) {
+            invoked = true
+        }
+
+        #expect(!didPerform)
+        #expect(!invoked)
     }
 
     @Test func searchSessionParserKeepsBulletAnswerAfterThinkingCloses() {
@@ -1306,6 +1477,20 @@ private actor CancellationProbe {
 
     func isCancelled() -> Bool {
         cancelled
+    }
+}
+
+private final class FakePathMonitor: PathMonitoring {
+    nonisolated(unsafe) var pathUpdateHandler: ((NetworkPathStatus) -> Void)?
+
+    func start(queue: DispatchQueue) {
+        _ = queue
+    }
+
+    func cancel() {}
+
+    func emit(_ status: NetworkPathStatus) {
+        pathUpdateHandler?(status)
     }
 }
 

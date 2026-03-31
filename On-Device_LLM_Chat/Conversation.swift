@@ -45,4 +45,13 @@ final class Conversation {
         self.preferredModelID = preferredModelID
         self.messages = messages
     }
+
+    var searchableVisibleText: String {
+        messages
+            .filter { $0.role != .system }
+            .sortedByOrder
+            .map(\.displayText)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n")
+    }
 }

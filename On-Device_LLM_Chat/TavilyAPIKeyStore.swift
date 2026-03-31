@@ -15,47 +15,102 @@ enum TavilyAPIKeyStore {
     static let didChangeNotification = Notification.Name("TavilyKeyChanged")
 
     static func currentKey() -> String? {
-        if UserDefaults.standard.object(forKey: userDefaultsKey) != nil,
-           let storedKey = UserDefaults.standard.string(forKey: userDefaultsKey) {
-            let trimmedKey = storedKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedKey.isEmpty else {
-                deleteKeychainValue(service: service, account: account)
-                UserDefaults.standard.removeObject(forKey: userDefaultsKey)
-                return nil
-            }
-
-            if getKeychainValue(service: service, account: account) != trimmedKey {
-                saveKeychainValue(trimmedKey, service: service, account: account)
-            }
-            return trimmedKey
-        }
-
-        guard let key = getKeychainValue(service: service, account: account) else {
-            return nil
-        }
-
-        UserDefaults.standard.set(key, forKey: userDefaultsKey)
-        return key
+        currentKey(
+            userDefaults: .standard,
+            service: service,
+            account: account
+        )
     }
 
     static func save(_ key: String) {
-        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
-            clear()
-            return
-        }
-
-        UserDefaults.standard.set(trimmedKey, forKey: userDefaultsKey)
-        saveKeychainValue(trimmedKey, service: service, account: account)
-        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        save(
+            key,
+            userDefaults: .standard,
+            service: service,
+            account: account
+        )
     }
 
     static func clear(postNotification: Bool = true) {
+        clear(
+            userDefaults: .standard,
+            service: service,
+            account: account,
+            postNotification: postNotification
+        )
+    }
+
+    static func currentKey(
+        userDefaults: UserDefaults,
+        service: String,
+        account: String
+    ) -> String? {
+        migrateLegacyPlaintextKeyIfNeeded(
+            userDefaults: userDefaults,
+            service: service,
+            account: account
+        )
+
+        return getKeychainValue(service: service, account: account)
+    }
+
+    static func save(
+        _ key: String,
+        userDefaults: UserDefaults,
+        service: String,
+        account: String
+    ) {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            clear(
+                userDefaults: userDefaults,
+                service: service,
+                account: account
+            )
+            return
+        }
+
+        saveKeychainValue(trimmedKey, service: service, account: account)
+        userDefaults.removeObject(forKey: userDefaultsKey)
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+
+    static func clear(
+        userDefaults: UserDefaults,
+        service: String,
+        account: String,
+        postNotification: Bool = true
+    ) {
         deleteKeychainValue(service: service, account: account)
-        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        userDefaults.removeObject(forKey: userDefaultsKey)
 
         if postNotification {
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+
+    private static func migrateLegacyPlaintextKeyIfNeeded(
+        userDefaults: UserDefaults,
+        service: String,
+        account: String
+    ) {
+        guard userDefaults.object(forKey: userDefaultsKey) != nil else {
+            return
+        }
+
+        let legacyValue = userDefaults.string(forKey: userDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        defer {
+            userDefaults.removeObject(forKey: userDefaultsKey)
+        }
+
+        guard !legacyValue.isEmpty else {
+            return
+        }
+
+        if getKeychainValue(service: service, account: account) != legacyValue {
+            saveKeychainValue(legacyValue, service: service, account: account)
         }
     }
 

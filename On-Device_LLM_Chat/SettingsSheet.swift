@@ -4,9 +4,7 @@ struct SettingsSheet: View {
     static let mlxKVCacheInfoMessage = String(localized: "Enabled by default for persistent MLX chats, this reduces memory use by quantizing the KV cache to 8-bit after an initial warmup. Devices with less than 12 GB of RAM may automatically switch all MLX turns to a bounded sliding-window cache to avoid crashes. Upstream MLX does not support quantizing rotating KV caches yet, so those low-memory runs skip KV quantization automatically.")
     static let mlxKVCacheAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory devices may switch to a bounded sliding-window cache, which skips KV quantization.")
 
-    @Binding var defaultSystemPrompt: String
-    @Binding var appAppearance: String   // "system" | "light" | "dark"
-    @Binding var appLanguage: String     // "en" | "de" | "es"
+    @Binding var settings: AppSettingsDraft
 
     let hasChats: Bool
     let canDeleteAllExceptCurrent: Bool
@@ -14,39 +12,14 @@ struct SettingsSheet: View {
     let onDeleteAllExceptCurrent: () -> Void
     let onExportChats: () -> Void
 
-    // Persist custom presets in UserDefaults via AppStorage (per-device)
-    @AppStorage("customSystemPromptPresets") var customPresetsData: Data = Data()
+    let confirmBeforeDeletingChats = true
+    private let showCharacterCount = true
+    private let useMonospacedEditors = true
 
-    // Tavily API key
-    @AppStorage("tavilyApiKey") var tavilyApiKey: String = ""
+    @State var editingPreset: SystemPromptPreset?
+    @State var isEditingSheetPresented = false
+    @State private var isDefaultPromptFocused = false
 
-    // Quality-of-life settings
-    @AppStorage("sendOnReturn") var sendOnReturn: Bool = false
-    @AppStorage("enableHaptics") var enableHaptics: Bool = true
-    @AppStorage("reasoningModeDefault") var reasoningModeDefault: Bool = false
-    @AppStorage("messageFontSize") var messageFontSize: Double = 16.0 // 12-22 range
-    @AppStorage("mlxMaxOutputTokens") var mlxMaxOutputTokens: Int = 1024
-    @AppStorage("mlxContextWindowTokens") var mlxContextWindowTokens: Int = 0
-    @AppStorage("mlxEnableKVCacheQuantization") var mlxEnableKVCacheQuantization: Bool = true
-    @AppStorage("autoDeleteOldChats") var autoDeleteOldChats: Bool = false
-    @AppStorage("autoDeleteDays") var autoDeleteDays: Int = 30 // 7, 14, 30, 60, 90
-    @AppStorage("developerModeEnabled") var developerModeEnabled: Bool = false
-
-    // Vision Framework settings
-    @AppStorage("visionConfidenceThreshold") var visionConfidenceThreshold: Double = 0.5
-
-    // These are always enabled for best experience
-    let confirmBeforeDeletingChats: Bool = true
-    private let showCharacterCount: Bool = true
-    private let useMonospacedEditors: Bool = true
-
-    // Editor sheet state
-    @State var editingPreset: SystemPromptPreset? = nil
-    @State var isEditingSheetPresented: Bool = false
-
-    @State private var isDefaultPromptFocused: Bool = false
-
-    // Confirmation alerts
     enum PendingAction: Identifiable {
         case deleteAll
         case deleteAllExceptCurrent
@@ -60,9 +33,9 @@ struct SettingsSheet: View {
             }
         }
     }
+
     @State var pendingAction: PendingAction?
 
-    // Built-in presets (read-only)
     private let builtInPresets: [SystemPromptPreset] = [
         .init(name: String(localized: "Helpful assistant"),
               text: "You are a helpful, concise assistant. Prefer clear explanations and actionable steps."),
@@ -74,26 +47,16 @@ struct SettingsSheet: View {
               text: "You are a patient teacher. Break concepts into steps and check for understanding with brief questions.")
     ]
 
-    // Decoded/encoded custom presets
-    var customPresets: [SystemPromptPreset] {
-        (try? JSONDecoder().decode([SystemPromptPreset].self, from: customPresetsData)) ?? []
-    }
-
-    func updateCustomPresets(_ newValue: [SystemPromptPreset]) {
-        customPresetsData = (try? JSONEncoder().encode(newValue)) ?? Data()
-    }
-
     var body: some View {
         NavigationStack {
             Form {
-                // MARK: General
                 Section(header: Text("General")) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(String(localized: "Appearance"))
                         }
-                        
-                        Picker("", selection: $appAppearance) {
+
+                        Picker("", selection: $settings.appAppearance) {
                             appearanceOption(localized: "System", icon: "circle.lefthalf.filled", tag: "system")
                             appearanceOption(localized: "Light", icon: "sun.max", tag: "light")
                             appearanceOption(localized: "Dark", icon: "moon", tag: "dark")
@@ -102,19 +65,18 @@ struct SettingsSheet: View {
                         .accessibilityLabel(String(localized: "App Appearance"))
                     }
 
-                    Picker(selection: $appLanguage) {
+                    Picker(selection: $settings.appLanguage) {
                         Text(String(localized: "English")).tag("en")
                     } label: {
                         HStack(spacing: 6) {
                             Text(String(localized: "Language"))
                         }
                     }
-                    .disabled(true) // Only English available
+                    .disabled(true)
                 }
 
-                // MARK: Behavior
                 Section(header: Text("Behavior")) {
-                    Toggle(isOn: $sendOnReturn) {
+                    Toggle(isOn: $settings.sendOnReturn) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Send on Return"), systemImage: "return")
                             InfoButton(
@@ -125,7 +87,7 @@ struct SettingsSheet: View {
                     }
                     .accessibilityHint(String(localized: "Pressing Return sends the message instead of inserting a new line."))
 
-                    Toggle(isOn: $enableHaptics) {
+                    Toggle(isOn: $settings.enableHaptics) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Enable Haptics"), systemImage: "waveform")
                             InfoButton(
@@ -134,8 +96,8 @@ struct SettingsSheet: View {
                             )
                         }
                     }
-                    
-                    Toggle(isOn: $reasoningModeDefault) {
+
+                    Toggle(isOn: $settings.reasoningModeDefault) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Reasoning Mode by Default"), systemImage: "brain.head.profile")
                             InfoButton(
@@ -171,7 +133,7 @@ struct SettingsSheet: View {
                     }
                     .padding(.vertical, 4)
 
-                    Toggle(isOn: $mlxEnableKVCacheQuantization) {
+                    Toggle(isOn: $settings.mlxEnableKVCacheQuantization) {
                         HStack(spacing: 6) {
                             Label(String(localized: "8-Bit KV Cache (MLX Only)"), systemImage: "memorychip")
                             InfoButton(
@@ -182,7 +144,7 @@ struct SettingsSheet: View {
                     }
                     .accessibilityHint(Self.mlxKVCacheAccessibilityHint)
 
-                    Toggle(isOn: $developerModeEnabled) {
+                    Toggle(isOn: $settings.developerModeEnabled) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Developer Mode"), systemImage: "hammer")
                             InfoButton(
@@ -193,8 +155,7 @@ struct SettingsSheet: View {
                     }
                     .accessibilityHint(String(localized: "Shows raw output and generation diagnostics for assistant messages."))
                 }
-                
-                // MARK: Display
+
                 Section(
                     header: Text(String(localized: "Display")),
                     footer: Text(String(localized: "Adjust the font size for messages in conversations."))
@@ -207,19 +168,16 @@ struct SettingsSheet: View {
                                 message: String(localized: "Adjust the size of text in conversation messages. Affects both user and assistant messages.")
                             )
                         }
-                        
-                        fontSizeSlider
 
+                        fontSizeSlider
                     }
                     .padding(.vertical, 4)
                 }
-                
-                // MARK: Object Detection
+
                 Section(
                     header: Text(String(localized: "Object Detection")),
                     footer: Text(String(localized: "Used as a compatibility fallback for image analysis when native model-based vision is unavailable."))
                 ) {
-                    // Confidence Threshold slider
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Confidence Threshold"), systemImage: "chart.bar.fill")
@@ -228,12 +186,11 @@ struct SettingsSheet: View {
                                 message: String(localized: "Minimum confidence (10–90%) for Vision fallback object detection. Higher values reduce false positives but may miss valid objects.")
                             )
                         }
-                        
+
                         confidenceThresholdSlider
                     }
                     .padding(.vertical, 4)
-                    
-                    // Status indicator
+
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.caption2)
@@ -243,8 +200,7 @@ struct SettingsSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                
-                // MARK: Tavily Search
+
                 Section(
                     header: Text(String(localized: "Tavily Search")),
                     footer: Text(String(localized: "Enter your Tavily API key to enable web search capabilities in conversations. Sign up at tavily.com for a free API key."))
@@ -256,14 +212,14 @@ struct SettingsSheet: View {
                             message: String(localized: "Tavily provides AI-optimized search results. Paste your API key here to integrate web search into the assistant's responses. Obtain one from https://tavily.com.")
                         )
                     }
-                    
-                    SecureField(String(localized: "Enter your Tavily API key"), text: $tavilyApiKey)
+
+                    SecureField(String(localized: "Enter your Tavily API key"), text: $settings.tavilyApiKey)
                         .textContentType(.password)
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
                         .accessibilityLabel(String(localized: "Tavily API Key"))
-                    
-                    if !tavilyApiKey.isEmpty {
+
+                    if !settings.tavilyApiKey.isEmpty {
                         Button {
                             openTavilySignUp()
                         } label: {
@@ -281,15 +237,14 @@ struct SettingsSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
-                
-                // MARK: Privacy
+
                 Section(
                     header: Text(String(localized: "Privacy")),
-                    footer: autoDeleteOldChats 
-                        ? Text("Conversations older than \(autoDeleteDays) days will be automatically deleted.")
+                    footer: settings.autoDeleteOldChats
+                        ? Text("Conversations older than \(settings.autoDeleteDays) days will be automatically deleted.")
                         : Text(String(localized: "Automatically delete conversations after a specified time period."))
                 ) {
-                    Toggle(isOn: $autoDeleteOldChats) {
+                    Toggle(isOn: $settings.autoDeleteOldChats) {
                         HStack(spacing: 6) {
                             Label(String(localized: "Auto-Delete Old Chats"), systemImage: "clock.badge.xmark")
                             InfoButton(
@@ -298,9 +253,9 @@ struct SettingsSheet: View {
                             )
                         }
                     }
-                    
-                    if autoDeleteOldChats {
-                        Picker(selection: $autoDeleteDays) {
+
+                    if settings.autoDeleteOldChats {
+                        Picker(selection: $settings.autoDeleteDays) {
                             Text(String(localized: "7 days")).tag(7)
                             Text(String(localized: "14 days")).tag(14)
                             Text(String(localized: "30 days")).tag(30)
@@ -313,7 +268,6 @@ struct SettingsSheet: View {
                     }
                 }
 
-                // MARK: Chat Defaults
                 Section(
                     header:
                         HStack(spacing: 6) {
@@ -327,7 +281,7 @@ struct SettingsSheet: View {
                     footer: Text(String(localized: "New chats will start with this system prompt. You can change it per chat from the gear button in the conversation."))
                 ) {
                     NativePromptEditor(
-                        text: $defaultSystemPrompt,
+                        text: $settings.defaultSystemPrompt,
                         placeholder: String(localized: "Describe the assistant’s default behavior for new chats…"),
                         isFocused: $isDefaultPromptFocused,
                         minHeight: 140,
@@ -337,7 +291,7 @@ struct SettingsSheet: View {
 
                     HStack {
                         if showCharacterCount {
-                            let count = defaultSystemPrompt.count
+                            let count = settings.defaultSystemPrompt.count
                             let counter = String(localized: "characters")
                             Text("\(count) \(counter)")
                                 .font(.caption)
@@ -350,9 +304,9 @@ struct SettingsSheet: View {
                             } label: {
                                 Label(String(localized: "Save as Preset"), systemImage: "bookmark.badge.plus")
                             }
-                            if !defaultSystemPrompt.isEmpty {
+                            if !settings.defaultSystemPrompt.isEmpty {
                                 Button(role: .destructive) {
-                                    defaultSystemPrompt = ""
+                                    settings.defaultSystemPrompt = ""
                                 } label: {
                                     Label(String(localized: "Clear"), systemImage: "trash")
                                 }
@@ -363,16 +317,16 @@ struct SettingsSheet: View {
                         .accessibilityLabel(String(localized: "Default System Prompt Actions"))
                     }
                     .contextMenu {
-                        if !defaultSystemPrompt.isEmpty {
+                        if !settings.defaultSystemPrompt.isEmpty {
                             Button {
-                                UIPasteboard.general.string = defaultSystemPrompt
+                                UIPasteboard.general.string = settings.defaultSystemPrompt
                             } label: {
                                 Label(String(localized: "Copy"), systemImage: "doc.on.doc")
                             }
                         }
                         Button {
                             if let str = UIPasteboard.general.string {
-                                defaultSystemPrompt = str
+                                settings.defaultSystemPrompt = str
                             }
                         } label: {
                             Label(String(localized: "Paste"), systemImage: "doc.on.clipboard")
@@ -380,9 +334,7 @@ struct SettingsSheet: View {
                     }
                 }
 
-                // MARK: Presets
                 Section(header: Text(String(localized: "System Prompt Presets"))) {
-                    // Built-in (read-only)
                     if !builtInPresets.isEmpty {
                         DisclosureGroup(String(localized: "Built‑in")) {
                             ForEach(builtInPresets) { preset in
@@ -391,23 +343,18 @@ struct SettingsSheet: View {
                         }
                     }
 
-                    // Custom (editable)
                     DisclosureGroup(String(localized: "Your Presets")) {
-                        if customPresets.isEmpty {
+                        if settings.customPresets.isEmpty {
                             Text(String(localized: "No custom presets yet. Tap “New Preset” to create one."))
                                 .foregroundStyle(.secondary)
                         } else {
                             EditablePresetList(
-                                presets: customPresets,
+                                presets: settings.customPresets,
                                 onMove: { from, to in
-                                    var items = customPresets
-                                    items.move(fromOffsets: from, toOffset: to)
-                                    updateCustomPresets(items)
+                                    settings.customPresets.move(fromOffsets: from, toOffset: to)
                                 },
                                 onDelete: { offsets in
-                                    var items = customPresets
-                                    items.remove(atOffsets: offsets)
-                                    updateCustomPresets(items)
+                                    settings.customPresets.remove(atOffsets: offsets)
                                 },
                                 row: { preset in
                                     presetRow(preset, isCustom: true)
@@ -416,7 +363,10 @@ struct SettingsSheet: View {
                         }
 
                         Button {
-                            editingPreset = SystemPromptPreset(name: "", text: defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                            editingPreset = SystemPromptPreset(
+                                name: "",
+                                text: settings.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                            )
                             isEditingSheetPresented = true
                         } label: {
                             Label(String(localized: "New Preset"), systemImage: "plus.circle")
@@ -426,7 +376,6 @@ struct SettingsSheet: View {
                 }
 
                 aboutSection
-
                 dataManagementSection
             }
             .scrollDismissesKeyboard(.interactively)
@@ -440,13 +389,11 @@ struct SettingsSheet: View {
                     preset: editingPreset ?? SystemPromptPreset(name: "", text: ""),
                     onCancel: { isEditingSheetPresented = false },
                     onSave: { saved in
-                        var items = customPresets
-                        if let idx = items.firstIndex(where: { $0.id == saved.id }) {
-                            items[idx] = saved
+                        if let idx = settings.customPresets.firstIndex(where: { $0.id == saved.id }) {
+                            settings.customPresets[idx] = saved
                         } else {
-                            items.insert(saved, at: 0)
+                            settings.customPresets.insert(saved, at: 0)
                         }
-                        updateCustomPresets(items)
                         isEditingSheetPresented = false
                     }
                 )
@@ -480,37 +427,44 @@ struct SettingsSheet: View {
                 )
             }
         }
-        .onChange(of: tavilyApiKey) { _, _ in
-            NotificationCenter.default.post(name: TavilyAPIKeyStore.didChangeNotification, object: nil)
-        }
     }
 
-    // MARK: - Rows and actions
-    
+    private var effectiveContextWindowTokens: Int {
+        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
+        let minimum = 512
+        let storedValue = settings.mlxContextWindowTokens
+
+        if storedValue <= 0 {
+            return deviceMaximum
+        }
+
+        return min(max(storedValue, minimum), deviceMaximum)
+    }
+
     @ViewBuilder
     private var fontSizeSlider: some View {
         HStack(spacing: 12) {
             Text("A")
                 .font(.caption)
                 .foregroundStyle(.primary.opacity(0.6))
-            
-            Slider(value: $messageFontSize, in: 12...22, step: 1)
+
+            Slider(value: $settings.messageFontSize, in: 12...22, step: 1)
                 .tint(.accentColor)
                 .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
                 .accessibilityLabel(String(localized: "Message Font Size"))
-                .accessibilityValue("\(Int(messageFontSize)) points")
-            
+                .accessibilityValue("\(Int(settings.messageFontSize)) points")
+
             Text("A")
                 .font(.title3)
                 .foregroundStyle(.primary.opacity(0.6))
-            
+
             fontSizeLabel
 
             Spacer(minLength: 8)
 
             Button {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    messageFontSize = 16.0
+                    settings.messageFontSize = 16.0
                 }
             } label: {
                 Image(systemName: "arrow.counterclockwise")
@@ -522,11 +476,11 @@ struct SettingsSheet: View {
             .help(String(localized: "Reset to 16 pt"))
         }
     }
-    
+
     @ViewBuilder
     private var fontSizeLabel: some View {
         HStack(spacing: 2) {
-            Text("\(Int(messageFontSize))")
+            Text("\(Int(settings.messageFontSize))")
                 .font(.caption)
             Text(String(localized: "pt"))
                 .font(.caption)
@@ -535,7 +489,7 @@ struct SettingsSheet: View {
         .frame(minWidth: 40, alignment: .trailing)
         .monospacedDigit()
     }
-    
+
     @ViewBuilder
     private var confidenceThresholdSlider: some View {
         HStack(spacing: 12) {
@@ -543,16 +497,16 @@ struct SettingsSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 30)
-            
-            Slider(value: $visionConfidenceThreshold, in: 0.1...0.9, step: 0.05)
+
+            Slider(value: $settings.visionConfidenceThreshold, in: 0.1...0.9, step: 0.05)
                 .accessibilityLabel(String(localized: "Confidence Threshold"))
                 .accessibilityValue(confidenceAccessibilityValue)
-            
+
             Text("90%")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 30)
-            
+
             confidenceValueLabel
         }
     }
@@ -560,14 +514,14 @@ struct SettingsSheet: View {
     @ViewBuilder
     private var maxOutputTokensSlider: some View {
         let unlimitedBinding = Binding<Bool>(
-            get: { mlxMaxOutputTokens == 0 },
+            get: { settings.mlxMaxOutputTokens == 0 },
             set: { isUnlimited in
-                mlxMaxOutputTokens = isUnlimited ? 0 : 1024
+                settings.mlxMaxOutputTokens = isUnlimited ? 0 : 1024
             }
         )
         let tokenBinding = Binding<Double>(
-            get: { Double(max(512, mlxMaxOutputTokens == 0 ? 1024 : mlxMaxOutputTokens)) },
-            set: { mlxMaxOutputTokens = Int($0.rounded()) }
+            get: { Double(max(512, settings.mlxMaxOutputTokens == 0 ? 1024 : settings.mlxMaxOutputTokens)) },
+            set: { settings.mlxMaxOutputTokens = Int($0.rounded()) }
         )
 
         VStack(alignment: .leading, spacing: 10) {
@@ -581,9 +535,9 @@ struct SettingsSheet: View {
                     .frame(minWidth: 30)
 
                 Slider(value: tokenBinding, in: 512...1024, step: 32)
-                    .disabled(mlxMaxOutputTokens == 0)
+                    .disabled(settings.mlxMaxOutputTokens == 0)
                     .accessibilityLabel(String(localized: "Max Output Tokens"))
-                    .accessibilityValue(mlxMaxOutputTokens == 0 ? String(localized: "Unlimited") : "\(mlxMaxOutputTokens) tokens")
+                    .accessibilityValue(settings.mlxMaxOutputTokens == 0 ? String(localized: "Unlimited") : "\(settings.mlxMaxOutputTokens) tokens")
 
                 Text("1024")
                     .font(.caption)
@@ -591,9 +545,9 @@ struct SettingsSheet: View {
                     .frame(minWidth: 36)
 
                 HStack(spacing: 2) {
-                    Text(mlxMaxOutputTokens == 0 ? String(localized: "Unlimited") : "\(mlxMaxOutputTokens)")
+                    Text(settings.mlxMaxOutputTokens == 0 ? String(localized: "Unlimited") : "\(settings.mlxMaxOutputTokens)")
                         .font(.caption)
-                    if mlxMaxOutputTokens != 0 {
+                    if settings.mlxMaxOutputTokens != 0 {
                         Text(String(localized: "tokens"))
                             .font(.caption)
                     }
@@ -610,14 +564,8 @@ struct SettingsSheet: View {
         let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
         let minimum = 512
         let tokenBinding = Binding<Double>(
-            get: {
-                Double(
-                    UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
-                )
-            },
-            set: { newValue in
-                mlxContextWindowTokens = Int(newValue.rounded())
-            }
+            get: { Double(effectiveContextWindowTokens) },
+            set: { settings.mlxContextWindowTokens = Int($0.rounded()) }
         )
 
         VStack(alignment: .leading, spacing: 10) {
@@ -629,7 +577,7 @@ struct SettingsSheet: View {
 
                 Slider(value: tokenBinding, in: Double(minimum)...Double(deviceMaximum), step: 512)
                     .accessibilityLabel(String(localized: "Context Window"))
-                    .accessibilityValue("\(UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)) tokens")
+                    .accessibilityValue("\(effectiveContextWindowTokens) tokens")
 
                 Text("\(deviceMaximum)")
                     .font(.caption)
@@ -637,7 +585,7 @@ struct SettingsSheet: View {
                     .frame(minWidth: 40)
 
                 HStack(spacing: 2) {
-                    Text("\(UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum))")
+                    Text("\(effectiveContextWindowTokens)")
                         .font(.caption)
                     Text(String(localized: "tokens"))
                         .font(.caption)
@@ -652,20 +600,20 @@ struct SettingsSheet: View {
                 .foregroundStyle(.secondary)
         }
     }
-    
+
     @ViewBuilder
     private var confidenceValueLabel: some View {
-        Text("\(Int((visionConfidenceThreshold * 100).rounded()))%")
+        Text("\(Int((settings.visionConfidenceThreshold * 100).rounded()))%")
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(minWidth: 40, alignment: .trailing)
             .monospacedDigit()
     }
-    
+
     private var confidenceAccessibilityValue: String {
-        "\(Int((visionConfidenceThreshold * 100).rounded()))%"
+        "\(Int((settings.visionConfidenceThreshold * 100).rounded()))%"
     }
-    
+
     @ViewBuilder
     private func appearanceOption(localized: String, icon: String, tag: String) -> some View {
         Label(localized, systemImage: icon).tag(tag)
@@ -684,7 +632,7 @@ struct SettingsSheet: View {
             }
             Spacer()
             Button {
-                defaultSystemPrompt = preset.text
+                settings.defaultSystemPrompt = preset.text
             } label: {
                 Image(systemName: "arrow.down.doc")
                     .accessibilityLabel(String(localized: "Apply preset"))
@@ -692,13 +640,12 @@ struct SettingsSheet: View {
         }
         .contextMenu {
             Button {
-                defaultSystemPrompt = preset.text
+                settings.defaultSystemPrompt = preset.text
             } label: {
                 Label(String(localized: "Apply"), systemImage: "arrow.down.doc")
             }
 
             Button {
-                // Copy text of preset
                 UIPasteboard.general.string = preset.text
             } label: {
                 Label(String(localized: "Copy"), systemImage: "doc.on.doc")
@@ -706,13 +653,10 @@ struct SettingsSheet: View {
 
             if isCustom {
                 Button {
-                    // Duplicate preset
-                    var items = customPresets
                     var copy = preset
                     copy.id = UUID()
                     copy.createdAt = Date()
-                    items.insert(copy, at: 0)
-                    updateCustomPresets(items)
+                    settings.customPresets.insert(copy, at: 0)
                 } label: {
                     Label(String(localized: "Duplicate"), systemImage: "plus.square.on.square")
                 }
@@ -733,7 +677,7 @@ struct SettingsSheet: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button {
-                defaultSystemPrompt = preset.text
+                settings.defaultSystemPrompt = preset.text
             } label: {
                 Label(String(localized: "Apply"), systemImage: "arrow.down.doc")
             }
@@ -741,13 +685,10 @@ struct SettingsSheet: View {
 
             if isCustom {
                 Button {
-                    // Duplicate preset quickly
-                    var items = customPresets
                     var copy = preset
                     copy.id = UUID()
                     copy.createdAt = Date()
-                    items.insert(copy, at: 0)
-                    updateCustomPresets(items)
+                    settings.customPresets.insert(copy, at: 0)
                 } label: {
                     Label(String(localized: "Duplicate"), systemImage: "plus.square.on.square")
                 }
@@ -769,17 +710,14 @@ struct SettingsSheet: View {
             }
         }
     }
-
 }
-
-// MARK: - Models and helpers
 
 private struct InfoButton: View {
     let title: String
     let message: String
-    
+
     @State private var showingInfo = false
-    
+
     var body: some View {
         Button {
             showingInfo = true
@@ -789,7 +727,7 @@ private struct InfoButton: View {
                 .font(.caption)
         }
         .alert(title, isPresented: $showingInfo) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) {}
         } message: {
             Text(message)
         }
@@ -798,7 +736,6 @@ private struct InfoButton: View {
     }
 }
 
-// A tiny wrapper to get reordering + delete with a custom row view.
 private struct EditablePresetList<Row: View>: View {
     var presets: [SystemPromptPreset]
     var onMove: (IndexSet, Int) -> Void
@@ -814,12 +751,10 @@ private struct EditablePresetList<Row: View>: View {
             .onDelete(perform: onDelete)
         }
         .frame(minHeight: 44 * CGFloat(max(1, presets.count)))
-        .environment(\.editMode, .constant(.active)) // always allow drag reordering
+        .environment(\.editMode, .constant(.active))
         .listStyle(.plain)
     }
 }
-
-// MARK: - Native Prompt Editor
 
 struct NativePromptEditor: View {
     @Binding var text: String

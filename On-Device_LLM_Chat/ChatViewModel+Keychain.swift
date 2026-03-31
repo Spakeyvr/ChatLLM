@@ -10,8 +10,7 @@ import os
 
 extension ChatViewModel {
 
-    /// Load API key from Keychain; initializes service if valid.
-    /// Syncs with AppStorage for consistency.
+    /// Load API key from the shared Keychain-backed store and initialize the search service.
     func loadTavilyAPIKey() {
         guard let key = TavilyAPIKeyStore.currentKey() else {
             searchService = nil
@@ -30,8 +29,7 @@ extension ChatViewModel {
         }
     }
 
-    /// Save API key to Keychain and AppStorage, then reinitialize service.
-    /// Call this from SettingsSheet when key changes.
+    /// Save API key to the shared Keychain-backed store, then reinitialize the service.
     func saveTavilyAPIKey(_ key: String) {
         TavilyAPIKeyStore.save(key)
         loadTavilyAPIKey()

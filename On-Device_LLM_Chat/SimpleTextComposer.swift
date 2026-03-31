@@ -8,6 +8,30 @@
 import SwiftUI
 import UIKit
 
+enum ComposerReturnKeyBehaviorAction: Equatable {
+    case send
+    case insertNewline
+}
+
+enum ComposerReturnKeyBehavior {
+    static func action(
+        sendOnReturn: Bool,
+        canSend: Bool,
+        isGenerating: Bool,
+        replacementText: String
+    ) -> ComposerReturnKeyBehaviorAction {
+        guard replacementText == "\n" else {
+            return .insertNewline
+        }
+
+        guard sendOnReturn, canSend, !isGenerating else {
+            return .insertNewline
+        }
+
+        return .send
+    }
+}
+
 struct SimpleTextComposer: View {
     @Binding var text: String
     var placeholder: String
@@ -27,22 +51,22 @@ struct SimpleTextComposer: View {
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
 
-    @FocusState private var isTextFieldFocused: Bool
+    @AppStorage(AppSettingsKeys.sendOnReturn) private var sendOnReturn = false
+
+    @State private var isTextViewFocused = false
     @State private var showAddSheet = false
+    @State private var composerHeight: CGFloat = 24
 
-    // Layout constants (aligned sizes so the circle doesn't stick out)
-    private let circleSize: CGFloat = 44            // match pill height
-    private let pillMinHeight: CGFloat = 44         // match circle height
+    private let circleSize: CGFloat = 44
+    private let pillMinHeight: CGFloat = 44
     private let pillHorizontalPadding: CGFloat = 10
-    private var reservedTrailingForSend: CGFloat { circleSize + 6 } // space for the overlaid circle
+    private let maxTextViewHeight: CGFloat = 112
+    private var reservedTrailingForSend: CGFloat { circleSize + 6 }
 
-    // Live measurement of the pill's height (used to adapt the corner radius)
     @State private var measuredPillHeight: CGFloat = 44
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-
-            // LEFT: Single + button - opens AddOptionsSheet
             Button {
                 showAddSheet = true
             } label: {
@@ -71,28 +95,34 @@ struct SimpleTextComposer: View {
                 .presentationDragIndicator(.visible)
             }
 
-           
-            // MIDDLE: Text pill with send button overlaid on its right edge - IN GlassEffectContainer
             GlassEffectContainer(spacing: 10.0) {
                 HStack(spacing: 8) {
-                    DynamicHeightTextEditor(
-                        text: $text,
-                        height: .constant(0),
-                        placeholder: placeholder
-                    )
-                    .focused($isTextFieldFocused)
-                    .onSubmit {
-                        if !isGenerating && canSend {
-                            onSend()
+                    ZStack(alignment: .topLeading) {
+                        ComposerTextView(
+                            text: $text,
+                            isFocused: $isTextViewFocused,
+                            measuredHeight: $composerHeight,
+                            sendOnReturn: sendOnReturn,
+                            canSend: canSend,
+                            isGenerating: isGenerating,
+                            maxHeight: maxTextViewHeight,
+                            onSend: onSend
+                        )
+                        .frame(height: max(24, composerHeight))
+
+                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(placeholder)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 2)
+                                .allowsHitTesting(false)
                         }
                     }
                 }
                 .padding(.horizontal, pillHorizontalPadding)
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
                 .padding(.trailing, reservedTrailingForSend)
                 .frame(minHeight: pillMinHeight, alignment: .center)
-                .tint(.blue) // caret/selection color
-                // Adaptive corner radius based on content height
                 .glassEffect(
                     .regular.interactive(),
                     in: .rect(cornerRadius: adaptiveCornerRadius(for: measuredPillHeight))
@@ -103,7 +133,6 @@ struct SimpleTextComposer: View {
                         style: .continuous
                     )
                 )
-                // Measure the pill's rendered height to drive the corner radius
                 .overlay(alignment: .topLeading) {
                     GeometryReader { geo in
                         Color.clear
@@ -111,18 +140,14 @@ struct SimpleTextComposer: View {
                     }
                 }
                 .onPreferenceChange(PillHeightKey.self) { newHeight in
-                    // Debounce tiny fluctuations
                     if abs(measuredPillHeight - newHeight) > 0.5 {
                         measuredPillHeight = newHeight
                     }
                 }
                 .overlay(alignment: .trailing) {
-                    // RIGHT: Send/Stop button sitting "on" the pill
                     Button {
-                        // Immediate haptic for snappy feel
-                        let h = UIImpactFeedbackGenerator(style: .light)
-                        h.impactOccurred()
-                       
+                        AppHaptics.impact(.light)
+
                         if isGenerating {
                             onStop()
                         } else if canSend {
@@ -148,8 +173,8 @@ struct SimpleTextComposer: View {
                     .buttonRepeatBehavior(.enabled)
                     .tint(canSend ? .blue : .secondary)
                     .glassEffect(.regular.interactive(), in: .circle)
-                    .offset(x: -6) // tuck the circle slightly into the pill
-                    .zIndex(10) // ensure it wins hit-testing over the text field
+                    .offset(x: -6)
+                    .zIndex(10)
                     .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 5)
                     .accessibilityLabel(isGenerating ? String(localized: "Stop") : String(localized: "Send"))
                     .accessibilityAddTraits(.isButton)
@@ -158,18 +183,14 @@ struct SimpleTextComposer: View {
             }
         }
     }
-    
-    // Corner radius eases from a capsule (22) toward a rounded rectangle (~14)
-    // as the pill grows taller when the text wraps to more lines.
+
     private func adaptiveCornerRadius(for height: CGFloat) -> CGFloat {
-        let maxRadius = pillMinHeight / 2           // 22 when pillMinHeight is 44 (capsule look)
-        let minRadius: CGFloat = 14                 // less rounded for multi-line
+        let maxRadius = pillMinHeight / 2
+        let minRadius: CGFloat = 14
         let ratio = max(0.0, min(1.0, pillMinHeight / max(height, 1)))
         return minRadius + (maxRadius - minRadius) * ratio
     }
 }
-
-// MARK: - PreferenceKey to read the pill height
 
 private struct PillHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 44
@@ -177,8 +198,6 @@ private struct PillHeightKey: PreferenceKey {
         value = nextValue()
     }
 }
-
-// MARK: - Add Options Sheet
 
 private struct AddOptionsSheet: View {
     var onCamera: () -> Void
@@ -195,7 +214,6 @@ private struct AddOptionsSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
-                // MARK: Top icon grid
                 HStack(spacing: 12) {
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         AttachTile(icon: "camera", label: "Camera", action: onCamera)
@@ -210,7 +228,6 @@ private struct AddOptionsSheet: View {
                 Divider()
                     .padding(.horizontal, 20)
 
-                // MARK: Toggle rows
                 VStack(spacing: 0) {
                     Toggle(isOn: $disableToolCalls) {
                         Label {
@@ -272,7 +289,6 @@ private struct AddOptionsSheet: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
 
-
                     Toggle(isOn: Binding(
                         get: { isSmartReasoningEnabled },
                         set: { newValue in
@@ -294,7 +310,7 @@ private struct AddOptionsSheet: View {
                     .tint(.purple)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
-                    
+
                     Divider()
                         .padding(.horizontal, 20)
                 }
@@ -330,19 +346,117 @@ private struct AttachTile: View {
     }
 }
 
-// MARK: - Dynamic Height Text Editor
-
-private struct DynamicHeightTextEditor: View {
+private struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
-    @Binding var height: CGFloat
-    let placeholder: String
-    
-    var body: some View {
-        TextField(placeholder, text: $text, axis: .vertical)
-            .font(.body)
-            .lineLimit(1...4)
-            .textInputAutocapitalization(.sentences)
-            .disableAutocorrection(false)
-            .tint(.blue) // explicit caret color
+    @Binding var isFocused: Bool
+    @Binding var measuredHeight: CGFloat
+
+    let sendOnReturn: Bool
+    let canSend: Bool
+    let isGenerating: Bool
+    let maxHeight: CGFloat
+    let onSend: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.delegate = context.coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.textColor = .label
+        textView.tintColor = .systemBlue
+        textView.isScrollEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.autocapitalizationType = .sentences
+        textView.autocorrectionType = .default
+        textView.keyboardDismissMode = .interactive
+        textView.returnKeyType = .default
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.text = text
+        context.coordinator.updateHeight(for: textView)
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        context.coordinator.parent = self
+
+        if uiView.text != text {
+            uiView.text = text
+        }
+
+        if isFocused, !uiView.isFirstResponder {
+            uiView.becomeFirstResponder()
+        } else if !isFocused, uiView.isFirstResponder {
+            uiView.resignFirstResponder()
+        }
+
+        context.coordinator.updateHeight(for: uiView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ComposerTextView
+
+        init(parent: ComposerTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.isFocused = true
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.isFocused = false
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            updateHeight(for: textView)
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText text: String
+        ) -> Bool {
+            switch ComposerReturnKeyBehavior.action(
+                sendOnReturn: parent.sendOnReturn,
+                canSend: parent.canSend,
+                isGenerating: parent.isGenerating,
+                replacementText: text
+            ) {
+            case .send:
+                parent.onSend()
+                return false
+            case .insertNewline:
+                return true
+            }
+        }
+
+        func updateHeight(for textView: UITextView) {
+            let fittingSize = CGSize(
+                width: max(textView.bounds.width, 1),
+                height: .greatestFiniteMagnitude
+            )
+            let targetHeight = max(24, ceil(textView.sizeThatFits(fittingSize).height))
+            let clampedHeight = min(targetHeight, parent.maxHeight)
+
+            if textView.isScrollEnabled != (targetHeight > parent.maxHeight) {
+                textView.isScrollEnabled = targetHeight > parent.maxHeight
+            }
+
+            guard abs(parent.measuredHeight - clampedHeight) > 0.5 else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.parent.measuredHeight = clampedHeight
+            }
+        }
     }
 }
