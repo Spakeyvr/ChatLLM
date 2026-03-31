@@ -389,7 +389,7 @@ struct ChatView: View {
     private var composer: some View {
         ComposerView(
             text: $inputText,
-            placeholder: String(localized: "Message"),
+            placeholder: String(localized: "Ask anything"),
             canSend: !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             isGenerating: viewModel.isGenerating,
             onSend: {

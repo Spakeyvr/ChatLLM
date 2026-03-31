@@ -61,90 +61,69 @@ struct SimpleTextComposer: View {
     private let pillMinHeight: CGFloat = 44
     private let pillHorizontalPadding: CGFloat = 10
     private let maxTextViewHeight: CGFloat = 112
-    private var reservedTrailingForSend: CGFloat { circleSize + 6 }
-
     @State private var measuredPillHeight: CGFloat = 44
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            Button {
-                showAddSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 21, height: 30)
-                    .foregroundStyle(forceSearch && searchAvailable ? Color.blue : Color.primary)
-            }
-            .buttonStyle(.glass)
-            .contentShape(.circle)
-            .accessibilityLabel("Add attachment or web search")
-            .sheet(isPresented: $showAddSheet) {
-                AddOptionsSheet(
-                    onCamera: { showAddSheet = false; onCamera?() },
-                    onPhotoLibrary: { showAddSheet = false; onPhotosPicker?() },
-                    onFile: { showAddSheet = false; onFileImporter?() },
-                    forceSearch: $forceSearch,
-                    searchAvailable: searchAvailable,
-                    disableToolCalls: $disableToolCalls,
-                    toolCallsLockedDisabled: toolCallsLockedDisabled,
-                    isReasoningEnabled: $isReasoningEnabled,
-                    isSmartReasoningEnabled: $isSmartReasoningEnabled,
-                    reasoningAvailable: reasoningAvailable
-                )
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
-            }
+        GlassEffectContainer(spacing: 10.0) {
+            VStack(spacing: 0) {
+                // Text field area
+                ZStack(alignment: .topLeading) {
+                    ComposerTextView(
+                        text: $text,
+                        isFocused: $isTextViewFocused,
+                        measuredHeight: $composerHeight,
+                        sendOnReturn: sendOnReturn,
+                        canSend: canSend,
+                        isGenerating: isGenerating,
+                        maxHeight: maxTextViewHeight,
+                        onSend: onSend
+                    )
+                    .frame(height: max(24, composerHeight))
 
-            GlassEffectContainer(spacing: 10.0) {
-                HStack(spacing: 8) {
-                    ZStack(alignment: .topLeading) {
-                        ComposerTextView(
-                            text: $text,
-                            isFocused: $isTextViewFocused,
-                            measuredHeight: $composerHeight,
-                            sendOnReturn: sendOnReturn,
-                            canSend: canSend,
-                            isGenerating: isGenerating,
-                            maxHeight: maxTextViewHeight,
-                            onSend: onSend
-                        )
-                        .frame(height: max(24, composerHeight))
-
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(placeholder)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 2)
-                                .allowsHitTesting(false)
-                        }
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(placeholder)
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                            .allowsHitTesting(false)
                     }
                 }
                 .padding(.horizontal, pillHorizontalPadding)
-                .padding(.vertical, 8)
-                .padding(.trailing, reservedTrailingForSend)
-                .frame(minHeight: pillMinHeight, alignment: .center)
-                .glassEffect(
-                    .regular.interactive(),
-                    in: .rect(cornerRadius: adaptiveCornerRadius(for: measuredPillHeight))
-                )
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: adaptiveCornerRadius(for: measuredPillHeight),
-                        style: .continuous
-                    )
-                )
-                .overlay(alignment: .topLeading) {
-                    GeometryReader { geo in
-                        Color.clear
-                            .preference(key: PillHeightKey.self, value: geo.size.height)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+                // Bottom row: + button on left, send button on right
+                HStack {
+                    Button {
+                        showAddSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(forceSearch && searchAvailable ? Color.blue : Color.primary)
+                            .frame(width: circleSize, height: circleSize)
+                            .contentShape(Circle())
                     }
-                }
-                .onPreferenceChange(PillHeightKey.self) { newHeight in
-                    if abs(measuredPillHeight - newHeight) > 0.5 {
-                        measuredPillHeight = newHeight
+                    .buttonStyle(SubtleGlassButtonStyle())
+                    .accessibilityLabel("Add attachment or web search")
+                    .sheet(isPresented: $showAddSheet) {
+                        AddOptionsSheet(
+                            onCamera: { showAddSheet = false; onCamera?() },
+                            onPhotoLibrary: { showAddSheet = false; onPhotosPicker?() },
+                            onFile: { showAddSheet = false; onFileImporter?() },
+                            forceSearch: $forceSearch,
+                            searchAvailable: searchAvailable,
+                            disableToolCalls: $disableToolCalls,
+                            toolCallsLockedDisabled: toolCallsLockedDisabled,
+                            isReasoningEnabled: $isReasoningEnabled,
+                            isSmartReasoningEnabled: $isSmartReasoningEnabled,
+                            reasoningAvailable: reasoningAvailable
+                        )
+                        .presentationDetents([.medium])
+                        .presentationDragIndicator(.visible)
                     }
-                }
-                .overlay(alignment: .trailing) {
+
+                    Spacer()
+
                     Button {
                         AppHaptics.impact(.light)
 
@@ -169,26 +148,54 @@ struct SimpleTextComposer: View {
                         .contentShape(Circle())
                     }
                     .disabled(!isGenerating && !canSend)
-                    .buttonStyle(.plain)
+                    .buttonStyle(SubtleGlassButtonStyle())
                     .buttonRepeatBehavior(.enabled)
-                    .tint(canSend ? .blue : .secondary)
-                    .glassEffect(.regular.interactive(), in: .circle)
-                    .offset(x: -6)
-                    .zIndex(10)
-                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 5)
                     .accessibilityLabel(isGenerating ? String(localized: "Stop") : String(localized: "Send"))
                     .accessibilityAddTraits(.isButton)
                 }
-                .frame(maxWidth: .infinity, minHeight: pillMinHeight)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
             }
+            .frame(maxWidth: .infinity, minHeight: pillMinHeight)
+            .overlay(alignment: .topLeading) {
+                GeometryReader { geo in
+                    Color.clear
+                        .preference(key: PillHeightKey.self, value: geo.size.height)
+                }
+            }
+            .onPreferenceChange(PillHeightKey.self) { newHeight in
+                if abs(measuredPillHeight - newHeight) > 0.5 {
+                    measuredPillHeight = newHeight
+                }
+            }
+            .glassEffect(
+                .regular.interactive(),
+                in: .rect(cornerRadius: adaptiveCornerRadius(for: measuredPillHeight))
+            )
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: adaptiveCornerRadius(for: measuredPillHeight),
+                    style: .continuous
+                )
+            )
         }
     }
 
     private func adaptiveCornerRadius(for height: CGFloat) -> CGFloat {
         let maxRadius = pillMinHeight / 2
-        let minRadius: CGFloat = 14
+        let minRadius: CGFloat = 22
         let ratio = max(0.0, min(1.0, pillMinHeight / max(height, 1)))
         return minRadius + (maxRadius - minRadius) * ratio
+    }
+}
+
+private struct SubtleGlassButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .glassEffect(
+                configuration.isPressed ? .regular : .identity,
+                in: .circle
+            )
     }
 }
 
