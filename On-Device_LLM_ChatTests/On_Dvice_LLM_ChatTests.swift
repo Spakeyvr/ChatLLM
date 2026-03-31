@@ -491,6 +491,45 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.hasLowMemoryForPersistentKVCache)
     }
 
+    @Test func contextWindowMaximumTracksSixEightAndTwelveGigabyteTiers() {
+        let sixGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let eightGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+        let twelveGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 12 * MLXDeviceSupportProfile.gibibyte
+        )
+
+        #expect(sixGigabyteProfile.maxContextWindowTokens == 1_024)
+        #expect(eightGigabyteProfile.maxContextWindowTokens == 2_048)
+        #expect(twelveGigabyteProfile.maxContextWindowTokens == 6_144)
+    }
+
+    @Test func userDefaultsContextWindowClampsToFiveHundredTwelveTokenMinimum() {
+        let defaults = UserDefaults.standard
+        let key = "mlxContextWindowTokens"
+        let hadExistingValue = defaults.object(forKey: key) != nil
+        let previousValue = defaults.integer(forKey: key)
+
+        defaults.set(128, forKey: key)
+        defer {
+            if hadExistingValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 1_024) == 512)
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 2_048) == 512)
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 6_144) == 512)
+    }
+
     @Test func qwenIPhoneMemoryLimitsDoNotApplyToNonPhoneDevices() {
         let profile = MLXDeviceSupportProfile(
             isPhone: false,

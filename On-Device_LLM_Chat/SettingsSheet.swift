@@ -608,13 +608,7 @@ struct SettingsSheet: View {
     @ViewBuilder
     private var contextWindowSlider: some View {
         let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
-        let minimum = if deviceMaximum <= 2_048 {
-            1_024
-        } else if deviceMaximum <= 4_096 {
-            2_048
-        } else {
-            4_096
-        }
+        let minimum = 512
         let tokenBinding = Binding<Double>(
             get: {
                 Double(

@@ -65,13 +65,13 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
 
     var maxContextWindowTokens: Int {
         let normalizedGigabytes = Int(normalizedMemoryBytes / Self.gibibyte)
-        if normalizedGigabytes > 8 {
-            return 8_192
+        if normalizedGigabytes >= 12 {
+            return 6_144
         }
         if normalizedGigabytes >= 8 {
-            return 4_096
+            return 2_048
         }
-        return 2_048
+        return 1_024
     }
 
     var hasLowMemoryForPersistentKVCache: Bool {

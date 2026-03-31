@@ -328,13 +328,7 @@ extension UserDefaults {
     }
 
     func mlxContextWindowTokens(deviceMaximum: Int) -> Int {
-        let minimum = if deviceMaximum <= 2_048 {
-            1_024
-        } else if deviceMaximum <= 4_096 {
-            2_048
-        } else {
-            4_096
-        }
+        let minimum = 512
 
         guard object(forKey: "mlxContextWindowTokens") != nil else {
             return deviceMaximum
