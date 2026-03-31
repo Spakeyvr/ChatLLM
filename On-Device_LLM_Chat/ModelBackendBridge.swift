@@ -349,7 +349,12 @@ extension UserDefaults {
     }
 
     var mlxEnableKVCacheQuantization: Bool {
-        get { bool(forKey: "mlxEnableKVCacheQuantization") }
+        get {
+            guard object(forKey: "mlxEnableKVCacheQuantization") != nil else {
+                return true
+            }
+            return bool(forKey: "mlxEnableKVCacheQuantization")
+        }
         set { set(newValue, forKey: "mlxEnableKVCacheQuantization") }
     }
 

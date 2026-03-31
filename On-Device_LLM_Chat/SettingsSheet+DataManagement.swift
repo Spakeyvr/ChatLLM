@@ -120,7 +120,7 @@ extension SettingsSheet {
         reasoningModeDefault = false
         messageFontSize = 16.0
         mlxMaxOutputTokens = 1024
-        mlxEnableKVCacheQuantization = false
+        mlxEnableKVCacheQuantization = true
         autoDeleteOldChats = false
         autoDeleteDays = 30
         developerModeEnabled = false

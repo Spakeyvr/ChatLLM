@@ -56,6 +56,17 @@ nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
     case persistentQuantizedSimple
     case boundedRotating(maxKVSize: Int)
 
+    var diagnosticLabel: String {
+        switch self {
+        case .persistentSimple:
+            return "persistent-simple"
+        case .persistentQuantizedSimple:
+            return "persistent-quantized-simple"
+        case .boundedRotating:
+            return "bounded-rotating"
+        }
+    }
+
     var maxKVSize: Int? {
         switch self {
         case .persistentSimple, .persistentQuantizedSimple:
@@ -77,6 +88,7 @@ nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
 
 nonisolated internal struct MLXKVBenchmarkMetadata: Sendable, Equatable {
     let cachePolicy: MLXCachePolicy
+    let effectiveMaxKVSize: Int?
     let prefillStepSize: Int
     let quantizedKVStart: Int?
 }
@@ -279,12 +291,10 @@ private actor MLXInferenceWorker {
         var activePromptVideos = latestUserMessage.videos
         var activeTools = request.tools
         let toolInvocationState = ToolInvocationState()
+        let effectiveCachePolicy = MLXModelManager.cachePolicy(for: request.params)
         let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
-            cachePolicy: MLXModelManager.cachePolicy(
-                isEnabled: request.params.kvBits != nil,
-                hasTools: !request.tools.isEmpty,
-                memoryConstrained: request.params.maxKVSize != nil
-            ),
+            cachePolicy: effectiveCachePolicy,
+            effectiveMaxKVSize: request.params.maxKVSize,
             prefillStepSize: request.params.prefillStepSize,
             quantizedKVStart: request.params.kvBits == nil ? nil : request.params.quantizedKVStart
         )
@@ -449,7 +459,7 @@ private actor MLXInferenceWorker {
         )
 
         logger.notice(
-            "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public)"
+            "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(performanceSample.kvBenchmarkMetadata.effectiveMaxKVSize ?? -1, privacy: .public)"
         )
 
         self.loadedModel = loadedModel
@@ -1131,6 +1141,28 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
+    private var prefersBoundedKVCacheAcrossTurns: Bool {
+        deviceSupportProfile.hasLowMemoryForPersistentKVCache
+    }
+
+    private var configuredContextWindowLimit: Int {
+        UserDefaults.standard.mlxContextWindowTokens(
+            deviceMaximum: deviceSupportProfile.maxContextWindowTokens
+        )
+    }
+
+    private func defaultGenerationConfigurationForCurrentDevice() -> GenerationConfiguration {
+        Self.generationConfiguration(
+            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
+            hasTools: false,
+            hasMedia: false,
+            memoryConstrained: false,
+            prefersBoundedCache: prefersBoundedKVCacheAcrossTurns,
+            configuredMaxOutputTokens: UserDefaults.standard.mlxMaxOutputTokensLimit,
+            configuredContextWindow: configuredContextWindowLimit
+        )
+    }
+
     private func schedulePrefillTuningIfNeeded(
         model: MLXModelInfo,
         initialPrefillStepSize: Int
@@ -1140,7 +1172,7 @@ final class MLXModelManager: ObservableObject {
             return
         }
 
-        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice().cachePolicy.usesDynamicKVQuantization
         deferredTuningModelID = model.id
         logger.notice(
             "MLX tuning deferred until after first successful generation: id=\(model.id, privacy: .public) prefill=\(initialPrefillStepSize, privacy: .public) kv_quantization=\(shouldTuneQuantizedKV, privacy: .public)"
@@ -1179,12 +1211,13 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
+        let defaultGenerationConfiguration = defaultGenerationConfigurationForCurrentDevice()
         let prefillCandidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
         let quantizedKVStartCandidates = persistedQuantizedKVStart.map { [$0] } ?? [128, 256, 512]
         let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
             deviceSupportProfile: deviceSupportProfile
         )
-        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfiguration.cachePolicy.usesDynamicKVQuantization
 
         tuningTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
@@ -1223,6 +1256,7 @@ final class MLXModelManager: ObservableObject {
                 guard !Task.isCancelled else { return }
                 let parameters = GenerateParameters(
                     maxTokens: 16,
+                    maxKVSize: defaultGenerationConfiguration.maxKVSize,
                     prefillStepSize: candidate
                 )
                 do {
@@ -1265,6 +1299,7 @@ final class MLXModelManager: ObservableObject {
                     guard !Task.isCancelled else { return }
                     let parameters = GenerateParameters(
                         maxTokens: 16,
+                        maxKVSize: defaultGenerationConfiguration.maxKVSize,
                         kvBits: Self.kvQuantizationBits,
                         kvGroupSize: Self.kvQuantizationGroupSize,
                         quantizedKVStart: candidate,
@@ -1355,7 +1390,7 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let shouldTuneQuantizedKV = UserDefaults.standard.mlxEnableKVCacheQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice().cachePolicy.usesDynamicKVQuantization
         let needsPrefillTuning = persistedPrefill == nil
         let needsQuantizedTuning = shouldTuneQuantizedKV && persistedQuantizedKVStart == nil
         return needsPrefillTuning || needsQuantizedTuning
@@ -1762,11 +1797,23 @@ final class MLXModelManager: ObservableObject {
         guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
         }
+        let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
+        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
+        let configuredContextWindow = configuredContextWindowLimit
+        let generationConfiguration = Self.generationConfiguration(
+            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
+            hasTools: !tools.isEmpty,
+            hasMedia: includesMedia,
+            memoryConstrained: memoryConstrained,
+            prefersBoundedCache: prefersBoundedKVCacheAcrossTurns,
+            configuredMaxOutputTokens: configuredMaxOutputTokens,
+            configuredContextWindow: configuredContextWindow
+        )
         if deferredPrewarmModelID == currentModel.id && !memoryConstrained {
             await prewarmModelShaders(for: currentModel, reason: "first-generation")
         }
         logger.notice(
-            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public)"
+            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
         )
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
@@ -1778,17 +1825,6 @@ final class MLXModelManager: ObservableObject {
         }
         prepareMemoryForGeneration()
 
-        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
-        let configuredContextWindow = UserDefaults.standard.mlxContextWindowTokens(
-            deviceMaximum: MLXDeviceSupportProfile.current.maxContextWindowTokens
-        )
-        let generationConfiguration = Self.generationConfiguration(
-            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
-            hasTools: !tools.isEmpty,
-            memoryConstrained: memoryConstrained,
-            configuredMaxOutputTokens: configuredMaxOutputTokens,
-            configuredContextWindow: configuredContextWindow
-        )
         let prefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
         let quantizedKVStart = await inferenceWorker.quantizedKVStart(for: currentModel.id)
         let tunedKVQuantization = generationConfiguration.kvQuantization.map { kvQuantization in
@@ -1818,7 +1854,7 @@ final class MLXModelManager: ObservableObject {
             modelID: currentModel.id,
             enableThinking: enableThinking,
             toolsEnabled: !tools.isEmpty,
-            includesMedia: messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty },
+            includesMedia: includesMedia,
             instructionFingerprint: messages.first(where: { $0.role == .system })?.content.hashValue ?? 0
         )
         let request = MLXInferenceRequest(
@@ -1950,7 +1986,9 @@ final class MLXModelManager: ObservableObject {
     nonisolated internal static func generationConfiguration(
         isEnabled: Bool,
         hasTools: Bool,
+        hasMedia: Bool,
         memoryConstrained: Bool,
+        prefersBoundedCache: Bool,
         configuredMaxOutputTokens: Int?,
         configuredContextWindow: Int
     ) -> GenerationConfiguration {
@@ -1964,16 +2002,19 @@ final class MLXModelManager: ObservableObject {
         let cachePolicy = cachePolicy(
             isEnabled: isEnabled,
             hasTools: hasTools,
+            hasMedia: hasMedia,
+            prefersBoundedCache: prefersBoundedCache,
             memoryConstrained: memoryConstrained
+        )
+        let clampedCachePolicy = clampedCachePolicy(
+            cachePolicy,
+            configuredContextWindow: configuredContextWindow
         )
         return GenerationConfiguration(
             maxTokens: maxTokens,
-            cachePolicy: clampedCachePolicy(
-                cachePolicy,
-                configuredContextWindow: configuredContextWindow
-            ),
+            cachePolicy: clampedCachePolicy,
             kvQuantization: kvQuantizationConfiguration(
-                cachePolicy: cachePolicy
+                cachePolicy: clampedCachePolicy
             )
         )
     }
@@ -1981,10 +2022,13 @@ final class MLXModelManager: ObservableObject {
     nonisolated internal static func cachePolicy(
         isEnabled: Bool,
         hasTools: Bool,
+        hasMedia: Bool,
+        prefersBoundedCache: Bool,
         memoryConstrained: Bool
     ) -> MLXCachePolicy {
         _ = hasTools
-        if memoryConstrained {
+        _ = hasMedia
+        if memoryConstrained || prefersBoundedCache {
             return .boundedRotating(maxKVSize: memoryConstrainedMaxKVSize)
         }
 
@@ -1994,13 +2038,27 @@ final class MLXModelManager: ObservableObject {
     nonisolated internal static func effectiveMaxKVSize(
         isEnabled: Bool,
         hasTools: Bool,
+        hasMedia: Bool,
+        prefersBoundedCache: Bool,
         memoryConstrained: Bool
     ) -> Int? {
         cachePolicy(
             isEnabled: isEnabled,
             hasTools: hasTools,
+            hasMedia: hasMedia,
+            prefersBoundedCache: prefersBoundedCache,
             memoryConstrained: memoryConstrained
         ).maxKVSize
+    }
+
+    nonisolated internal static func cachePolicy(for parameters: GenerateParameters) -> MLXCachePolicy {
+        if let maxKVSize = parameters.maxKVSize {
+            return .boundedRotating(maxKVSize: maxKVSize)
+        }
+        if parameters.kvBits != nil {
+            return .persistentQuantizedSimple
+        }
+        return .persistentSimple
     }
 
     nonisolated private static func clampedCachePolicy(

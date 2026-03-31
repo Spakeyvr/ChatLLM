@@ -10,6 +10,7 @@ import UIKit
 
 struct MLXDeviceSupportProfile: Equatable, Sendable {
     static let gibibyte: UInt64 = 1024 * 1024 * 1024
+    static let minimumMemoryForPersistentKVCacheBytes: UInt64 = 12 * gibibyte
     private static let commonPhoneMemoryTiersInGigabytes = [4, 6, 8, 12, 16]
     @MainActor static var current: Self {
         Self(
@@ -30,7 +31,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         guard isPhone, let minimumBytes = model.minimumPhoneMemoryBytes else {
             return true
         }
-        return normalizedPhoneMemoryBytes >= minimumBytes
+        return normalizedMemoryBytes >= minimumBytes
     }
 
     func supportsToolCalls(for model: MLXModelManager.MLXModelInfo) -> Bool {
@@ -40,13 +41,13 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         guard isPhone, let minimumBytes = model.minimumPhoneMemoryForToolCallsBytes else {
             return true
         }
-        return normalizedPhoneMemoryBytes >= minimumBytes
+        return normalizedMemoryBytes >= minimumBytes
     }
 
     func availabilityIssue(for model: MLXModelManager.MLXModelInfo) -> String? {
         guard isPhone,
               let minimumBytes = model.minimumPhoneMemoryBytes,
-              normalizedPhoneMemoryBytes < minimumBytes else {
+              normalizedMemoryBytes < minimumBytes else {
             return nil
         }
         return "\(model.displayName) requires an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM."
@@ -56,14 +57,14 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         guard supportsModel(model),
               isPhone,
               let minimumBytes = model.minimumPhoneMemoryForToolCallsBytes,
-              normalizedPhoneMemoryBytes < minimumBytes else {
+              normalizedMemoryBytes < minimumBytes else {
             return nil
         }
         return "Web search and tool calls for \(model.displayName) require an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM."
     }
 
     var maxContextWindowTokens: Int {
-        let normalizedGigabytes = Int(normalizedPhoneMemoryBytes / Self.gibibyte)
+        let normalizedGigabytes = Int(normalizedMemoryBytes / Self.gibibyte)
         if normalizedGigabytes > 8 {
             return 8_192
         }
@@ -73,7 +74,11 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         return 2_048
     }
 
-    private var normalizedPhoneMemoryBytes: UInt64 {
+    var hasLowMemoryForPersistentKVCache: Bool {
+        normalizedMemoryBytes < Self.minimumMemoryForPersistentKVCacheBytes
+    }
+
+    var normalizedMemoryBytes: UInt64 {
         guard isPhone else {
             return physicalMemoryBytes
         }

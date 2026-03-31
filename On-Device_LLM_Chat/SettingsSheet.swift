@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxKVCacheInfoMessage = String(localized: "Reduces memory use for long on-device MLX chats by quantizing the KV cache to 8-bit after an initial warmup. Tool-enabled runs switch to a quantization-compatible cache strategy when possible and automatically fall back if unsupported. This may slightly change quality or latency, and memory-constrained runs still skip KV quantization.")
-    static let mlxKVCacheAccessibilityHint = String(localized: "Reduces memory use for long MLX chats, including tool runs when supported. Memory-constrained runs still skip KV quantization.")
+    static let mlxKVCacheInfoMessage = String(localized: "Enabled by default for persistent MLX chats, this reduces memory use by quantizing the KV cache to 8-bit after an initial warmup. Devices with less than 12 GB of RAM may automatically switch all MLX turns to a bounded sliding-window cache to avoid crashes. Upstream MLX does not support quantizing rotating KV caches yet, so those low-memory runs skip KV quantization automatically.")
+    static let mlxKVCacheAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory devices may switch to a bounded sliding-window cache, which skips KV quantization.")
 
     @Binding var defaultSystemPrompt: String
     @Binding var appAppearance: String   // "system" | "light" | "dark"
@@ -27,7 +27,7 @@ struct SettingsSheet: View {
     @AppStorage("messageFontSize") var messageFontSize: Double = 16.0 // 12-22 range
     @AppStorage("mlxMaxOutputTokens") var mlxMaxOutputTokens: Int = 1024
     @AppStorage("mlxContextWindowTokens") var mlxContextWindowTokens: Int = 0
-    @AppStorage("mlxEnableKVCacheQuantization") var mlxEnableKVCacheQuantization: Bool = false
+    @AppStorage("mlxEnableKVCacheQuantization") var mlxEnableKVCacheQuantization: Bool = true
     @AppStorage("autoDeleteOldChats") var autoDeleteOldChats: Bool = false
     @AppStorage("autoDeleteDays") var autoDeleteDays: Int = 30 // 7, 14, 30, 60, 90
     @AppStorage("developerModeEnabled") var developerModeEnabled: Bool = false

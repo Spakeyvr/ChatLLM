@@ -213,10 +213,12 @@ struct On_Device_LLM_ChatTests {
         #expect(config == nil)
     }
 
-    @Test func cachePolicyKeepsNormalTurnsOnPersistentSimpleCacheWhenQuantizationIsOff() {
+    @Test func cachePolicyKeepsNormalTurnsOnPersistentSimpleCacheWhenQuantizationIsOffOnHighMemoryDevices() {
         let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: false,
             hasTools: true,
+            hasMedia: false,
+            prefersBoundedCache: false,
             memoryConstrained: false
         )
 
@@ -227,17 +229,33 @@ struct On_Device_LLM_ChatTests {
         let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: true,
             hasTools: true,
+            hasMedia: false,
+            prefersBoundedCache: false,
             memoryConstrained: true
         )
 
         #expect(cachePolicy == .boundedRotating(maxKVSize: 4096))
     }
 
-    @Test func generationConfigurationUsesQuantizedToolCacheStrategy() {
+    @Test func cachePolicyUsesBoundedRotatingCacheOnLowMemoryDevices() {
+        let cachePolicy = MLXModelManager.cachePolicy(
+            isEnabled: true,
+            hasTools: false,
+            hasMedia: false,
+            prefersBoundedCache: true,
+            memoryConstrained: false
+        )
+
+        #expect(cachePolicy == .boundedRotating(maxKVSize: 4096))
+    }
+
+    @Test func generationConfigurationUsesQuantizedPersistentCacheOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
             hasTools: true,
+            hasMedia: false,
             memoryConstrained: false,
+            prefersBoundedCache: false,
             configuredMaxOutputTokens: 2048,
             configuredContextWindow: 32768
         )
@@ -249,11 +267,13 @@ struct On_Device_LLM_ChatTests {
         #expect(configuration.usesQuantizedToolCacheStrategy)
     }
 
-    @Test func generationConfigurationKeepsToolTurnsUnboundedWhenQuantizationIsOff() {
+    @Test func generationConfigurationKeepsToolTurnsUnboundedWhenQuantizationIsOffOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: false,
             hasTools: true,
+            hasMedia: false,
             memoryConstrained: false,
+            prefersBoundedCache: false,
             configuredMaxOutputTokens: 2048,
             configuredContextWindow: 32768
         )
@@ -265,62 +285,55 @@ struct On_Device_LLM_ChatTests {
         #expect(!configuration.usesQuantizedToolCacheStrategy)
     }
 
-    @Test func selectFastestSafeCandidateRejectsDecodeRegressions() {
-        let candidates = [
-            MLXModelManager.TuningBenchmarkResult(
-                candidate: 128,
-                promptTokensPerSecond: 800,
-                decodeTokensPerSecond: 100,
-                totalLatency: 1.6,
-                totalBytes: 100,
-                measurement: .init(
-                    weightBytes: 0,
-                    kvBytes: 60,
-                    workspaceBytes: 40,
-                    peakActiveBytes: 100,
-                    tokenCount: 2048,
-                    prefillStepSize: 512
-                )
-            ),
-            MLXModelManager.TuningBenchmarkResult(
-                candidate: 256,
-                promptTokensPerSecond: 900,
-                decodeTokensPerSecond: 90,
-                totalLatency: 1.4,
-                totalBytes: 100,
-                measurement: .init(
-                    weightBytes: 0,
-                    kvBytes: 60,
-                    workspaceBytes: 40,
-                    peakActiveBytes: 100,
-                    tokenCount: 2048,
-                    prefillStepSize: 512
-                )
-            ),
-            MLXModelManager.TuningBenchmarkResult(
-                candidate: 512,
-                promptTokensPerSecond: 850,
-                decodeTokensPerSecond: 96,
-                totalLatency: 1.5,
-                totalBytes: 100,
-                measurement: .init(
-                    weightBytes: 0,
-                    kvBytes: 60,
-                    workspaceBytes: 40,
-                    peakActiveBytes: 100,
-                    tokenCount: 2048,
-                    prefillStepSize: 512
-                )
-            )
-        ]
-
-        let selected = MLXModelManager.selectFastestSafeCandidate(
-            candidates,
-            wiredMemoryCap: 200,
-            preferLargerCandidateOnTie: false
+    @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithTools() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            hasTools: true,
+            hasMedia: false,
+            memoryConstrained: false,
+            prefersBoundedCache: true,
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 8192
         )
 
-        #expect(selected.candidate == 512)
+        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxKVSize == 4096)
+        #expect(configuration.kvQuantization == nil)
+        #expect(configuration.cachePolicy == .boundedRotating(maxKVSize: 4096))
+        #expect(!configuration.usesQuantizedToolCacheStrategy)
+    }
+
+    @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithMedia() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            hasTools: false,
+            hasMedia: true,
+            memoryConstrained: false,
+            prefersBoundedCache: true,
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 8192
+        )
+
+        #expect(configuration.maxTokens == 2048)
+        #expect(configuration.maxKVSize == 4096)
+        #expect(configuration.kvQuantization == nil)
+        #expect(configuration.cachePolicy == .boundedRotating(maxKVSize: 4096))
+    }
+
+    @Test func generationConfigurationClampsLowMemoryMaxKVSizeToConfiguredContextWindow() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            hasTools: false,
+            hasMedia: false,
+            memoryConstrained: false,
+            prefersBoundedCache: true,
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 2048
+        )
+
+        #expect(configuration.maxKVSize == 2048)
+        #expect(configuration.cachePolicy == .boundedRotating(maxKVSize: 2048))
+        #expect(configuration.kvQuantization == nil)
     }
 
     @Test func promptTokenCostFallsBackToHeuristicWhenTokenizerCountUnavailable() {
@@ -408,6 +421,25 @@ struct On_Device_LLM_ChatTests {
         #expect(!manager.supportsToolCalls(for: fourBModel))
     }
 
+    @Test func twelveGigabyteTierDisablesLowMemoryKVFallbackAfterNormalization() {
+        let marketedTwelveGigabytesButReportedBelowTwelveGiB: UInt64 = 11_900_000_000
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: marketedTwelveGigabytesButReportedBelowTwelveGiB
+        )
+
+        #expect(!profile.hasLowMemoryForPersistentKVCache)
+    }
+
+    @Test func eightGigabyteTierStillUsesLowMemoryKVFallback() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+
+        #expect(profile.hasLowMemoryForPersistentKVCache)
+    }
+
     @Test func qwenIPhoneMemoryLimitsDoNotApplyToNonPhoneDevices() {
         let profile = MLXDeviceSupportProfile(
             isPhone: false,
@@ -421,14 +453,33 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.availabilityIssue(for: fourBModel) == nil)
     }
 
-    @Test func settingsSheetDescribesToolRunKVQuantizationSupport() {
-        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("Tool-enabled runs switch"))
-        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("automatically fall back"))
-        #expect(SettingsSheet.mlxKVCacheAccessibilityHint.contains("including tool runs"))
+    @Test func settingsSheetDescribesAdaptiveKVCacheBehavior() {
+        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("Enabled by default"))
+        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("less than 12 GB"))
+        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("does not support quantizing rotating KV caches"))
+        #expect(SettingsSheet.mlxKVCacheAccessibilityHint.contains("Low-memory devices"))
+    }
+
+    @Test func userDefaultsKVQuantizationDefaultsToEnabledWhenUnset() {
+        let key = "mlxEnableKVCacheQuantization"
+        let defaults = UserDefaults.standard
+        let hadExistingValue = defaults.object(forKey: key) != nil
+        let previousValue = defaults.bool(forKey: key)
+
+        defaults.removeObject(forKey: key)
+        defer {
+            if hadExistingValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        #expect(defaults.mlxEnableKVCacheQuantization)
     }
 
     @Test func resetSettingsRestoresKVQuantizationDefault() {
-        UserDefaults.standard.mlxEnableKVCacheQuantization = true
+        UserDefaults.standard.mlxEnableKVCacheQuantization = false
 
         let settings = SettingsSheet(
             defaultSystemPrompt: .constant("System prompt"),
@@ -443,7 +494,7 @@ struct On_Device_LLM_ChatTests {
 
         settings.resetSettings()
 
-        #expect(UserDefaults.standard.mlxEnableKVCacheQuantization == false)
+        #expect(UserDefaults.standard.mlxEnableKVCacheQuantization == true)
     }
 
     @Test func resetSettingsRestoresDeveloperModeDefault() {
