@@ -1,0 +1,44 @@
+name: Notify pushed commits
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send pushed commits to webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.COMMIT_WEBHOOK_URL }}
+          COMMITS_JSON: ${{ toJson(github.event.commits) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          commits = json.loads(os.environ["COMMITS_JSON"])
+
+          lines = ["@Commit-listeners", "New pushed commits:"]
+
+          for i, commit in enumerate(commits, start=1):
+              message = commit["message"].splitlines()[0].replace('"', '\\"')
+              lines.append(f'Commit {i}. "{message}"')
+
+          payload = {
+              "content": "\n".join(lines)
+          }
+
+          req = urllib.request.Request(
+              os.environ["WEBHOOK_URL"],
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          with urllib.request.urlopen(req) as response:
+              print(f"Webhook sent: {response.status}")
+          PY
