@@ -429,16 +429,19 @@ extension ChatViewModel {
         let normalized = latestUserText?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
+        let containsPhrase: (String) -> Bool = { phrase in
+            SharedRegexes.containsWholePhrase(phrase, in: normalized)
+        }
 
         guard !normalized.isEmpty else {
             return forceWebSearch
         }
 
-        if mlxTimeSensitiveKeywords.contains(where: { normalized.contains($0) }) {
+        if mlxTimeSensitiveKeywords.contains(where: { containsPhrase($0) }) {
             return true
         }
 
-        if timeSensitiveYearTokens(referenceDate: referenceDate).contains(where: { normalized.contains($0) }) {
+        if timeSensitiveYearTokens(referenceDate: referenceDate).contains(where: { containsPhrase($0) }) {
             return true
         }
 
@@ -446,7 +449,7 @@ extension ChatViewModel {
             return true
         }
 
-        return webSearchEnabled && mlxExplicitSearchIntentKeywords.contains(where: { normalized.contains($0) })
+        return webSearchEnabled && mlxExplicitSearchIntentKeywords.contains(where: { containsPhrase($0) })
     }
 
     internal static func buildMLXSystemPrompt(

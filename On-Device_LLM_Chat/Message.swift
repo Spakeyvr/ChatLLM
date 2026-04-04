@@ -19,8 +19,6 @@ private let _hiddenImageContextRegex = try! NSRegularExpression(
 private let _imageAnalysisBlockRegex = try! NSRegularExpression(
     pattern: #"--- Image Analysis Data ---.*?(?:--- End Image Analysis ---\s*User's question:\s*|--- User Question ---\n?)"#,
     options: [.dotMatchesLineSeparators])
-private let _resetSourcesRegex = try! NSRegularExpression(
-    pattern: #"<sources>(.*?)</sources>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 private let _numberedStepRegex = try! NSRegularExpression(
     pattern: #"(?:^|\n)(?:(?:Step\s*)?(\d+)[:.\)]\s*([^\n]*)\n?)"#, options: [.caseInsensitive])
 private let _headingStepRegex = try! NSRegularExpression(
@@ -430,26 +428,8 @@ extension Message {
         invalidateCache()
     }
     
-    /// Reset for regeneration
-    /// - Parameter preserveSources: If true, extracts and preserves any <sources> block for reinjection
-    /// - Returns: The preserved sources content (if any) when preserveSources is true
-    @discardableResult
-    func resetForRegeneration(preserveSources: Bool = false) -> String? {
-        // CRITICAL FIX (Bug 4): Optionally preserve sources from previous web search
-        var savedSources: String? = nil
-        if preserveSources {
-            let carrier = isReasoningMode ? (finalAnswer ?? text) : text
-            let ns = carrier as NSString
-            let range = NSRange(location: 0, length: ns.length)
-            if let match = _resetSourcesRegex.firstMatch(in: carrier, options: [], range: range),
-               match.numberOfRanges >= 2 {
-                let inner = match.range(at: 1)
-                if inner.location != NSNotFound {
-                    savedSources = ns.substring(with: inner).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-        }
-        
+    /// Reset message state before regeneration so the next run starts clean.
+    func resetForRegeneration() {
         // Only clear if needed
         let needsReset = !self.text.isEmpty ||
                         self.reasoning != nil ||
@@ -475,9 +455,9 @@ extension Message {
             self.generationStartedAt = nil
             self.generationCompletedAt = nil
             self.streamingReasoningPhase = nil
+            self.searchInvocations = nil
+            self.searchQuery = nil
         }
-        
-        return savedSources
     }
 }
 

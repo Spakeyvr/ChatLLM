@@ -133,6 +133,19 @@ struct SettingsSheet: View {
                     }
                     .padding(.vertical, 4)
 
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Label(String(localized: "Repetition Penalty"), systemImage: "text.word.spacing")
+                            InfoButton(
+                                title: String(localized: "Repetition Penalty"),
+                                message: String(localized: "Discourages on-device MLX models from repeating the same tokens too often. Leave it Off to keep the current behavior, or raise it gradually if the model loops or echoes itself.")
+                            )
+                        }
+
+                        repetitionPenaltySlider
+                    }
+                    .padding(.vertical, 4)
+
                     Toggle(isOn: $settings.mlxEnableTurboQuant) {
                         HStack(spacing: 6) {
                             Label(String(localized: "TurboQuant (MLX Only)"), systemImage: "memorychip")
@@ -555,6 +568,48 @@ struct SettingsSheet: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 72, alignment: .trailing)
                 .monospacedDigit()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var repetitionPenaltySlider: some View {
+        let offBinding = Binding<Bool>(
+            get: { settings.mlxRepetitionPenalty <= 1.0 },
+            set: { isOff in
+                settings.mlxRepetitionPenalty = isOff ? 1.0 : 1.1
+            }
+        )
+        let penaltyBinding = Binding<Double>(
+            get: { settings.mlxRepetitionPenalty <= 1.0 ? 1.1 : settings.mlxRepetitionPenalty },
+            set: { settings.mlxRepetitionPenalty = $0 }
+        )
+
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(String(localized: "Off"), isOn: offBinding)
+                .toggleStyle(.switch)
+
+            HStack(spacing: 12) {
+                Text("1.05")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 36)
+
+                Slider(value: penaltyBinding, in: 1.05...1.5, step: 0.05)
+                    .disabled(settings.mlxRepetitionPenalty <= 1.0)
+                    .accessibilityLabel(String(localized: "Repetition Penalty"))
+                    .accessibilityValue(settings.mlxRepetitionPenalty <= 1.0 ? String(localized: "Off") : String(format: "%.2f", settings.mlxRepetitionPenalty))
+
+                Text("1.50")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 36)
+
+                Text(settings.mlxRepetitionPenalty <= 1.0 ? String(localized: "Off") : String(format: "%.2f", settings.mlxRepetitionPenalty))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 56, alignment: .trailing)
+                    .monospacedDigit()
             }
         }
     }

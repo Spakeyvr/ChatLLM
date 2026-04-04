@@ -114,6 +114,24 @@ struct On_Device_LLM_ChatTests {
         #expect(AppWebSearchToolBridge.isSearchLimitToolResponse(limited))
     }
 
+    @Test func webSearchBridgeReturnsRecoverableErrorWhenSearchFails() async throws {
+        MockTavilyURLProtocol.responseStatusCode = 500
+        MockTavilyURLProtocol.responseData = """
+        {
+          "detail": "Upstream search unavailable"
+        }
+        """.data(using: .utf8)!
+
+        let service = try makeSearchService()
+        let bridge = AppWebSearchToolBridge(searchService: service)
+
+        let result = try await bridge.executeSearch(query: "latest swift release")
+
+        #expect(AppWebSearchToolBridge.isInternalToolErrorResponse(result))
+        #expect(result.contains("Upstream search unavailable"))
+        #expect(bridge.allInvocations.isEmpty)
+    }
+
     @Test func qwenToolTemplateInspectionPrefersXMLFunctionFormat() {
         let packageContents = """
         <tool_call>
@@ -827,6 +845,23 @@ struct On_Device_LLM_ChatTests {
         )
 
         #expect(shouldInject)
+    }
+
+    @Test func mlxTimeContextGateDoesNotTreatEmbeddedSubstringsAsTimeSensitive() {
+        let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Explain how snow forms in clouds.",
+            forceWebSearch: false,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        )
+
+        #expect(!shouldInject)
+    }
+
+    @Test func requiresWebSearchDoesNotTriggerOnEmbeddedKeywordSubstrings() throws {
+        let viewModel = try makeViewModel()
+
+        #expect(!viewModel.requiresWebSearch(for: "Explain how snow forms in clouds."))
     }
 
     @Test func webSearchSystemPromptUsesCurrentCalendarYear() {

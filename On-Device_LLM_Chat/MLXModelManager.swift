@@ -1976,7 +1976,8 @@ final class MLXModelManager: ObservableObject {
             cacheCompression: tunedCacheCompression,
             enableThinking: enableThinking,
             currentModelID: currentModel.id,
-            prefillStepSize: prefillStepSize
+            prefillStepSize: prefillStepSize,
+            repetitionPenalty: UserDefaults.standard.mlxRepetitionPenaltyValue
         )
         let additionalContext: [String: any Sendable]? = ["enable_thinking": enableThinking]
         let processing = UserInput.Processing()
@@ -2243,7 +2244,8 @@ final class MLXModelManager: ObservableObject {
         cacheCompression: CacheCompressionMode,
         enableThinking: Bool,
         currentModelID: String,
-        prefillStepSize: Int
+        prefillStepSize: Int,
+        repetitionPenalty: Float?
     ) -> GenerateParameters {
         let legacyKVQuantization: KVQuantizationConfiguration? = if case .legacyQuantized(let configuration) = cacheCompression {
             configuration
@@ -2261,6 +2263,7 @@ final class MLXModelManager: ObservableObject {
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 1.0,
                 topP: 0.95,
+                repetitionPenalty: repetitionPenalty,
                 prefillStepSize: prefillStepSize
             )
         } else if enableThinking {
@@ -2273,6 +2276,7 @@ final class MLXModelManager: ObservableObject {
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.6,
                 topP: 0.95,
+                repetitionPenalty: repetitionPenalty,
                 prefillStepSize: prefillStepSize
             )
         } else {
@@ -2285,6 +2289,7 @@ final class MLXModelManager: ObservableObject {
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.7,
                 topP: 0.8,
+                repetitionPenalty: repetitionPenalty,
                 prefillStepSize: prefillStepSize
             )
         }

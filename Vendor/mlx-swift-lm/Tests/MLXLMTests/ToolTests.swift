@@ -250,6 +250,25 @@ struct ToolTests {
         #expect(toolCall.function.arguments["enabled"] == .bool(true))
     }
 
+    @Test("Test XML Function Parser - Wrapped Multiline Qwen Format")
+    func testXMLFunctionParserWrappedMultilineFormat() throws {
+        let parser = XMLFunctionParser()
+        let content = """
+        <tool_call>
+        <function=webSearch>
+        <parameter=query>
+        latest OpenAI model 2026
+        </parameter>
+        </function>
+        </tool_call>
+        """
+
+        let toolCall = try #require(parser.parse(content: content, tools: nil))
+
+        #expect(toolCall.function.name == "webSearch")
+        #expect(toolCall.function.arguments["query"] == .string("latest OpenAI model 2026"))
+    }
+
     // MARK: - GLM4 Format Tests
 
     @Test("Test GLM4 Tool Call Parser")

@@ -120,6 +120,31 @@ struct MessageCellView: View {
         !viewModel.isGenerating && !isCurrentlyStreaming && hasContent && message.isFinal
     }
 
+    private var combinedSourcesText: String? {
+        let directSources = extractSourcesFromMessage()
+        if let directSources, !directSources.isEmpty {
+            return directSources
+        }
+
+        let invocationSources = (message.searchInvocations ?? [])
+            .map(\.results)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !invocationSources.isEmpty else { return nil }
+        return invocationSources.joined(separator: "\n\n")
+    }
+
+    private var sourcesQuery: String? {
+        if let query = message.searchQuery, !query.isEmpty {
+            return query
+        }
+
+        let invocations = message.searchInvocations ?? []
+        guard invocations.count == 1 else { return nil }
+        return invocations[0].query
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Bubble or loading placeholder
@@ -165,6 +190,8 @@ struct MessageCellView: View {
                     isStreamingForThisMessage: isCurrentlyStreaming,
                     canAct: canAct,
                     isFinal: message.isFinal,
+                    sourcesText: combinedSourcesText,
+                    sourcesQuery: sourcesQuery,
                     onStop: { viewModel.cancelGeneration() },
                     onTryAgain: {
                         viewModel.scheduleRegeneration(messageID: message.id, instruction: nil)
@@ -194,6 +221,14 @@ struct MessageCellView: View {
         .sheet(isPresented: $showDeveloperSheet) {
             DeveloperMessageSheet(message: message)
         }
+    }
+
+    private func extractSourcesFromMessage() -> String? {
+        let candidateText = message.isReasoningMode
+            ? (message.finalAnswer ?? message.displayText)
+            : message.displayText
+        let extracted = candidateText.extractSourcesBlocks().sources?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (extracted?.isEmpty == false) ? extracted : nil
     }
 
     /// Check if the previous user message (that this assistant message is responding to) has an image
@@ -254,9 +289,6 @@ struct StandardMessageBubble: View {
     @State private var lastRenderedText: String = ""
     @State private var lastRenderedFontSize: Double = 16.0
 
-    // Sources UI state
-    @State private var showSources = false
-
     var isUser: Bool { message.role == .user }
     var isAssistant: Bool { message.role == .assistant }
     var isSystem: Bool { message.role == .system }
@@ -268,11 +300,9 @@ struct StandardMessageBubble: View {
     var body: some View {
         // During streaming, avoid expensive full-text processing on every repaint.
         // Use displayText (which strips hidden image context) even during streaming.
-        let split: (visible: String, sources: String?) = isStreaming
-            ? (message.displayText, nil)
-            : message.displayText.extractSourcesBlocks()
-        let visibleText = split.visible
-        let sourcesText = split.sources
+        let visibleText = isStreaming
+            ? message.displayText
+            : message.displayText.extractSourcesBlocks().visible
 
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
@@ -296,18 +326,6 @@ struct StandardMessageBubble: View {
                     ErrorCalloutView(text: errorText, topPadding: visibleText.isEmpty ? 0 : 6)
                 }
 
-                // Sources button
-                if let sourcesText, !sourcesText.isEmpty, isAssistant {
-                    SourcesButton(showSources: $showSources)
-                        .accessibilityLabel("Show sources")
-                        .sheet(isPresented: $showSources) {
-                            SourcesSheetView(
-                                sourcesText: sourcesText,
-                                title: String(localized: "Sources"),
-                                searchQuery: message.searchQuery
-                            )
-                        }
-                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -380,9 +398,6 @@ struct ReasoningMessageBubble: View {
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @ObservedObject var viewModel: ChatViewModel
 
-    // Sources UI state
-    @State private var showSources = false
-    @State private var selectedSearchInvocation: SearchInvocation?
     @State private var showReasoningSheet = false
 
     private var isCurrentlyStreaming: Bool {
@@ -439,7 +454,7 @@ struct ReasoningMessageBubble: View {
                 let rawFinal = parsedContent.finalAnswer ?? message.finalAnswer ?? message.displayText
                 let split = rawFinal.extractSourcesBlocks()
                 let finalText = split.visible
-                let sourcesText = split.sources
+                let inlineSourcesText = split.sources
 
                 // Show "Thinking…" text during entire streaming phase; tappable once sheet has content
                 if isCurrentlyStreaming {
@@ -451,7 +466,7 @@ struct ReasoningMessageBubble: View {
                 // Final answer section — only shown when there is content to display
                 let hasFinalSection = !finalText.isEmpty || message.generationError != nil ||
                     (message.searchInvocations?.isEmpty == false && message.isFinal) ||
-                    (message.isFinal && sourcesText != nil) ||
+                    (message.isFinal && inlineSourcesText != nil) ||
                     (hasReasoningContent && message.isFinal)
                 if hasFinalSection {
                     VStack(alignment: .leading, spacing: 8) {
@@ -477,14 +492,6 @@ struct ReasoningMessageBubble: View {
                             ErrorCalloutView(text: errorText, topPadding: finalText.isEmpty ? 0 : 6)
                         }
 
-                        // Search cards inline (for reasoning messages with searches)
-                        if let invocations = message.searchInvocations, !invocations.isEmpty, message.isFinal {
-                            SearchInvocationsList(invocations: invocations) { invocation in
-                                selectedSearchInvocation = invocation
-                            }
-                            .padding(.vertical, 4)
-                        }
-
                         HStack(spacing: 12) {
                             // View Reasoning button — opens step-by-step sheet
                             if hasReasoningContent && message.isFinal {
@@ -501,18 +508,6 @@ struct ReasoningMessageBubble: View {
                                     .background(.thinMaterial, in: Capsule())
                                 }
                                 .buttonStyle(.plain)
-                            }
-
-                            // Only show combined Sources button for non-search-invocation messages
-                            if let sourcesText, !sourcesText.isEmpty, (message.searchInvocations ?? []).isEmpty {
-                                SourcesButton(showSources: $showSources)
-                                    .sheet(isPresented: $showSources) {
-                                        SourcesSheetView(
-                                            sourcesText: sourcesText,
-                                            title: String(localized: "Sources"),
-                                            searchQuery: message.searchQuery
-                                        )
-                                    }
                             }
                         }
                     }
@@ -544,13 +539,6 @@ struct ReasoningMessageBubble: View {
                 searchInvocations: message.searchInvocations
             )
         }
-        .sheet(item: $selectedSearchInvocation) { invocation in
-            SourcesSheetView(
-                sourcesText: invocation.results,
-                title: String(localized: "Search Results"),
-                searchQuery: invocation.query
-            )
-        }
     }
 }
 
@@ -563,16 +551,11 @@ struct SourcesButton: View {
         Button {
             showSources = true
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "list.bullet.rectangle.portrait")
-                Text(String(localized: "Sources"))
-            }
-            .font(.caption)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.thinMaterial, in: Capsule())
+            Image(systemName: "doc.text.magnifyingglass")
+                .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Show sources")
     }
 }
 
@@ -904,6 +887,8 @@ struct AssistantActionsBar: View {
     var isStreamingForThisMessage: Bool
     var canAct: Bool
     var isFinal: Bool
+    var sourcesText: String?
+    var sourcesQuery: String?
     var onStop: () -> Void
     var onTryAgain: () -> Void
     var onConcise: () -> Void
@@ -913,6 +898,7 @@ struct AssistantActionsBar: View {
 
     // State for fade-in animation
     @State private var isVisible = false
+    @State private var showSources = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -936,6 +922,17 @@ struct AssistantActionsBar: View {
                 // Removed .menuStyle(.borderlessButton) – flaky in scrollable cells
                 .disabled(!canAct)
                 .accessibilityLabel(String(localized: "Regenerate"))
+            }
+
+            if let sourcesText, !sourcesText.isEmpty {
+                SourcesButton(showSources: $showSources)
+                    .sheet(isPresented: $showSources) {
+                        SourcesSheetView(
+                            sourcesText: sourcesText,
+                            title: String(localized: "Sources"),
+                            searchQuery: sourcesQuery
+                        )
+                    }
             }
 
             if developerModeEnabled {

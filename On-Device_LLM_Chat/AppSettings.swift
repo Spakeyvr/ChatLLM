@@ -13,6 +13,7 @@ enum AppSettingsKeys {
     static let mlxContextWindowTokens = "mlxContextWindowTokens"
     static let mlxEnableTurboQuant = "mlxEnableTurboQuant"
     static let mlxEnableKVCacheQuantization = "mlxEnableKVCacheQuantization"
+    static let mlxRepetitionPenalty = "mlxRepetitionPenalty"
     static let autoDeleteOldChats = "autoDeleteOldChats"
     static let autoDeleteDays = "autoDeleteDays"
     static let developerModeEnabled = "developerModeEnabled"
@@ -33,6 +34,7 @@ struct AppSettingsDraft: Equatable {
     var mlxMaxOutputTokens: Int
     var mlxContextWindowTokens: Int
     var mlxEnableTurboQuant: Bool
+    var mlxRepetitionPenalty: Double
     var autoDeleteOldChats: Bool
     var autoDeleteDays: Int
     var developerModeEnabled: Bool
@@ -55,6 +57,7 @@ struct AppSettingsDraft: Equatable {
                 ? defaults.integer(forKey: AppSettingsKeys.mlxContextWindowTokens)
                 : 0,
             mlxEnableTurboQuant: defaults.mlxEnableTurboQuant,
+            mlxRepetitionPenalty: defaults.mlxRepetitionPenalty,
             autoDeleteOldChats: defaults.bool(forKey: AppSettingsKeys.autoDeleteOldChats),
             autoDeleteDays: defaults.object(forKey: AppSettingsKeys.autoDeleteDays) as? Int ?? 30,
             developerModeEnabled: defaults.bool(forKey: AppSettingsKeys.developerModeEnabled),
@@ -77,6 +80,7 @@ struct AppSettingsDraft: Equatable {
             mlxMaxOutputTokens: 1024,
             mlxContextWindowTokens: 0,
             mlxEnableTurboQuant: true,
+            mlxRepetitionPenalty: 1.0,
             autoDeleteOldChats: false,
             autoDeleteDays: 30,
             developerModeEnabled: false,
@@ -101,6 +105,7 @@ struct AppSettingsDraft: Equatable {
         defaults.mlxMaxOutputTokens = mlxMaxOutputTokens
         defaults.set(mlxContextWindowTokens, forKey: AppSettingsKeys.mlxContextWindowTokens)
         defaults.mlxEnableTurboQuant = mlxEnableTurboQuant
+        defaults.mlxRepetitionPenalty = mlxRepetitionPenalty
         defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
         defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)
         defaults.set(developerModeEnabled, forKey: AppSettingsKeys.developerModeEnabled)

@@ -14,7 +14,9 @@ public struct XMLFunctionParser: ToolCallParser, Sendable {
         // Pattern: <function=(.*?)</function>
         guard
             let funcMatch = content.range(
-                of: #"<function=(.*?)</function>"#, options: .regularExpression)
+                of: #"(?s)<function=(.*?)</function>"#,
+                options: .regularExpression
+            )
         else { return nil }
 
         let funcContent = String(content[funcMatch])

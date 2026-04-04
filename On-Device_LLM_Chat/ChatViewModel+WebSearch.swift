@@ -36,8 +36,11 @@ extension ChatViewModel {
 
     func requiresWebSearch(for userText: String) -> Bool {
         let q = userText.lowercased()
+        let containsPhrase: (String) -> Bool = { phrase in
+            SharedRegexes.containsWholePhrase(phrase, in: q)
+        }
 
-        if q.contains("please search") || q.contains("search for") || q.contains("look up") {
+        if containsPhrase("please search") || containsPhrase("search for") || containsPhrase("look up") {
             return true
         }
 
@@ -62,8 +65,8 @@ extension ChatViewModel {
         ]
 
         for pattern in generalKnowledgePatterns {
-            if q.contains(pattern) {
-                let hasTimeSpecific = timeSpecificKeywords.contains { q.contains($0) }
+            if containsPhrase(pattern) {
+                let hasTimeSpecific = timeSpecificKeywords.contains { containsPhrase($0) }
                 if !hasTimeSpecific {
                     return false
                 }
@@ -71,28 +74,29 @@ extension ChatViewModel {
         }
 
         for pattern in mathPatterns {
-            if q.contains(pattern) {
+            if containsPhrase(pattern) {
                 return false
             }
         }
 
-        if timeSpecificKeywords.contains(where: { q.contains($0) }) ||
-            Self.timeSensitiveYearTokens().contains(where: { q.contains($0) }) {
+        if timeSpecificKeywords.contains(where: { containsPhrase($0) }) ||
+            Self.timeSensitiveYearTokens().contains(where: { containsPhrase($0) }) {
             return true
         }
 
-        let hasContextualKeyword = contextualKeywords.contains { q.contains($0) }
+        let hasContextualKeyword = contextualKeywords.contains { containsPhrase($0) }
         if hasContextualKeyword {
             let productKeywords = ["ios", "iphone", "ipad", "mac", "xcode", "swift", "apple"]
-            let hasProductContext = productKeywords.contains { q.contains($0) }
+            let hasProductContext = productKeywords.contains { containsPhrase($0) }
 
-            if hasProductContext && (q.contains("version") || q.contains("price") || q.contains("release")) {
+            if hasProductContext &&
+                (containsPhrase("version") || containsPhrase("price") || containsPhrase("release")) {
                 return true
             }
         }
 
         let eventKeywords = ["won", "winner", "champion", "results", "score"]
-        if eventKeywords.contains(where: { q.contains($0) }) {
+        if eventKeywords.contains(where: { containsPhrase($0) }) {
             return true
         }
 

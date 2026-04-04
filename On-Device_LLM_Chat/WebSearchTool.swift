@@ -168,7 +168,15 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
             }
         }
 
-        let results = try await searchService.search(query: query, maxResults: 3)
+        let results: String
+        do {
+            results = try await searchService.search(query: query, maxResults: 3)
+        } catch {
+            logger.error(
+                "Search failed: query_chars=\(query.count, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+            return Self.searchFailedToolResponse(for: error)
+        }
         let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
         let truncated = results.count > 3500
             ? Self.truncateAtWordBoundary(results, maxChars: 3500)
@@ -210,6 +218,17 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
 
     nonisolated static func invalidArgumentsToolResponse() -> String {
         "[webSearch internal error: missing required 'query' argument. Call webSearch again with a concise query string and continue reasoning.]"
+    }
+
+    nonisolated static func searchFailedToolResponse(for error: Error) -> String {
+        let description = error.localizedDescription
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let compactDescription = description.isEmpty ? "search failed" : description
+        let truncated = compactDescription.count > 160
+            ? String(compactDescription.prefix(160)) + "..."
+            : compactDescription
+        return "[webSearch internal error: \(truncated). You may retry webSearch with a narrower query or continue without it if the request can be answered from stable knowledge.]"
     }
 
     nonisolated static func isInternalToolErrorResponse(_ text: String) -> Bool {

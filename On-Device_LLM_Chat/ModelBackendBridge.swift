@@ -355,6 +355,25 @@ extension UserDefaults {
         set { set(newValue, forKey: AppSettingsKeys.mlxEnableTurboQuant) }
     }
 
+    var mlxRepetitionPenalty: Double {
+        get {
+            guard object(forKey: AppSettingsKeys.mlxRepetitionPenalty) != nil else {
+                return 1.0
+            }
+            let storedValue = double(forKey: AppSettingsKeys.mlxRepetitionPenalty)
+            return min(max(storedValue, 1.0), 1.5)
+        }
+        set {
+            let clampedValue = min(max(newValue, 1.0), 1.5)
+            set(clampedValue, forKey: AppSettingsKeys.mlxRepetitionPenalty)
+        }
+    }
+
+    var mlxRepetitionPenaltyValue: Float? {
+        let penalty = Float(mlxRepetitionPenalty)
+        return penalty > 1.0 ? penalty : nil
+    }
+
     var selectedLLMBackend: String {
         get { string(forKey: "selectedLLMBackend") ?? ModelBackendBridge.Backend.foundationModels.rawValue }
         set { set(newValue, forKey: "selectedLLMBackend") }

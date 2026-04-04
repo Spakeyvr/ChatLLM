@@ -634,15 +634,7 @@ final class ChatViewModel: ObservableObject {
             return nil
         }
 
-        let preservedSources = target.resetForRegeneration(preserveSources: true)
-        if let sources = preservedSources, !sources.isEmpty {
-            let sourcesBlock = "<sources>\n\(sources)\n</sources>\n\n"
-            if target.isReasoningMode {
-                target.finalAnswer = sourcesBlock
-            } else {
-                target.text = sourcesBlock
-            }
-        }
+        target.resetForRegeneration()
 
         conversation.lastUpdated = Date()
         immediateSave()
