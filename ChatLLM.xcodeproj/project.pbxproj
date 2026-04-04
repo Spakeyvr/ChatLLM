@@ -246,7 +246,7 @@
 				3D242DD72EAEA63600AE350C /* XCRemoteSwiftPackageReference "swift-async-algorithms" */,
 				3DD829772EB155B300D2EE7F /* XCRemoteSwiftPackageReference "swift-collections" */,
 				3D1342282EF6F07500AB678F /* XCRemoteSwiftPackageReference "swift-transformers" */,
-				E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */,
+				E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3DAC54472EAC24740054484A /* Products */;
@@ -478,7 +478,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.11;
+				MARKETING_VERSION = 0.11.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-Chat";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -527,7 +527,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.11;
+				MARKETING_VERSION = 0.11.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-Chat";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -679,6 +679,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Vendor/mlx-swift-lm";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		3D1342282EF6F07500AB678F /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -706,13 +713,6 @@
 		};
 /* End XCRemoteSwiftPackageReference section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Vendor/mlx-swift-lm;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
 		3D1342302EF6F07600AB678F /* Tokenizers */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -726,22 +726,22 @@
 		};
 		E52029162F572460005824D2 /* MLXEmbedders */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */;
+			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
 			productName = MLXEmbedders;
 		};
 		E52029182F572460005824D2 /* MLXLLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */;
+			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
 			productName = MLXLLM;
 		};
 		E520291A2F572460005824D2 /* MLXLMCommon */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */;
+			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
 			productName = MLXLMCommon;
 		};
 		E520291C2F572460005824D2 /* MLXVLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "mlx-swift-lm" */;
+			package = E51958AD2F57224B0037AEFD /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
 			productName = MLXVLM;
 		};
 /* End XCSwiftPackageProductDependency section */
