@@ -88,6 +88,18 @@ You can attach images to prompts. The app will either:
 - Tavily API keys are handled in app settings and keychain-related code exists in the chat view model.
 - Chats can be exported from Settings as a plain-text conversation dump.
 
+## GitHub commit relay
+
+If you want Discord notifications whenever a GitHub push happens, there is a small webhook relay script in [Scripts/github_discord_relay.py](/Users/nevioknogler/Desktop/ChatLLM/Scripts/github_discord_relay.py).
+
+Setup notes:
+
+1. Start the relay with `DISCORD_WEBHOOK_URL` and `GITHUB_WEBHOOK_SECRET` set.
+2. Expose the relay over HTTPS.
+3. In GitHub, add a webhook that points to `/github`, uses `application/json`, and subscribes to the `Pushes` event.
+
+More detailed instructions are in [Scripts/README.md](/Users/nevioknogler/Desktop/ChatLLM/Scripts/README.md).
+
 ## Project structure
 
 - [On-Device_LLM_Chat](/Users/nevioknogler/Desktop/ChatLLM/On-Device_LLM_Chat): main app source

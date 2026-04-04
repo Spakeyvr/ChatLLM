@@ -1,6 +1,14 @@
 {
   "color-space-for-untagged-svg-colors" : "display-p3",
-  "fill" : "system-light",
+  "fill-specializations" : [
+    {
+      "value" : "system-light"
+    },
+    {
+      "appearance" : "dark",
+      "value" : "automatic"
+    }
+  ],
   "groups" : [
     {
       "blur-material-specializations" : [

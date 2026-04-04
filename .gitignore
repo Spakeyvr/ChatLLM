@@ -21,3 +21,6 @@ build/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 xcuserdata/
+
+# Local webhook relay secrets
+Scripts/.env
