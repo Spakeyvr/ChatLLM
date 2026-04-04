@@ -15,7 +15,6 @@ extension SettingsSheet {
     @ViewBuilder
     var dataManagementSection: some View {
         Section(header: Text(String(localized: "Data Management"))) {
-            // Export conversations
             Button {
                 exportConversations()
             } label: {
@@ -31,7 +30,6 @@ extension SettingsSheet {
             .buttonStyle(.plain)
             .disabled(!hasChats)
 
-            // Make text white (primary) and keep trash icon red by avoiding destructive role.
             Button {
                 if confirmBeforeDeletingChats {
                     pendingAction = .deleteAll
@@ -51,7 +49,6 @@ extension SettingsSheet {
             .buttonStyle(.plain)
             .disabled(!hasChats)
 
-            // Respect confirmation preference and gray out when only one or no chats
             Button {
                 if confirmBeforeDeletingChats {
                     pendingAction = .deleteAllExceptCurrent
