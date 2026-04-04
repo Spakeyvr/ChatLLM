@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxKVCacheInfoMessage = String(localized: "Enabled by default for persistent MLX chats, this reduces memory use by quantizing the KV cache to 8-bit after an initial warmup. Devices with less than 12 GB of RAM may automatically switch all MLX turns to a bounded sliding-window cache to avoid crashes. Upstream MLX does not support quantizing rotating KV caches yet, so those low-memory runs skip KV quantization automatically.")
-    static let mlxKVCacheAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory devices may switch to a bounded sliding-window cache, which skips KV quantization.")
+    static let mlxTurboQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, TurboQuant experimentally compresses the KV cache after an initial warmup to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and unsupported runs can fall back internally to the app's legacy MLX cache compression path.")
+    static let mlxTurboQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, and unsupported paths can fall back automatically.")
 
     @Binding var settings: AppSettingsDraft
 
@@ -133,16 +133,16 @@ struct SettingsSheet: View {
                     }
                     .padding(.vertical, 4)
 
-                    Toggle(isOn: $settings.mlxEnableKVCacheQuantization) {
+                    Toggle(isOn: $settings.mlxEnableTurboQuant) {
                         HStack(spacing: 6) {
-                            Label(String(localized: "8-Bit KV Cache (MLX Only)"), systemImage: "memorychip")
+                            Label(String(localized: "TurboQuant (MLX Only)"), systemImage: "memorychip")
                             InfoButton(
-                                title: String(localized: "8-Bit KV Cache (MLX Only)"),
-                                message: Self.mlxKVCacheInfoMessage
+                                title: String(localized: "TurboQuant (MLX Only)"),
+                                message: Self.mlxTurboQuantInfoMessage
                             )
                         }
                     }
-                    .accessibilityHint(Self.mlxKVCacheAccessibilityHint)
+                    .accessibilityHint(Self.mlxTurboQuantAccessibilityHint)
 
                     Toggle(isOn: $settings.developerModeEnabled) {
                         HStack(spacing: 6) {

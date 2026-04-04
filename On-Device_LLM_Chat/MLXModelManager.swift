@@ -150,9 +150,15 @@ nonisolated private struct MLXInferenceResponse: Sendable {
 }
 
 private actor MLXInferenceWorker {
+    private struct SessionCacheConfiguration: Equatable, Sendable {
+        let maxKVSize: Int?
+        let cacheCompression: KVCacheCompressionMode?
+    }
+
     private struct SessionState {
         let key: MLXSessionKey
         let session: ChatSession
+        let cacheConfiguration: SessionCacheConfiguration
         var visibleHistory: [MLXVisibleMessageSignature]
         var latestPerformance: MLXPerformanceSample?
     }
@@ -250,6 +256,10 @@ private actor MLXInferenceWorker {
         }
 
         let prefixSignatures = request.messages.dropLast().map { MLXVisibleMessageSignature(message: $0) }
+        let requestedCacheConfiguration = SessionCacheConfiguration(
+            maxKVSize: request.params.maxKVSize,
+            cacheCompression: request.params.resolvedCacheCompression
+        )
 
         let usesExplicitMessageHistory =
             !request.tools.isEmpty &&
@@ -263,10 +273,19 @@ private actor MLXInferenceWorker {
             )
         } else if let existing = sessions[request.sessionKey],
                   existing.key == request.sessionKey,
+                  existing.cacheConfiguration == requestedCacheConfiguration,
                   existing.visibleHistory == prefixSignatures {
             reusableSession = existing.session
             logger.notice("MLX reusing persistent chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
         } else {
+            if let existing = sessions[request.sessionKey],
+               existing.key == request.sessionKey,
+               existing.visibleHistory == prefixSignatures,
+               existing.cacheConfiguration != requestedCacheConfiguration {
+                logger.notice(
+                    "MLX recreating persistent chat session due to cache configuration change: conversation=\(request.conversationID.uuidString, privacy: .public)"
+                )
+            }
             reusableSession = ChatSession(
                 loadedModel.container,
                 history: Array(request.messages.dropLast()),
@@ -495,6 +514,7 @@ private actor MLXInferenceWorker {
             sessions[request.sessionKey] = SessionState(
                 key: request.sessionKey,
                 session: reusableSession,
+                cacheConfiguration: requestedCacheConfiguration,
                 visibleHistory: visibleHistory,
                 latestPerformance: performanceSample
             )
@@ -677,6 +697,8 @@ final class MLXModelManager: ObservableObject {
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
     nonisolated private static let kvQuantizationBits = 8
     nonisolated private static let kvQuantizationGroupSize = 64
+    nonisolated private static let turboQuantBits = 3
+    nonisolated private static let turboQuantSeed: UInt64 = 42
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
@@ -746,17 +768,76 @@ final class MLXModelManager: ObservableObject {
         let startStep: Int
     }
 
+    enum CacheCompressionMode: Equatable, Sendable {
+        case none
+        case legacyQuantized(KVQuantizationConfiguration)
+        case turboQuant(bits: Int, startStep: Int, seed: UInt64)
+
+        nonisolated var diagnosticLabel: String {
+            switch self {
+            case .none:
+                return "none"
+            case .legacyQuantized:
+                return "legacy-quantized"
+            case .turboQuant:
+                return "turboquant"
+            }
+        }
+
+        nonisolated var usesLegacyQuantization: Bool {
+            if case .legacyQuantized = self {
+                return true
+            }
+            return false
+        }
+
+        nonisolated func applying(startStep: Int) -> Self {
+            switch self {
+            case .none:
+                return .none
+            case .legacyQuantized(let configuration):
+                return .legacyQuantized(
+                    KVQuantizationConfiguration(
+                        bits: configuration.bits,
+                        groupSize: configuration.groupSize,
+                        startStep: startStep
+                    )
+                )
+            case .turboQuant:
+                // TurboQuant needs to be active from cache creation to reduce
+                // prefill peak memory; carrying forward the legacy delayed
+                // quantization start step preserves the long-context crash.
+                return self
+            }
+        }
+
+        nonisolated var generateParametersCompression: KVCacheCompressionMode? {
+            switch self {
+            case .none:
+                return nil
+            case .legacyQuantized(let configuration):
+                return .quantized(
+                    bits: configuration.bits,
+                    groupSize: configuration.groupSize,
+                    startStep: configuration.startStep
+                )
+            case .turboQuant(let bits, let startStep, let seed):
+                return .turboQuant(bits: bits, startStep: startStep, seed: seed)
+            }
+        }
+    }
+
     struct GenerationConfiguration: Equatable, Sendable {
         let maxTokens: Int?
         let cachePolicy: MLXCachePolicy
-        let kvQuantization: KVQuantizationConfiguration?
+        let cacheCompression: CacheCompressionMode
 
         var maxKVSize: Int? {
             cachePolicy.maxKVSize
         }
 
-        var usesQuantizedToolCacheStrategy: Bool {
-            cachePolicy == .persistentQuantizedSimple
+        var usesCompressedPersistentCache: Bool {
+            cachePolicy == .persistentQuantizedSimple && cacheCompression != .none
         }
     }
 
@@ -1193,9 +1274,21 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
-    private func defaultGenerationConfigurationForCurrentDevice() -> GenerationConfiguration {
+    private func supportsTurboQuant(for model: MLXModelInfo?) -> Bool {
+        guard let model else { return true }
+        return model.id.hasPrefix("qwen3.5-")
+    }
+
+    private func shouldPreferTurboQuant(for model: MLXModelInfo?) -> Bool {
+        UserDefaults.standard.mlxEnableTurboQuant && supportsTurboQuant(for: model)
+    }
+
+    private func defaultGenerationConfigurationForCurrentDevice(
+        model: MLXModelInfo? = nil
+    ) -> GenerationConfiguration {
         Self.generationConfiguration(
-            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
+            isEnabled: UserDefaults.standard.mlxEnableTurboQuant,
+            preferTurboQuant: shouldPreferTurboQuant(for: model),
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -1214,7 +1307,7 @@ final class MLXModelManager: ObservableObject {
             return
         }
 
-        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice().cachePolicy.usesDynamicKVQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice(model: model).cacheCompression.usesLegacyQuantization
         deferredTuningModelID = model.id
         logger.notice(
             "MLX tuning deferred until after first successful generation: id=\(model.id, privacy: .public) prefill=\(initialPrefillStepSize, privacy: .public) kv_quantization=\(shouldTuneQuantizedKV, privacy: .public)"
@@ -1253,13 +1346,13 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let defaultGenerationConfiguration = defaultGenerationConfigurationForCurrentDevice()
+        let defaultGenerationConfiguration = defaultGenerationConfigurationForCurrentDevice(model: model)
         let prefillCandidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
         let quantizedKVStartCandidates = persistedQuantizedKVStart.map { [$0] } ?? [128, 256, 512]
         let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
             deviceSupportProfile: deviceSupportProfile
         )
-        let shouldTuneQuantizedKV = defaultGenerationConfiguration.cachePolicy.usesDynamicKVQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfiguration.cacheCompression.usesLegacyQuantization
 
         tuningTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
@@ -1842,8 +1935,10 @@ final class MLXModelManager: ObservableObject {
         let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
         let configuredContextWindow = configuredContextWindowLimit
+        let turboQuantRequested = UserDefaults.standard.mlxEnableTurboQuant
         let generationConfiguration = Self.generationConfiguration(
-            isEnabled: UserDefaults.standard.mlxEnableKVCacheQuantization,
+            isEnabled: turboQuantRequested,
+            preferTurboQuant: shouldPreferTurboQuant(for: currentModel),
             hasTools: !tools.isEmpty,
             hasMedia: includesMedia,
             memoryConstrained: memoryConstrained,
@@ -1855,8 +1950,13 @@ final class MLXModelManager: ObservableObject {
             await prewarmModelShaders(for: currentModel, reason: "first-generation")
         }
         logger.notice(
-            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
+            "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) cache_compression=\(generationConfiguration.cacheCompression.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
         )
+        if turboQuantRequested,
+           generationConfiguration.cachePolicy.usesDynamicKVQuantization,
+           generationConfiguration.cacheCompression.usesLegacyQuantization {
+            logger.notice("MLX TurboQuant fell back to legacy KV quantization for model=\(currentModel.id, privacy: .public)")
+        }
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
             !tools.isEmpty &&
@@ -1869,17 +1969,11 @@ final class MLXModelManager: ObservableObject {
 
         let prefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
         let quantizedKVStart = await inferenceWorker.quantizedKVStart(for: currentModel.id)
-        let tunedKVQuantization = generationConfiguration.kvQuantization.map { kvQuantization in
-            KVQuantizationConfiguration(
-                bits: kvQuantization.bits,
-                groupSize: kvQuantization.groupSize,
-                startStep: quantizedKVStart
-            )
-        }
+        let tunedCacheCompression = generationConfiguration.cacheCompression.applying(startStep: quantizedKVStart)
         let params = Self.makeGenerateParameters(
             maxTokens: generationConfiguration.maxTokens,
             maxKVSize: generationConfiguration.maxKVSize,
-            kvQuantization: tunedKVQuantization,
+            cacheCompression: tunedCacheCompression,
             enableThinking: enableThinking,
             currentModelID: currentModel.id,
             prefillStepSize: prefillStepSize
@@ -2027,6 +2121,7 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func generationConfiguration(
         isEnabled: Bool,
+        preferTurboQuant: Bool,
         hasTools: Bool,
         hasMedia: Bool,
         memoryConstrained: Bool,
@@ -2055,8 +2150,9 @@ final class MLXModelManager: ObservableObject {
         return GenerationConfiguration(
             maxTokens: maxTokens,
             cachePolicy: clampedCachePolicy,
-            kvQuantization: kvQuantizationConfiguration(
-                cachePolicy: clampedCachePolicy
+            cacheCompression: cacheCompressionMode(
+                cachePolicy: clampedCachePolicy,
+                preferTurboQuant: preferTurboQuant
             )
         )
     }
@@ -2079,6 +2175,7 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func effectiveMaxKVSize(
         isEnabled: Bool,
+        preferTurboQuant: Bool,
         hasTools: Bool,
         hasMedia: Bool,
         prefersBoundedCache: Bool,
@@ -2097,7 +2194,7 @@ final class MLXModelManager: ObservableObject {
         if let maxKVSize = parameters.maxKVSize {
             return .boundedRotating(maxKVSize: maxKVSize)
         }
-        if parameters.kvBits != nil {
+        if parameters.resolvedCacheCompression != nil {
             return .persistentQuantizedSimple
         }
         return .persistentSimple
@@ -2115,35 +2212,53 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    nonisolated internal static func kvQuantizationConfiguration(
-        cachePolicy: MLXCachePolicy
-    ) -> KVQuantizationConfiguration? {
+    nonisolated internal static func cacheCompressionMode(
+        cachePolicy: MLXCachePolicy,
+        preferTurboQuant: Bool
+    ) -> CacheCompressionMode {
         guard cachePolicy.usesDynamicKVQuantization else {
-            return nil
+            return .none
         }
 
-        return KVQuantizationConfiguration(
-            bits: kvQuantizationBits,
-            groupSize: kvQuantizationGroupSize,
-            startStep: defaultQuantizedKVStartStep
+        if preferTurboQuant {
+            return .turboQuant(
+                bits: turboQuantBits,
+                startStep: 0,
+                seed: turboQuantSeed
+            )
+        }
+
+        return .legacyQuantized(
+            KVQuantizationConfiguration(
+                bits: kvQuantizationBits,
+                groupSize: kvQuantizationGroupSize,
+                startStep: defaultQuantizedKVStartStep
+            )
         )
     }
 
     nonisolated private static func makeGenerateParameters(
         maxTokens: Int?,
         maxKVSize: Int?,
-        kvQuantization: KVQuantizationConfiguration?,
+        cacheCompression: CacheCompressionMode,
         enableThinking: Bool,
         currentModelID: String,
         prefillStepSize: Int
     ) -> GenerateParameters {
+        let legacyKVQuantization: KVQuantizationConfiguration? = if case .legacyQuantized(let configuration) = cacheCompression {
+            configuration
+        } else {
+            nil
+        }
+
         if enableThinking && currentModelID == "qwen3.5-2b-4bit" {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                kvBits: legacyKVQuantization?.bits,
+                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 1.0,
                 topP: 0.95,
                 prefillStepSize: prefillStepSize
@@ -2152,9 +2267,10 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                kvBits: legacyKVQuantization?.bits,
+                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.6,
                 topP: 0.95,
                 prefillStepSize: prefillStepSize
@@ -2163,9 +2279,10 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: kvQuantization?.bits,
-                kvGroupSize: kvQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: kvQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                kvBits: legacyKVQuantization?.bits,
+                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.7,
                 topP: 0.8,
                 prefillStepSize: prefillStepSize

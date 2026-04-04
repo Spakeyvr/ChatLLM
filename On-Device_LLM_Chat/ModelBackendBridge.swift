@@ -342,14 +342,17 @@ extension UserDefaults {
         return min(max(storedValue, minimum), deviceMaximum)
     }
 
-    var mlxEnableKVCacheQuantization: Bool {
+    var mlxEnableTurboQuant: Bool {
         get {
-            guard object(forKey: "mlxEnableKVCacheQuantization") != nil else {
-                return true
+            if object(forKey: AppSettingsKeys.mlxEnableTurboQuant) != nil {
+                return bool(forKey: AppSettingsKeys.mlxEnableTurboQuant)
             }
-            return bool(forKey: "mlxEnableKVCacheQuantization")
+            if object(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization) != nil {
+                return bool(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization)
+            }
+            return true
         }
-        set { set(newValue, forKey: "mlxEnableKVCacheQuantization") }
+        set { set(newValue, forKey: AppSettingsKeys.mlxEnableTurboQuant) }
     }
 
     var selectedLLMBackend: String {

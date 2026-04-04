@@ -11,6 +11,7 @@ enum AppSettingsKeys {
     static let messageFontSize = "messageFontSize"
     static let mlxMaxOutputTokens = "mlxMaxOutputTokens"
     static let mlxContextWindowTokens = "mlxContextWindowTokens"
+    static let mlxEnableTurboQuant = "mlxEnableTurboQuant"
     static let mlxEnableKVCacheQuantization = "mlxEnableKVCacheQuantization"
     static let autoDeleteOldChats = "autoDeleteOldChats"
     static let autoDeleteDays = "autoDeleteDays"
@@ -31,7 +32,7 @@ struct AppSettingsDraft: Equatable {
     var messageFontSize: Double
     var mlxMaxOutputTokens: Int
     var mlxContextWindowTokens: Int
-    var mlxEnableKVCacheQuantization: Bool
+    var mlxEnableTurboQuant: Bool
     var autoDeleteOldChats: Bool
     var autoDeleteDays: Int
     var developerModeEnabled: Bool
@@ -53,7 +54,7 @@ struct AppSettingsDraft: Equatable {
             mlxContextWindowTokens: defaults.object(forKey: AppSettingsKeys.mlxContextWindowTokens) != nil
                 ? defaults.integer(forKey: AppSettingsKeys.mlxContextWindowTokens)
                 : 0,
-            mlxEnableKVCacheQuantization: defaults.mlxEnableKVCacheQuantization,
+            mlxEnableTurboQuant: defaults.mlxEnableTurboQuant,
             autoDeleteOldChats: defaults.bool(forKey: AppSettingsKeys.autoDeleteOldChats),
             autoDeleteDays: defaults.object(forKey: AppSettingsKeys.autoDeleteDays) as? Int ?? 30,
             developerModeEnabled: defaults.bool(forKey: AppSettingsKeys.developerModeEnabled),
@@ -75,7 +76,7 @@ struct AppSettingsDraft: Equatable {
             messageFontSize: 16.0,
             mlxMaxOutputTokens: 1024,
             mlxContextWindowTokens: 0,
-            mlxEnableKVCacheQuantization: true,
+            mlxEnableTurboQuant: true,
             autoDeleteOldChats: false,
             autoDeleteDays: 30,
             developerModeEnabled: false,
@@ -99,7 +100,7 @@ struct AppSettingsDraft: Equatable {
         defaults.set(messageFontSize, forKey: AppSettingsKeys.messageFontSize)
         defaults.mlxMaxOutputTokens = mlxMaxOutputTokens
         defaults.set(mlxContextWindowTokens, forKey: AppSettingsKeys.mlxContextWindowTokens)
-        defaults.mlxEnableKVCacheQuantization = mlxEnableKVCacheQuantization
+        defaults.mlxEnableTurboQuant = mlxEnableTurboQuant
         defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
         defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)
         defaults.set(developerModeEnabled, forKey: AppSettingsKeys.developerModeEnabled)
