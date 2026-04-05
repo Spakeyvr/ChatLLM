@@ -89,6 +89,15 @@ public struct GenerateParameters: Sendable {
     /// top p sampling
     public var topP: Float
 
+    /// top k sampling
+    public var topK: Int?
+
+    /// minimum probability relative to the highest-probability token
+    public var minP: Float
+
+    /// penalty applied once to tokens that have already appeared
+    public var presencePenalty: Float?
+
     /// penalty factor for repeating tokens
     public var repetitionPenalty: Float?
 
@@ -104,6 +113,9 @@ public struct GenerateParameters: Sendable {
         cacheCompression: KVCacheCompressionMode? = nil,
         temperature: Float = 0.6,
         topP: Float = 1.0,
+        topK: Int? = nil,
+        minP: Float = 0.0,
+        presencePenalty: Float? = nil,
         repetitionPenalty: Float? = nil,
         repetitionContextSize: Int = 20,
         prefillStepSize: Int = 512
@@ -116,6 +128,9 @@ public struct GenerateParameters: Sendable {
         self.cacheCompression = cacheCompression
         self.temperature = temperature
         self.topP = topP
+        self.topK = topK
+        self.minP = minP
+        self.presencePenalty = presencePenalty
         self.repetitionPenalty = repetitionPenalty
         self.repetitionContextSize = repetitionContextSize
         self.prefillStepSize = prefillStepSize
@@ -124,8 +139,13 @@ public struct GenerateParameters: Sendable {
     public func sampler() -> LogitSampler {
         if temperature == 0 {
             return ArgMaxSampler()
-        } else if topP > 0 && topP < 1 {
-            return TopPSampler(temperature: temperature, topP: topP)
+        } else if (topK ?? 0) > 0 || minP > 0 || (topP > 0 && topP < 1) {
+            return FilteredSampler(
+                temperature: temperature,
+                topP: topP,
+                topK: topK,
+                minP: minP
+            )
         } else {
             return CategoricalSampler(temperature: temperature)
         }
@@ -142,10 +162,30 @@ public struct GenerateParameters: Sendable {
     }
 
     public func processor() -> LogitProcessor? {
-        if let repetitionPenalty, repetitionContextSize > 0 {
-            return RepetitionContext(
+        let repetitionContext: RepetitionContext? = if let repetitionPenalty, repetitionContextSize > 0 {
+            RepetitionContext(
                 repetitionPenalty: repetitionPenalty, repetitionContextSize: repetitionContextSize)
         } else {
+            nil
+        }
+
+        let presenceContext: PresenceContext? = if let presencePenalty, presencePenalty != 0 {
+            PresenceContext(presencePenalty: presencePenalty)
+        } else {
+            nil
+        }
+
+        switch (repetitionContext, presenceContext) {
+        case let (.some(repetitionContext), .some(presenceContext)):
+            return CombinedLogitProcessor(
+                repetitionContext: repetitionContext,
+                presenceContext: presenceContext
+            )
+        case let (.some(repetitionContext), nil):
+            return repetitionContext
+        case let (nil, .some(presenceContext)):
+            return presenceContext
+        case (nil, nil):
             return nil
         }
     }
@@ -192,6 +232,80 @@ public struct TopPSampler: LogitSampler {
 
             let sortedToken = categorical(log(topProbs))
             return sortedIndices.squeezed(axis: 0)[sortedToken]
+        }
+    }
+}
+
+/// Sampler that can combine top-p, top-k, and min-p filtering before sampling.
+public struct FilteredSampler: LogitSampler {
+    let temp: MLXArray
+    let topP: MLXArray
+    let topPValue: Float
+    let topK: Int?
+    let minP: MLXArray
+    let minPValue: Float
+    let randomState: MLXRandom.RandomState
+
+    public init(temperature: Float, topP: Float, topK: Int?, minP: Float) {
+        self.temp = MLXArray(temperature)
+        self.topP = MLXArray(topP)
+        self.topPValue = topP
+        self.topK = topK
+        self.minP = MLXArray(minP)
+        self.minPValue = minP
+        self.randomState = MLXRandom.RandomState()
+    }
+
+    public func sample(logits: MLXArray) -> MLXArray {
+        var logits = logits
+        if logits.dtype == .bfloat16 {
+            logits = logits.asType(.float32)
+        }
+
+        return withRandomState(randomState) {
+            let probs = softmax(logits / temp, axis: -1)
+            let sortedIndices = argSort(probs, axis: -1)
+            let squeezedIndices = sortedIndices.squeezed(axis: 0)
+            let sortedProbs = take(probs, sortedIndices, axis: -1).squeezed(axis: 0)
+            var filteredProbs = sortedProbs
+
+            if let topK, topK > 0, topK < sortedProbs.dim(-1) {
+                let keepFrom = sortedProbs.dim(-1) - topK
+                let ranks = MLXArray(Array(0 ..< sortedProbs.dim(-1)))
+                filteredProbs = MLX.where(
+                    ranks .>= MLXArray(keepFrom),
+                    filteredProbs,
+                    zeros(like: filteredProbs)
+                )
+            }
+
+            if minPValue > 0 {
+                let maxProb = MLX.max(sortedProbs, axis: -1, keepDims: true)
+                let threshold = maxProb * minP
+                filteredProbs = MLX.where(
+                    filteredProbs .>= threshold,
+                    filteredProbs,
+                    zeros(like: filteredProbs)
+                )
+            }
+
+            if topPValue > 0 && topPValue < 1 {
+                let cumulativeProbs = cumsum(filteredProbs, axis: -1)
+                filteredProbs = MLX.where(
+                    cumulativeProbs .> (1 - topP),
+                    filteredProbs,
+                    zeros(like: filteredProbs)
+                )
+            }
+
+            filteredProbs = MLX.where(
+                filteredProbs.sum() .> 0,
+                filteredProbs,
+                sortedProbs
+            )
+
+            let sortedToken = categorical(log(filteredProbs))
+            return squeezedIndices[sortedToken]
         }
     }
 }
@@ -264,6 +378,66 @@ public struct RepetitionContext: LogitProcessor {
         } else {
             tokens.append(token.item(Int.self))
         }
+    }
+}
+
+/// Processor that applies a presence penalty to any token already seen in the prompt or output.
+public struct PresenceContext: LogitProcessor {
+    var seenTokens = Set<Int>()
+    let presencePenalty: Float
+
+    public init(presencePenalty: Float) {
+        self.presencePenalty = presencePenalty
+    }
+
+    mutating public func prompt(_ prompt: MLXArray) {
+        seenTokens.formUnion(prompt.asArray(Int.self))
+    }
+
+    public func process(logits: MLXArray) -> MLXArray {
+        guard !seenTokens.isEmpty else { return logits }
+
+        let indices = MLXArray(seenTokens.sorted().map(UInt32.init))
+        var selectedLogits = logits[0..., indices]
+        selectedLogits -= MLXArray(presencePenalty)
+        logits[0..., indices] = selectedLogits
+        return logits
+    }
+
+    mutating public func didSample(token: MLXArray) {
+        seenTokens.insert(token.item(Int.self))
+    }
+}
+
+/// Processor that combines repetition and presence penalties.
+public struct CombinedLogitProcessor: LogitProcessor {
+    var repetitionContext: RepetitionContext?
+    var presenceContext: PresenceContext?
+
+    public init(repetitionContext: RepetitionContext?, presenceContext: PresenceContext?) {
+        self.repetitionContext = repetitionContext
+        self.presenceContext = presenceContext
+    }
+
+    mutating public func prompt(_ prompt: MLXArray) {
+        repetitionContext?.prompt(prompt)
+        presenceContext?.prompt(prompt)
+    }
+
+    public func process(logits: MLXArray) -> MLXArray {
+        var processedLogits = logits
+        if let presenceContext {
+            processedLogits = presenceContext.process(logits: processedLogits)
+        }
+        if let repetitionContext {
+            processedLogits = repetitionContext.process(logits: processedLogits)
+        }
+        return processedLogits
+    }
+
+    mutating public func didSample(token: MLXArray) {
+        repetitionContext?.didSample(token: token)
+        presenceContext?.didSample(token: token)
     }
 }
 

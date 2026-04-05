@@ -1975,6 +1975,7 @@ final class MLXModelManager: ObservableObject {
             maxKVSize: generationConfiguration.maxKVSize,
             cacheCompression: tunedCacheCompression,
             enableThinking: enableThinking,
+            includesMedia: includesMedia,
             currentModelID: currentModel.id,
             prefillStepSize: prefillStepSize,
             repetitionPenalty: UserDefaults.standard.mlxRepetitionPenaltyValue
@@ -2243,6 +2244,7 @@ final class MLXModelManager: ObservableObject {
         maxKVSize: Int?,
         cacheCompression: CacheCompressionMode,
         enableThinking: Bool,
+        includesMedia: Bool,
         currentModelID: String,
         prefillStepSize: Int,
         repetitionPenalty: Float?
@@ -2253,7 +2255,11 @@ final class MLXModelManager: ObservableObject {
             nil
         }
 
-        if enableThinking && currentModelID == "qwen3.5-2b-4bit" {
+        let isQwen35Model = currentModelID.hasPrefix("qwen3.5-")
+
+        if enableThinking && isQwen35Model {
+            let qwen35ThinkingTemperature: Float = includesMedia ? 0.6 : 1.0
+            let qwen35ThinkingPresencePenalty: Float = includesMedia ? 0.0 : 1.5
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
@@ -2261,9 +2267,12 @@ final class MLXModelManager: ObservableObject {
                 kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
                 quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 cacheCompression: cacheCompression.generateParametersCompression,
-                temperature: 1.0,
+                temperature: qwen35ThinkingTemperature,
                 topP: 0.95,
-                repetitionPenalty: repetitionPenalty,
+                topK: 20,
+                minP: 0.0,
+                presencePenalty: qwen35ThinkingPresencePenalty,
+                repetitionPenalty: 1.0,
                 prefillStepSize: prefillStepSize
             )
         } else if enableThinking {
@@ -2276,7 +2285,29 @@ final class MLXModelManager: ObservableObject {
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.6,
                 topP: 0.95,
+                topK: nil,
+                minP: 0.0,
+                presencePenalty: nil,
                 repetitionPenalty: repetitionPenalty,
+                prefillStepSize: prefillStepSize
+            )
+        } else if isQwen35Model {
+            let qwen35NonThinkingTemperature: Float = includesMedia ? 0.7 : 1.0
+            let qwen35NonThinkingTopP: Float = includesMedia ? 0.8 : 1.0
+            let qwen35NonThinkingPresencePenalty: Float = includesMedia ? 1.5 : 2.0
+            return GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                kvBits: legacyKVQuantization?.bits,
+                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
+                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
+                cacheCompression: cacheCompression.generateParametersCompression,
+                temperature: qwen35NonThinkingTemperature,
+                topP: qwen35NonThinkingTopP,
+                topK: 20,
+                minP: 0.0,
+                presencePenalty: qwen35NonThinkingPresencePenalty,
+                repetitionPenalty: 1.0,
                 prefillStepSize: prefillStepSize
             )
         } else {
@@ -2289,6 +2320,9 @@ final class MLXModelManager: ObservableObject {
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.7,
                 topP: 0.8,
+                topK: nil,
+                minP: 0.0,
+                presencePenalty: nil,
                 repetitionPenalty: repetitionPenalty,
                 prefillStepSize: prefillStepSize
             )
