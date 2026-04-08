@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xargs ls:*)",
+      "Bash(ls -la /Users/nevioknogler/Desktop/ChatLLM/*.swift)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:machinelearning.apple.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "WebFetch(domain:qwen.readthedocs.io)",
+      "WebFetch(domain:muellerzr.github.io)",
+      "WebFetch(domain:docs.nvidia.com)",
+      "WebFetch(domain:rudrank.com)",
+      "Bash(swift package:*)",
+      "WebFetch(domain:swiftpackageindex.com)",
+      "Bash(find:*)"
+    ]
+  }
+}

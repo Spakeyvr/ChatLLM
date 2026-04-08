@@ -1,0 +1,29 @@
+
+# Core ML / LLM models (never commit these)
+*.mlmodelc
+*.bin
+weights/
+On-Device_LLM_Chat/**/*.mlmodelc/
+
+
+# === NEVER commit large ML models ===
+*.mlmodelc/
+*.mlmodel
+**/*weight.bin
+weights/
+On-Device_LLM_Chat/Qwen*mlmodelc/
+
+
+# === Build artifacts (Xcode / Swift / ML projects) ===
+build/
+**/build/
+.DS_Store
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+xcuserdata/
+
+# Local webhook relay secrets
+Scripts/.env
+
+# === Xcode stuff ===
+ChatLLM.xcodeproj
