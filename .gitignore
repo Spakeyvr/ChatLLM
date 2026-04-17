@@ -26,3 +26,7 @@ xcuserdata/
 
 # Local webhook relay secrets
 Scripts/.env
+
+# Local repo instructions
+AGENTS.md
+CLAUDE.md
