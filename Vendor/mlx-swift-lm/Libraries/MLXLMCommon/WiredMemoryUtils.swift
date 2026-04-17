@@ -28,6 +28,13 @@ public struct WiredMemoryMeasurement: Sendable {
 
 /// Helpers for deriving wired memory budgets from real runtime measurements.
 public enum WiredMemoryUtils {
+    private static func liveCacheArrays(_ cache: [KVCache]) -> [MLXArray] {
+        cache.flatMap { cacheItem in
+            let runtimeArrays = cacheItem.innerState()
+            return runtimeArrays.isEmpty ? cacheItem.state : runtimeArrays
+        }
+    }
+
     /// Produce a token ID array of exactly `count` tokens using the given tokenizer.
     ///
     /// This does not attempt to generate semantically meaningful text; it only ensures
@@ -152,7 +159,7 @@ public enum WiredMemoryUtils {
         }
 
         let cache = try prefillOnly(input: input, model: context.model, parameters: parameters)
-        let cacheArrays = cache.flatMap { $0.state }
+        let cacheArrays = liveCacheArrays(cache)
         if !cacheArrays.isEmpty {
             eval(cacheArrays)
         }
@@ -196,7 +203,7 @@ public enum WiredMemoryUtils {
         }
 
         let cache = try prefillOnly(input: input, model: context.model, parameters: parameters)
-        let cacheArrays = cache.flatMap { $0.state }
+        let cacheArrays = liveCacheArrays(cache)
         if !cacheArrays.isEmpty {
             eval(cacheArrays)
         }

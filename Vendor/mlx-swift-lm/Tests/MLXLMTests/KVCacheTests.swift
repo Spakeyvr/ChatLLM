@@ -65,3 +65,61 @@ func testTurboQuantAttentionPath() {
     #expect(cache.state.count == 2)
     #expect(output.shape == [1, 4, 1, 64])
 }
+
+@Test
+func testTurboQuantMaskSentinel() {
+    let cache = QuantizedKVCache(groupSize: 2, bits: 8)
+    let queries = MLXArray([Float(10), 0]).reshaped([1, 1, 1, 2]).asType(.float16)
+    let keys = MLXArray([Float(10), 0, 0, 10]).reshaped([1, 1, 2, 2]).asType(.float16)
+    let values = MLXArray([Float(1), 2, 100, 200]).reshaped([1, 1, 2, 2]).asType(.float16)
+    let maskArray = MLXArray([true, false]).reshaped([1, 1, 1, 2])
+    let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+    let quantizedOutput = quantizedScaledDotProductAttention(
+        queries: queries,
+        quantizedKeys: quantizedKeys,
+        quantizedValues: quantizedValues,
+        scale: 1.0,
+        mask: .array(maskArray),
+        groupSize: cache.groupSize,
+        bits: cache.bits,
+        mode: cache.mode
+    )
+    let referenceOutput = MLXFast.scaledDotProductAttention(
+        queries: queries,
+        keys: keys,
+        values: values,
+        scale: 1.0,
+        mask: .array(maskArray)
+    )
+
+    let elementCount = quantizedOutput.shape.reduce(1, *)
+    let quantizedValuesFlat = quantizedOutput.reshaped([elementCount]).asArray(Float.self)
+    let referenceValuesFlat = referenceOutput.reshaped([elementCount]).asArray(Float.self)
+    let maxDiff = zip(quantizedValuesFlat, referenceValuesFlat)
+        .map { abs($0 - $1) }
+        .max() ?? .infinity
+
+    #expect(maxDiff < 0.05)
+}
+
+@Test
+func testTurboQuantCompressedStateRemainsPacked() {
+    let cache = TurboQuantKVCache(bits: 3, exactBufferSize: 0)
+    let keys = MLXArray.ones([1, 2, 4, 64], dtype: .float16)
+    let values = MLXArray.ones([1, 2, 4, 64], dtype: .float16)
+
+    _ = cache.update(keys: keys, values: values)
+
+    let serialized = cache.state
+    let runtime = cache.innerState()
+
+    #expect(serialized.count == 6)
+    #expect(runtime.count == 6)
+    #expect(serialized[0].shape == [1, 2, 4, 16])
+    #expect(serialized[2].shape == [1, 2, 4, 8])
+    #expect(serialized[4].shape == [1, 2, 4, 24])
+    #expect(runtime[0].shape == serialized[0].shape)
+    #expect(runtime[2].shape == serialized[2].shape)
+    #expect(runtime[4].shape == serialized[4].shape)
+}

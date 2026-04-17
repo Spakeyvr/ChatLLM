@@ -444,6 +444,7 @@ private final class TurboQuantMSEQuantizer {
     let signs: MLXArray
     let centroids: MLXArray
     let boundaries: [Float]
+    let boundariesArray: MLXArray
     let normalizedHadamard: MLXArray
     let rotationScale: Float
 
@@ -458,6 +459,7 @@ private final class TurboQuantMSEQuantizer {
         self.signs = Self.makeSigns(dimension: dimension, seed: seed)
         self.centroids = MLXArray(Self.gaussianCodebook(bits: bits)).asType(.float32)
         self.boundaries = Self.gaussianBoundaries(bits: bits)
+        self.boundariesArray = MLXArray(self.boundaries).asType(.float32)
         self.normalizedHadamard = Self.makeNormalizedHadamardMatrix(dimension: dimension)
         self.rotationScale = sqrt(Float(dimension))
     }
@@ -468,10 +470,13 @@ private final class TurboQuantMSEQuantizer {
         let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
         let rotated = matmul((floatVectors / safeNorms) * signs, normalizedHadamard)
         let scaled = rotated * rotationScale
-        var indices = MLXArray.zeros(scaled.shape, dtype: .uint8)
-        for boundary in boundaries {
-            indices = indices + greater(scaled, MLXArray(boundary)).asType(.uint8)
-        }
+        let indices = sum(
+            greater(
+                scaled.expandedDimensions(axis: -1),
+                boundariesArray
+            ).asType(.uint8),
+            axis: -1
+        ).asType(.uint8)
         let squeezedNorms = norms.squeezed(axis: -1)
         let reconstructed = dequantize(indices: indices, norms: squeezedNorms, dtype: .float32)
         return (indices, squeezedNorms, reconstructed)
@@ -480,7 +485,7 @@ private final class TurboQuantMSEQuantizer {
     func dequantize(indices: MLXArray, norms: MLXArray, dtype: DType) -> MLXArray {
         let shape = indices.shape
         let flatCount = shape.reduce(1, *)
-        let flatIndices = indices.asType(.int32).reshaped([flatCount])
+        let flatIndices = indices.reshaped([flatCount])
         let rotated = centroids[flatIndices].reshaped(shape) / rotationScale
         let restoredUnit = matmul(rotated, normalizedHadamard) * signs
         let restored = restoredUnit * expandedDimensions(norms.asType(.float32), axis: -1)
@@ -562,6 +567,18 @@ private final class TurboQuantResidualSketch {
         norms: MLXArray
     ) -> MLXArray {
         let projectedQueries = matmul(queries.asType(.float32), projection)
+        return scoreWithProjectedQueries(
+            projectedQueries: projectedQueries,
+            signs: signs,
+            norms: norms
+        )
+    }
+
+    func scoreWithProjectedQueries(
+        projectedQueries: MLXArray,
+        signs: MLXArray,
+        norms: MLXArray
+    ) -> MLXArray {
         let signedResidual = signs.asType(.float32) * 2.0 - 1.0
         let rawScores = matmul(projectedQueries, signedResidual.swappedAxes(-1, -2))
         let broadcastNorms =
@@ -630,6 +647,27 @@ private enum TurboQuantBitPacker {
     }
 }
 
+private func turboQuantScoreBlock(
+    scaledQueries: MLXArray,
+    projectedQueries: MLXArray,
+    preparedKeys: MLXArray,
+    residualSigns: MLXArray,
+    residualNorms: MLXArray,
+    residualProjection: MLXArray
+) -> MLXArray {
+    let blockScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2)).asType(.float32)
+    let signedResidual = residualSigns.asType(.float32) * 2.0 - 1.0
+    let rawResidualScores = matmul(projectedQueries, signedResidual.swappedAxes(-1, -2))
+    let broadcastResidualNorms =
+        if residualNorms.shape.count == rawResidualScores.shape.count - 1 {
+            expandedDimensions(residualNorms.asType(.float32), axis: -2)
+        } else {
+            residualNorms.asType(.float32)
+        }
+    let estimatorScale = sqrt(Float.pi / 2.0) / Float(residualProjection.dim(-1))
+    return blockScores + rawResidualScores * broadcastResidualNorms * estimatorScale
+}
+
 public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     private var keyBaseIndices: MLXArray?
     private var keyBaseNorms: MLXArray?
@@ -640,6 +678,8 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     private var exactKeys: MLXArray?
     private var exactValues: MLXArray?
     private var compressedCount: Int = 0
+    private var compressedCapacity: Int = 0
+    private var exactCount: Int = 0
     private var step: Int
     public private(set) var bits: Int
     public private(set) var seed: UInt64
@@ -663,9 +703,8 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         guard let valueDimension else { return 0 }
         return TurboQuantBitPacker.packedByteCount(valueCount: valueDimension, bitWidth: bits)
     }
-    private let attentionBlockTokens = 128
+    private let attentionBlockTokens = 256
     private var exactBufferSize: Int
-    private var exactCount: Int { exactKeys?.dim(2) ?? 0 }
 
     public init(bits: Int = 3, seed: UInt64 = 42, step: Int = 256, exactBufferSize: Int = 128) {
         precondition((2 ... 4).contains(bits), "TurboQuant supports 2-4 total bits.")
@@ -714,80 +753,71 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             ?? keys.dim(1)
         let repeats = queryHeads / kvHeads
         let maskedValue = MLXArray(-Float.greatestFiniteMagnitude)
-
-        var scaledQueries = queries.asType(.float32) * scale
+        let scaleArray = MLXArray(scale).asType(originalDType)
+        var scaledQueries = queries.asType(originalDType) * scaleArray
         if repeats > 1 {
             scaledQueries = scaledQueries.reshaped([batch, kvHeads, repeats, queryLength, queryDimension])
         }
 
         let queryStart = total - queryLength
+        let causalQueryIndices: MLXArray? =
+            if case .causal = mask {
+                expandedDimensions(MLXArray(queryStart ..< total), axis: -1)
+            } else {
+                nil
+            }
 
-        func applyBlockMask(
-            _ scores: MLXArray,
+        func blockMaskSlice(
             start: Int,
             end: Int
-        ) -> MLXArray {
+        ) -> (bool: MLXArray?, additive: MLXArray?) {
             switch mask {
             case .causal:
-                let qIndices = MLXArray(queryStart ..< total)
-                let kIndices = MLXArray(start ..< end)
-                let causalMask = greaterEqual(
-                    expandedDimensions(qIndices, axis: -1),
-                    expandedDimensions(kIndices, axis: -2)
-                )
-                return MLX.where(causalMask, scores, maskedValue)
+                let kIndices = expandedDimensions(MLXArray(start ..< end), axis: -2)
+                return (greaterEqual(causalQueryIndices!, kIndices), nil)
             case .array(let maskArray):
                 let slicedMask = maskArray[.ellipsis, start..<end]
                 if slicedMask.dtype == .bool {
-                    return MLX.where(slicedMask, scores, maskedValue)
+                    return (slicedMask, nil)
                 } else {
-                    return scores + slicedMask
+                    return (nil, slicedMask)
                 }
             case .arrays(let maskArrays):
                 if let maskArray = maskArrays.first {
                     let slicedMask = maskArray[.ellipsis, start..<end]
                     if slicedMask.dtype == .bool {
-                        return MLX.where(slicedMask, scores, maskedValue)
+                        return (slicedMask, nil)
                     } else {
-                        return scores + slicedMask
+                        return (nil, slicedMask)
                     }
                 }
-                return scores
+                return (nil, nil)
             case .none:
-                return scores
+                return (nil, nil)
             }
         }
 
-        var runningMax: MLXArray?
-        var runningNormalizer: MLXArray?
-        var runningOutput: MLXArray?
+        let scoreStateShape = Array(scaledQueries.shape.dropLast()) + [1]
+        let outputStateShape = Array(scaledQueries.shape.dropLast()) + [valueDimension!]
+        var runningMax = MLXArray.zeros(scoreStateShape, dtype: .float32) + maskedValue
+        var runningNormalizer = MLXArray.zeros(scoreStateShape, dtype: .float32)
+        var runningOutput = MLXArray.zeros(outputStateShape, dtype: .float32)
 
         func mergeBlock(_ blockScores: MLXArray, preparedValues: MLXArray) {
             let blockMax = max(blockScores, axis: -1, keepDims: true)
+            let combinedMax = maximum(runningMax, blockMax)
+            let previousScale = exp(runningMax - combinedMax)
+            let blockWeights = exp(blockScores - combinedMax)
+            let combinedNormalizer =
+                runningNormalizer * previousScale
+                + sum(blockWeights, axis: -1, keepDims: true)
+            let combinedOutput =
+                runningOutput * previousScale
+                + matmul(blockWeights.asType(originalDType), preparedValues).asType(.float32)
 
-            if let currentRunningMax = runningMax,
-               let currentRunningNormalizer = runningNormalizer,
-               let currentRunningOutput = runningOutput
-            {
-                let combinedMax = maximum(currentRunningMax, blockMax)
-                let previousScale = exp(currentRunningMax - combinedMax)
-                let blockWeights = exp(blockScores - combinedMax)
-                let combinedNormalizer =
-                    currentRunningNormalizer * previousScale
-                    + sum(blockWeights, axis: -1, keepDims: true)
-                let combinedOutput =
-                    currentRunningOutput * previousScale
-                    + matmul(blockWeights, preparedValues)
-
-                runningMax = combinedMax
-                runningNormalizer = combinedNormalizer
-                runningOutput = combinedOutput
-            } else {
-                let blockWeights = exp(blockScores - blockMax)
-                runningMax = blockMax
-                runningNormalizer = sum(blockWeights, axis: -1, keepDims: true)
-                runningOutput = matmul(blockWeights, preparedValues)
-            }
+            runningMax = combinedMax
+            runningNormalizer = combinedNormalizer
+            runningOutput = combinedOutput
         }
 
         if compressedCount > 0 {
@@ -801,6 +831,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 fatalError("TurboQuantKVCache compressed state is missing")
             }
 
+            let projectedQueries = matmul(scaledQueries.asType(.float32), residualSketch.projection)
             for start in stride(from: 0, to: compressedCount, by: attentionBlockTokens) {
                 let end = min(start + attentionBlockTokens, compressedCount)
                 let unpackedKeyIndices = TurboQuantBitPacker.unpack(
@@ -811,7 +842,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 let approxKeys = keyQuantizer.dequantize(
                     indices: unpackedKeyIndices,
                     norms: keyBaseNorms[.ellipsis, start..<end],
-                    dtype: .float32
+                    dtype: originalDType
                 )
                 let residualSigns = TurboQuantBitPacker.unpack(
                     keyResidualSigns[.ellipsis, start..<end, 0...],
@@ -827,7 +858,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 let approxValues = valueQuantizer.dequantize(
                     indices: unpackedValueIndices,
                     norms: valueNorms[.ellipsis, start..<end],
-                    dtype: .float32
+                    dtype: originalDType
                 )
 
                 var preparedKeys = approxKeys
@@ -842,36 +873,44 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                     preparedValues = expandedDimensions(preparedValues, axis: -3)
                 }
 
-                var blockScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2))
-                blockScores = blockScores + residualSketch.score(
-                    queries: scaledQueries,
-                    signs: preparedResidualSigns,
-                    norms: preparedResidualNorms
+                var blockScores = turboQuantScoreBlock(
+                    scaledQueries: scaledQueries,
+                    projectedQueries: projectedQueries,
+                    preparedKeys: preparedKeys,
+                    residualSigns: preparedResidualSigns,
+                    residualNorms: preparedResidualNorms,
+                    residualProjection: residualSketch.projection
                 )
-                blockScores = applyBlockMask(blockScores, start: start, end: end)
+                let maskSlice = blockMaskSlice(start: start, end: end)
+                if let boolMask = maskSlice.bool {
+                    blockScores = MLX.where(boolMask, blockScores, maskedValue)
+                } else if let additiveMask = maskSlice.additive {
+                    blockScores = blockScores + additiveMask
+                }
                 mergeBlock(blockScores, preparedValues: preparedValues)
             }
         }
 
         if let exactKeys, let exactValues, exactCount > 0 {
-            var preparedKeys = exactKeys.asType(.float32)
-            var preparedValues = exactValues.asType(.float32)
+            var preparedKeys = exactKeys[.ellipsis, ..<exactCount, 0...].asType(originalDType)
+            var preparedValues = exactValues[.ellipsis, ..<exactCount, 0...].asType(originalDType)
 
             if repeats > 1 {
                 preparedKeys = expandedDimensions(preparedKeys, axis: -3)
                 preparedValues = expandedDimensions(preparedValues, axis: -3)
             }
 
-            var exactScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2))
-            exactScores = applyBlockMask(
-                exactScores,
-                start: compressedCount,
-                end: compressedCount + exactCount
-            )
+            var exactScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2)).asType(.float32)
+            let maskSlice = blockMaskSlice(start: compressedCount, end: compressedCount + exactCount)
+            if let boolMask = maskSlice.bool {
+                exactScores = MLX.where(boolMask, exactScores, maskedValue)
+            } else if let additiveMask = maskSlice.additive {
+                exactScores = exactScores + additiveMask
+            }
             mergeBlock(exactScores, preparedValues: preparedValues)
         }
 
-        guard let runningNormalizer, let runningOutput else {
+        if compressedCount + exactCount == 0 {
             fatalError("TurboQuantKVCache attention produced no blocks")
         }
 
@@ -924,13 +963,24 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             exactKeys = nil
             exactValues = nil
             compressedCount = 0
+            compressedCapacity = 0
+            exactCount = 0
 
             switch newValue.count {
             case 0:
                 break
             case 2:
-                exactKeys = newValue[0]
-                exactValues = newValue[1]
+                exactCount = newValue[0].dim(2)
+                exactBufferSize = max(exactBufferSize, exactCount)
+                ensureExactStorage(
+                    batch: newValue[0].dim(0),
+                    kvHeads: newValue[0].dim(1),
+                    keyDimension: newValue[0].dim(3),
+                    valueDimension: newValue[1].dim(3),
+                    dtype: newValue[0].dtype
+                )
+                exactKeys?[.ellipsis, ..<exactCount, 0...] = newValue[0]
+                exactValues?[.ellipsis, ..<exactCount, 0...] = newValue[1]
             case 6:
                 keyBaseIndices = newValue[0]
                 keyBaseNorms = newValue[1]
@@ -938,7 +988,8 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 keyResidualNorms = newValue[3]
                 valueIndices = newValue[4]
                 valueNorms = newValue[5]
-                compressedCount = keyBaseIndices?.dim(2) ?? 0
+                compressedCount = newValue[0].dim(2)
+                compressedCapacity = keyBaseIndices?.dim(2) ?? 0
             case 8:
                 keyBaseIndices = newValue[0]
                 keyBaseNorms = newValue[1]
@@ -946,9 +997,19 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 keyResidualNorms = newValue[3]
                 valueIndices = newValue[4]
                 valueNorms = newValue[5]
-                compressedCount = keyBaseIndices?.dim(2) ?? 0
-                exactKeys = newValue[6]
-                exactValues = newValue[7]
+                compressedCount = newValue[0].dim(2)
+                compressedCapacity = keyBaseIndices?.dim(2) ?? 0
+                exactCount = newValue[6].dim(2)
+                exactBufferSize = max(exactBufferSize, exactCount)
+                ensureExactStorage(
+                    batch: newValue[6].dim(0),
+                    kvHeads: newValue[6].dim(1),
+                    keyDimension: newValue[6].dim(3),
+                    valueDimension: newValue[7].dim(3),
+                    dtype: newValue[6].dtype
+                )
+                exactKeys?[.ellipsis, ..<exactCount, 0...] = newValue[6]
+                exactValues?[.ellipsis, ..<exactCount, 0...] = newValue[7]
             default:
                 fatalError("TurboQuantKVCache state must have 0, 2, 6, or 8 arrays")
             }
@@ -984,11 +1045,12 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             originalDType = Self.dtype(from: newValue[6])
             if newValue.count == 10 {
                 compressedCount = Int(newValue[7]) ?? 0
-                let serializedExactCount = Int(newValue[8]) ?? 0
+                exactCount = Int(newValue[8]) ?? 0
                 exactBufferSize = Int(newValue[9]) ?? exactBufferSize
-                offset = compressedCount + serializedExactCount
+                offset = compressedCount + exactCount
             } else {
                 compressedCount = offset
+                exactCount = 0
             }
             if let keyDimension, let valueDimension {
                 ensureQuantizers(keyDimension: keyDimension, valueDimension: valueDimension)
@@ -1012,20 +1074,21 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             valueIndices = valueIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
             valueNorms = valueNorms?[.ellipsis, trimmedCompressed..<compressedCount]
             compressedCount -= trimmedCompressed
+            compressedCapacity = keyBaseIndices?.dim(2) ?? 0
             remaining -= trimmedCompressed
         }
 
         var trimmedExact = 0
-        if remaining > 0, let exactKeys, let exactValues {
-            let currentExactCount = exactKeys.dim(2)
-            trimmedExact = min(remaining, currentExactCount)
-            if trimmedExact >= currentExactCount {
-                self.exactKeys = nil
-                self.exactValues = nil
-            } else {
-                self.exactKeys = exactKeys[.ellipsis, trimmedExact..<currentExactCount, 0...]
-                self.exactValues = exactValues[.ellipsis, trimmedExact..<currentExactCount, 0...]
+        if remaining > 0, let exactKeys, let exactValues, exactCount > 0 {
+            trimmedExact = min(remaining, exactCount)
+            let retainedExactCount = exactCount - trimmedExact
+            if retainedExactCount > 0 {
+                self.exactKeys?[.ellipsis, ..<retainedExactCount, 0...] =
+                    exactKeys[.ellipsis, trimmedExact..<exactCount, 0...]
+                self.exactValues?[.ellipsis, ..<retainedExactCount, 0...] =
+                    exactValues[.ellipsis, trimmedExact..<exactCount, 0...]
             }
+            self.exactCount = retainedExactCount
         }
 
         offset = compressedCount + exactCount
@@ -1035,40 +1098,71 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     private func ingest(keys: MLXArray, values: MLXArray) {
         originalDType = keys.dtype
         ensureQuantizers(keyDimension: keys.dim(3), valueDimension: values.dim(3))
+        ensureExactStorage(
+            batch: keys.dim(0),
+            kvHeads: keys.dim(1),
+            keyDimension: keys.dim(3),
+            valueDimension: values.dim(3),
+            dtype: keys.dtype
+        )
 
-        let combinedKeys =
-            if let exactKeys, exactCount > 0 {
-                concatenated([exactKeys[.ellipsis, ..<exactCount, 0...], keys], axis: 2)
-            } else {
-                keys
+        if exactBufferSize == 0 {
+            if let exactKeys, let exactValues, exactCount > 0 {
+                appendCompressed(
+                    keys: exactKeys[.ellipsis, ..<exactCount, 0...],
+                    values: exactValues[.ellipsis, ..<exactCount, 0...]
+                )
+                self.exactCount = 0
             }
-        let combinedValues =
-            if let exactValues, exactCount > 0 {
-                concatenated([exactValues[.ellipsis, ..<exactCount, 0...], values], axis: 2)
-            } else {
-                values
-            }
-
-        let combinedCount = combinedKeys.dim(2)
-        let flushCount = max(0, combinedCount - exactBufferSize)
-
-        if flushCount > 0 {
-            appendCompressed(
-                keys: combinedKeys[.ellipsis, ..<flushCount, 0...],
-                values: combinedValues[.ellipsis, ..<flushCount, 0...]
-            )
+            appendCompressed(keys: keys, values: values)
+            offset = compressedCount
+            return
         }
 
-        let keepCount = combinedCount - flushCount
-        if keepCount > 0 {
-            exactKeys = combinedKeys[.ellipsis, flushCount..<combinedCount, 0...]
-            exactValues = combinedValues[.ellipsis, flushCount..<combinedCount, 0...]
+        let tokenCount = keys.dim(2)
+        if exactCount + tokenCount <= exactBufferSize {
+            exactKeys?[.ellipsis, exactCount..<(exactCount + tokenCount), 0...] = keys
+            exactValues?[.ellipsis, exactCount..<(exactCount + tokenCount), 0...] = values
+            exactCount += tokenCount
         } else {
-            exactKeys = nil
-            exactValues = nil
+            let flushCount = exactCount + tokenCount - exactBufferSize
+            let existingFlushCount = min(flushCount, exactCount)
+            let newFlushCount = flushCount - existingFlushCount
+
+            if existingFlushCount > 0, let exactKeys, let exactValues {
+                appendCompressed(
+                    keys: exactKeys[.ellipsis, ..<existingFlushCount, 0...],
+                    values: exactValues[.ellipsis, ..<existingFlushCount, 0...]
+                )
+            }
+
+            if newFlushCount > 0 {
+                appendCompressed(
+                    keys: keys[.ellipsis, ..<newFlushCount, 0...],
+                    values: values[.ellipsis, ..<newFlushCount, 0...]
+                )
+            }
+
+            let retainedExactCount = exactCount - existingFlushCount
+            if retainedExactCount > 0, let exactKeys, let exactValues {
+                self.exactKeys?[.ellipsis, ..<retainedExactCount, 0...] =
+                    exactKeys[.ellipsis, existingFlushCount..<exactCount, 0...]
+                self.exactValues?[.ellipsis, ..<retainedExactCount, 0...] =
+                    exactValues[.ellipsis, existingFlushCount..<exactCount, 0...]
+            }
+
+            let retainedNewCount = tokenCount - newFlushCount
+            if retainedNewCount > 0 {
+                exactKeys?[.ellipsis, retainedExactCount..<(retainedExactCount + retainedNewCount), 0...] =
+                    keys[.ellipsis, newFlushCount..<tokenCount, 0...]
+                exactValues?[.ellipsis, retainedExactCount..<(retainedExactCount + retainedNewCount), 0...] =
+                    values[.ellipsis, newFlushCount..<tokenCount, 0...]
+            }
+
+            exactCount = retainedExactCount + retainedNewCount
         }
 
-        offset = compressedCount + keepCount
+        offset = compressedCount + exactCount
     }
 
     private func appendCompressed(keys: MLXArray, values: MLXArray) {
@@ -1096,48 +1190,52 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     }
 
     private func ensureStorage(batch: Int, kvHeads: Int, tokenCount: Int) {
-        let previous = compressedCount
-        let needsAllocation =
-            if let keyBaseIndices, (previous + tokenCount) > keyBaseIndices.dim(2) {
-                true
-            } else {
-                keyBaseIndices == nil
-            }
+        let requiredCapacity = compressedCount + tokenCount
+        let needsAllocation = keyBaseIndices == nil || requiredCapacity > compressedCapacity
 
         guard needsAllocation else { return }
 
-        let steps = ((step + tokenCount - 1) / step) * step
-        let newKeyIndexStorage = MLXArray.zeros([batch, kvHeads, steps, keyPackedWidth], dtype: .uint8)
-        let newKeyNormStorage = MLXArray.zeros([batch, kvHeads, steps], dtype: .float32)
+        let baselineCapacity = max(compressedCapacity, step)
+        let growthTarget = max(baselineCapacity * 2, requiredCapacity)
+        let newCapacity = ((growthTarget + step - 1) / step) * step
+
+        let newKeyIndexStorage = MLXArray.zeros([batch, kvHeads, newCapacity, keyPackedWidth], dtype: .uint8)
+        let newKeyNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
         let newKeyResidualSignStorage = MLXArray.zeros(
-            [batch, kvHeads, steps, residualPackedWidth],
+            [batch, kvHeads, newCapacity, residualPackedWidth],
             dtype: .uint8
         )
-        let newKeyResidualNormStorage = MLXArray.zeros([batch, kvHeads, steps], dtype: .float32)
-        let newValueIndexStorage = MLXArray.zeros([batch, kvHeads, steps, valuePackedWidth], dtype: .uint8)
-        let newValueNormStorage = MLXArray.zeros([batch, kvHeads, steps], dtype: .float32)
+        let newKeyResidualNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
+        let newValueIndexStorage = MLXArray.zeros([batch, kvHeads, newCapacity, valuePackedWidth], dtype: .uint8)
+        let newValueNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
 
-        if var currentKeyBaseIndices = self.keyBaseIndices,
-           var currentKeyBaseNorms = self.keyBaseNorms,
-           var currentKeyResidualSigns = self.keyResidualSigns,
-           var currentKeyResidualNorms = self.keyResidualNorms,
-           var currentValueIndices = self.valueIndices,
-           var currentValueNorms = self.valueNorms
+        if let currentKeyBaseIndices = self.keyBaseIndices,
+           let currentKeyBaseNorms = self.keyBaseNorms,
+           let currentKeyResidualSigns = self.keyResidualSigns,
+           let currentKeyResidualNorms = self.keyResidualNorms,
+           let currentValueIndices = self.valueIndices,
+           let currentValueNorms = self.valueNorms,
+           compressedCount > 0
         {
-            if previous % step != 0 {
-                currentKeyBaseIndices = currentKeyBaseIndices[.ellipsis, ..<previous, 0...]
-                currentKeyBaseNorms = currentKeyBaseNorms[.ellipsis, ..<previous]
-                currentKeyResidualSigns = currentKeyResidualSigns[.ellipsis, ..<previous, 0...]
-                currentKeyResidualNorms = currentKeyResidualNorms[.ellipsis, ..<previous]
-                currentValueIndices = currentValueIndices[.ellipsis, ..<previous, 0...]
-                currentValueNorms = currentValueNorms[.ellipsis, ..<previous]
-            }
-            self.keyBaseIndices = concatenated([currentKeyBaseIndices, newKeyIndexStorage], axis: 2)
-            self.keyBaseNorms = concatenated([currentKeyBaseNorms, newKeyNormStorage], axis: 2)
-            self.keyResidualSigns = concatenated([currentKeyResidualSigns, newKeyResidualSignStorage], axis: 2)
-            self.keyResidualNorms = concatenated([currentKeyResidualNorms, newKeyResidualNormStorage], axis: 2)
-            self.valueIndices = concatenated([currentValueIndices, newValueIndexStorage], axis: 2)
-            self.valueNorms = concatenated([currentValueNorms, newValueNormStorage], axis: 2)
+            newKeyIndexStorage[.ellipsis, ..<compressedCount, 0...] =
+                currentKeyBaseIndices[.ellipsis, ..<compressedCount, 0...]
+            newKeyNormStorage[.ellipsis, ..<compressedCount] =
+                currentKeyBaseNorms[.ellipsis, ..<compressedCount]
+            newKeyResidualSignStorage[.ellipsis, ..<compressedCount, 0...] =
+                currentKeyResidualSigns[.ellipsis, ..<compressedCount, 0...]
+            newKeyResidualNormStorage[.ellipsis, ..<compressedCount] =
+                currentKeyResidualNorms[.ellipsis, ..<compressedCount]
+            newValueIndexStorage[.ellipsis, ..<compressedCount, 0...] =
+                currentValueIndices[.ellipsis, ..<compressedCount, 0...]
+            newValueNormStorage[.ellipsis, ..<compressedCount] =
+                currentValueNorms[.ellipsis, ..<compressedCount]
+
+            self.keyBaseIndices = newKeyIndexStorage
+            self.keyBaseNorms = newKeyNormStorage
+            self.keyResidualSigns = newKeyResidualSignStorage
+            self.keyResidualNorms = newKeyResidualNormStorage
+            self.valueIndices = newValueIndexStorage
+            self.valueNorms = newValueNormStorage
         } else {
             self.keyBaseIndices = newKeyIndexStorage
             self.keyBaseNorms = newKeyNormStorage
@@ -1146,6 +1244,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             self.valueIndices = newValueIndexStorage
             self.valueNorms = newValueNormStorage
         }
+        compressedCapacity = newCapacity
     }
 
     private func ensureQuantizers(keyDimension: Int, valueDimension: Int) {
@@ -1170,6 +1269,48 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 seed: seed &+ 1
             )
         }
+    }
+
+    private func ensureExactStorage(
+        batch: Int,
+        kvHeads: Int,
+        keyDimension: Int,
+        valueDimension: Int,
+        dtype: DType
+    ) {
+        guard exactBufferSize > 0 else {
+            exactKeys = nil
+            exactValues = nil
+            exactCount = 0
+            return
+        }
+
+        let desiredKeyShape = [batch, kvHeads, exactBufferSize, keyDimension]
+        let desiredValueShape = [batch, kvHeads, exactBufferSize, valueDimension]
+        let needsAllocation =
+            exactKeys == nil
+            || exactValues == nil
+            || exactKeys?.shape != desiredKeyShape
+            || exactValues?.shape != desiredValueShape
+            || exactKeys?.dtype != dtype
+            || exactValues?.dtype != dtype
+
+        guard needsAllocation else { return }
+
+        let newExactKeys = MLXArray.zeros(desiredKeyShape, dtype: dtype)
+        let newExactValues = MLXArray.zeros(desiredValueShape, dtype: dtype)
+
+        if let exactKeys, let exactValues, exactCount > 0 {
+            let retainedCount = min(exactCount, exactBufferSize, exactKeys.dim(2))
+            newExactKeys[.ellipsis, ..<retainedCount, 0...] =
+                exactKeys[.ellipsis, ..<retainedCount, 0...].asType(dtype)
+            newExactValues[.ellipsis, ..<retainedCount, 0...] =
+                exactValues[.ellipsis, ..<retainedCount, 0...].asType(dtype)
+            self.exactCount = retainedCount
+        }
+
+        self.exactKeys = newExactKeys
+        self.exactValues = newExactValues
     }
 
     private func currentFallbackState() -> (MLXArray, MLXArray) {
@@ -1201,10 +1342,18 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             )
             let currentValueNorms = valueNorms[.ellipsis, ..<compressedCount]
             allKeys.append(
-                keyQuantizer.dequantize(indices: currentKeyIndices, norms: currentKeyNorms, dtype: originalDType)
+                keyQuantizer.dequantize(
+                    indices: currentKeyIndices,
+                    norms: currentKeyNorms,
+                    dtype: originalDType
+                )
             )
             allValues.append(
-                valueQuantizer.dequantize(indices: currentValueIndices, norms: currentValueNorms, dtype: originalDType)
+                valueQuantizer.dequantize(
+                    indices: currentValueIndices,
+                    norms: currentValueNorms,
+                    dtype: originalDType
+                )
             )
         }
 
@@ -2363,11 +2512,11 @@ public func quantizedScaledDotProductAttention(
         let kIndices = MLXArray(0 ..< kL)
         let causalMask = greaterEqual(
             expandedDimensions(qIndices, axis: -1), expandedDimensions(kIndices, axis: -2))
-        scores = MLX.where(causalMask, scores, MLXArray(Float.leastNormalMagnitude))
+        scores = MLX.where(causalMask, scores, MLXArray(-Float.greatestFiniteMagnitude))
 
     case .array(let maskArray):
         if maskArray.dtype == .bool {
-            scores = MLX.where(maskArray, scores, MLXArray(Float.leastNormalMagnitude))
+            scores = MLX.where(maskArray, scores, MLXArray(-Float.greatestFiniteMagnitude))
         } else {
             scores = scores + maskArray
         }
@@ -2376,7 +2525,7 @@ public func quantizedScaledDotProductAttention(
         // Handle multiple mask arrays - just use the first one for simplicity
         if let maskArray = maskArrays.first {
             if maskArray.dtype == .bool {
-                scores = MLX.where(maskArray, scores, MLXArray(Float.leastNormalMagnitude))
+                scores = MLX.where(maskArray, scores, MLXArray(-Float.greatestFiniteMagnitude))
             } else {
                 scores = scores + maskArray
             }
