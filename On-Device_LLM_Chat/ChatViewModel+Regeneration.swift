@@ -278,6 +278,7 @@ extension ChatViewModel {
             await waitForStreamToFinish()
         }
 
+        context.delete(message)
         conversation.messages.removeAll { $0.id == message.id }
         renumberMessagesByOrder()
         conversation.lastUpdated = Date()

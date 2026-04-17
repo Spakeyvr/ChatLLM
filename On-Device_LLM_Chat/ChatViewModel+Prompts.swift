@@ -97,6 +97,17 @@ extension ChatViewModel {
         }
     }
 
+    private func customSystemPromptText(from snapshots: [MessageSnapshot]) -> String? {
+        let prompts = snapshots
+            .filter { $0.role == .system && $0.isFinal }
+            .map(\.text)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !prompts.isEmpty else { return nil }
+        return prompts.joined(separator: "\n\n")
+    }
+
     func setSmartReasoningMode(_ enabled: Bool) {
         let previousValue = conversation.smartReasoningMode
         conversation.smartReasoningMode = enabled
@@ -365,6 +376,10 @@ extension ChatViewModel {
         // volatile datetime appended last.
         var systemPrompt = Self.baseSystemPrompt
 
+        if let customSystemPrompt = customSystemPromptText(from: allSnapshots) {
+            systemPrompt += "\n\n" + customSystemPrompt
+        }
+
         if hasVisionImageAnalysisData {
             systemPrompt += "\n\n" + Self.foundationVisionImageInstructions
         }
@@ -562,12 +577,19 @@ extension ChatViewModel {
             webSearchEnabled: toolsAvailable,
             forceWebSearch: forceWebSearch
         )
+        let effectiveSystemPrompt: String
+        if let customSystemPrompt = customSystemPromptText(from: snapshots),
+           !customSystemPrompt.isEmpty {
+            effectiveSystemPrompt = systemPrompt + "\n\n" + customSystemPrompt
+        } else {
+            effectiveSystemPrompt = systemPrompt
+        }
         // The tokenizer chat template already injects the exact MLX tool-call
         // syntax for the active Qwen package. Duplicating it here risks
         // contradicting the installed template and suppressing tool use.
 
         var messages: [Chat.Message] = []
-        messages.append(.system(systemPrompt))
+        messages.append(.system(effectiveSystemPrompt))
 
         for msg in snapshots {
             if msg.role == .assistant && !msg.isFinal { continue }

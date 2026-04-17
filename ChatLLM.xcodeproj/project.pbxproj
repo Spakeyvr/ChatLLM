@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		3D11527F2EAFB66200FC2980 /* ChatLLM 2.icon in Resources */ = {isa = PBXBuildFile; fileRef = 3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */; };
 		3D1342292EF6F07600AB678F /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 3D1342302EF6F07600AB678F /* Tokenizers */; };
-		3D1B7FD02F928C6900EA41C7 /* LICENSE in Sources */ = {isa = PBXBuildFile; fileRef = 3D1B7FCF2F928C5F00EA41C7 /* LICENSE */; };
 		3DD829762EB154F000D2EE7F /* AsyncAlgorithms in Frameworks */ = {isa = PBXBuildFile; productRef = 3DD829752EB154F000D2EE7F /* AsyncAlgorithms */; };
 		E52029172F572460005824D2 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = E52029162F572460005824D2 /* MLXEmbedders */; };
 		E52029192F572460005824D2 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = E52029182F572460005824D2 /* MLXLLM */; };
@@ -36,7 +35,7 @@
 
 /* Begin PBXFileReference section */
 		3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "ChatLLM 2.icon"; sourceTree = "<group>"; };
-		3D1B7FCF2F928C5F00EA41C7 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LICENSE; sourceTree = "<group>"; };
+		3D1B7FCF2F928C5F00EA41C7 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		3DAC54462EAC24740054484A /* On-Device_LLM_Chat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "On-Device_LLM_Chat.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3DAC54552EAC24760054484A /* On-Device_LLM_ChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "On-Device_LLM_ChatTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3DAC545F2EAC24760054484A /* On-Device_LLM_ChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "On-Device_LLM_ChatUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -293,7 +292,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3D1B7FD02F928C6900EA41C7 /* LICENSE in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

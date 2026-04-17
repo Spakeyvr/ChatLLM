@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Combine
 import FoundationModels
+import SwiftData
 
 /// Manages backend/model selection and backend-specific capabilities.
 @MainActor
@@ -215,6 +216,11 @@ class ModelBackendBridge: ObservableObject {
     private func persistSelectionToActiveConversation() {
         activeConversation?.preferredBackendRawValue = selectedBackend.rawValue
         activeConversation?.preferredModelID = selectedModelID
+        do {
+            try activeConversation?.modelContext?.save()
+        } catch {
+            print("Failed to persist backend selection: \(error)")
+        }
     }
 
     // MARK: - Model-Specific Features

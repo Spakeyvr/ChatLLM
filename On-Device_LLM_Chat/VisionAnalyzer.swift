@@ -527,7 +527,6 @@ final class VisionAnalyzer: ObservableObject {
         async let posesTask = options.detectBodyPose ? detectBodyPoses(cgImage: cgImage) : nil
         async let barcodesTask = options.detectBarcodes ? detectBarcodes(cgImage: cgImage) : nil
         async let handsTask = options.detectHands ? detectHands(cgImage: cgImage) : nil
-        async let qualityTask = options.assessQuality ? assessPhotoQuality(cgImage: cgImage) : nil
         // --- NEWLY ADDED ---
         async let sceneTask = options.classifyScene ? classifyScene(cgImage: cgImage) : nil
         async let saliencyTask = options.getSaliency ? getSaliencyRect(cgImage: cgImage) : nil
@@ -540,10 +539,10 @@ final class VisionAnalyzer: ObservableObject {
             posesTask,
             barcodesTask,
             handsTask,
-            qualityTask,
             sceneTask,    // --- NEW
             saliencyTask  // --- NEW
         )
+        let photoQuality = options.assessQuality ? assessPhotoQuality(faces: results.2) : nil
         
         let result = VisionAnalysisResult(
             objects: results.0,
@@ -552,9 +551,9 @@ final class VisionAnalyzer: ObservableObject {
             bodyPoses: results.3,
             barcodes: results.4,
             handPoses: results.5,
-            photoQuality: results.6,
-            sceneLabels: results.7, // --- NEW
-            saliencyRect: results.8 // --- NEW
+            photoQuality: photoQuality,
+            sceneLabels: results.6, // --- NEW
+            saliencyRect: results.7 // --- NEW
         )
         
         await MainActor.run {
@@ -572,9 +571,9 @@ final class VisionAnalyzer: ObservableObject {
         print("  • Body poses: \(results.3?.count ?? 0)")
         print("  • Barcodes: \(results.4?.count ?? 0)")
         print("  • Hands: \(results.5?.count ?? 0)")
-        print("  • Quality assessed: \(results.6 != nil ? "Yes" : "No")")
-        print("  • Scene Labels: \(results.7?.count ?? 0)") // --- NEW
-        print("  • Saliency Rect: \(results.8 != nil ? "Yes" : "No")") // --- NEW
+        print("  • Quality assessed: \(photoQuality != nil ? "Yes" : "No")")
+        print("  • Scene Labels: \(results.6?.count ?? 0)") // --- NEW
+        print("  • Saliency Rect: \(results.7 != nil ? "Yes" : "No")") // --- NEW
         print(String(repeating: "=", count: 60) + "\n")
         
         return result
@@ -867,9 +866,9 @@ final class VisionAnalyzer: ObservableObject {
         }
     }
     
-    private func assessPhotoQuality(cgImage: CGImage) async -> PhotoQuality? {
+    private func assessPhotoQuality(faces: [DetectedFace]?) -> PhotoQuality? {
         // Photo quality is based on face detection quality
-        guard let faces = await detectFaces(cgImage: cgImage), !faces.isEmpty else {
+        guard let faces, !faces.isEmpty else {
             return nil
         }
         
