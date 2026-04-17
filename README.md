@@ -1,119 +1,123 @@
 # ChatLLM
 
-ChatLLM is a SwiftUI iOS app for chatting with on-device language models. It combines Apple's Foundation Models APIs with optional downloadable MLX models, image attachments, reasoning controls, and Tavily-powered web search.
+ChatLLM is a SwiftUI iPhone and iPad app for fully local chat with on-device language models.
 
-## Highlights
+It supports two backends:
 
-- On-device chat UI built with SwiftUI and SwiftData
-- Two model backends:
-  - Apple Foundation Models / Apple Intelligence
-  - Local MLX models managed inside the app
-- Downloadable multimodal Qwen 3.5 MLX models
-- Image attachments with native multimodal support when available
-- Vision-based image analysis fallback when native image support is unavailable
-- Manual reasoning mode and smart reasoning mode
-- Tavily web search integration for time-sensitive questions
-- Markdown and LaTeX rendering in chat responses
-- Conversation history, export, and basic data-management settings
+- `Apple Intelligence` via `FoundationModels`
+- `MLX` via locally downloaded Qwen 3.5 multimodal models
 
-## Current model support
+The app also includes optional web search with Tavily, image attachments, Vision-based image analysis, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
 
-The repository currently exposes these downloadable MLX models:
+## Features
 
-- `Qwen 3.5 2B (4-bit)`
-- `Qwen 3.5 4B (4-bit)`
-
-Both are configured as multimodal models with reasoning support.
+- On-device chat with Apple Foundation Models when supported by the device
+- Local MLX model execution with downloadable Qwen 3.5 models
+- Per-chat backend/model selection before a conversation starts
+- Reasoning mode and smart reasoning support
+- Optional Tavily-powered web search for time-sensitive answers
+- Image attachments with Vision analysis fallback for OCR, objects, faces, barcodes, scene labels, and saliency
+- Markdown and LaTeX rendering in assistant responses
+- SwiftData conversation persistence
+- Prompt presets, appearance settings, MLX tuning controls, and privacy controls
+- Chat export and bulk deletion tools
 
 ## Requirements
 
-- macOS with a recent Xcode version that supports:
-  - Swift 6
-  - iOS 26.0 SDK/runtime
-  - Apple's Foundation Models APIs
-- An iPhone or iPad for realistic testing
+- Xcode 26 or newer
+- iOS 26.0 SDK
+- iPhone or iPad target
+- A physical device is recommended for real model testing
 
 Notes:
 
-- The project target is currently set to `iOS 26.0`.
-- Some MLX multimodal paths are explicitly marked as unsupported on the iOS Simulator.
-- If the Foundation Models backend is unavailable on the current device/configuration, the UI still runs and the app shows mocked responses instead of real model output.
+- The project deployment target is `iOS 26.0`.
+- `FoundationModels` requires device support for Apple Intelligence.
+- MLX model downloads and multimodal execution are intended for physical devices, not just the simulator.
 
-## Dependencies
+## Included MLX Models
 
-Swift Package Manager dependencies are resolved through the Xcode workspace. The project currently pulls in:
+The app currently exposes these downloadable local models:
 
-- `mlx-swift`
-- `mlx-swift-lm`
-- `swift-transformers`
-- `swift-jinja`
-- Apple async/collections/crypto support packages
+- `Qwen 3.5 4B (3/6-bit mixed)` about `2.50 GB`
+- `Qwen 3.5 2B (4-bit)` about `1.75 GB`
 
-## Getting started
+Both are configured as multimodal MLX models with reasoning support and native image support.
 
-1. Open [ChatLLM.xcodeproj](/Users/nevioknogler/Desktop/ChatLLM/ChatLLM.xcodeproj) in Xcode.
-2. Let Xcode resolve Swift Package Manager dependencies.
-3. Select an iPhone or iPad target. Prefer a physical device if you want to test MLX multimodal behavior.
-4. Build and run the `On-Device_LLM_Chat` app target.
+## Optional Setup
 
-## Using the app
-
-### Apple backend
-
-The default backend uses Apple's on-device language model when the platform makes it available.
-
-### MLX backend
-
-The app can also run local MLX models. From the app UI, switch to the MLX backend and download one of the supported Qwen packages. Model files are stored under the app's Documents directory.
-
-### Web search
+### Tavily Web Search
 
 Web search is optional. To enable it:
 
-1. Open Settings.
-2. Add a Tavily API key.
-3. Ask a time-sensitive question or explicitly ask the assistant to search.
+1. Get an API key from `https://tavily.com`
+2. Open the app
+3. Enter the key during onboarding or later in `Settings > Tavily Search`
 
-### Images
+The key is stored locally in Keychain.
 
-You can attach images to prompts. The app will either:
+### MLX Models
 
-- pass the image directly to a multimodal MLX model, or
-- fall back to Apple Vision analysis and include the extracted context in the prompt
+MLX is optional. You can use the app immediately with Apple Foundation Models on supported devices.
 
-## Data and storage
+To use MLX:
 
-- Conversations are stored locally with SwiftData.
-- Image attachments are stored on-device.
-- Tavily API keys are handled in app settings and keychain-related code exists in the chat view model.
-- Chats can be exported from Settings as a plain-text conversation dump.
+1. Launch the app
+2. Open onboarding or `Manage Models`
+3. Download one of the available Qwen models
+4. Start a new chat and select the MLX backend/model before sending the first message
 
-## GitHub commit relay
+## Running the Project
 
-If you want Discord notifications whenever a GitHub push happens, there is a small webhook relay script in [Scripts/github_discord_relay.py](/Users/nevioknogler/Desktop/ChatLLM/Scripts/github_discord_relay.py).
+1. Open [ChatLLM.xcodeproj](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM.xcodeproj)
+2. Select the `On-Device_LLM_Chat` scheme
+3. Choose an iPhone or iPad simulator/device
+4. Build and run
 
-Setup notes:
+Swift Package dependencies are resolved through Xcode. The project includes MLX-related packages plus supporting Apple and Hugging Face packages through SwiftPM.
 
-1. Start the relay with `DISCORD_WEBHOOK_URL` and `GITHUB_WEBHOOK_SECRET` set.
-2. Expose the relay over HTTPS.
-3. In GitHub, add a webhook that points to `/github`, uses `application/json`, and subscribes to the `Pushes` event.
+## Project Structure
 
-More detailed instructions are in [Scripts/README.md](/Users/nevioknogler/Desktop/ChatLLM/Scripts/README.md).
+- [On-Device_LLM_Chat](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat): main app target
+- [On-Device_LLM_ChatTests](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_ChatTests): unit tests
+- [On-Device_LLM_ChatUITests](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_ChatUITests): UI tests
+- [Vendor/mlx-swift-lm](/Users/nevio/Desktop/Projects/ChatLLM/Vendor/mlx-swift-lm): local MLX package source
 
-## Project structure
+Key app files:
 
-- [On-Device_LLM_Chat](/Users/nevioknogler/Desktop/ChatLLM/On-Device_LLM_Chat): main app source
-- [On-Device_LLM_ChatTests](/Users/nevioknogler/Desktop/ChatLLM/On-Device_LLM_ChatTests): unit tests
-- [On-Device_LLM_ChatUITests](/Users/nevioknogler/Desktop/ChatLLM/On-Device_LLM_ChatUITests): UI tests
-- [ChatLLM.xcodeproj](/Users/nevioknogler/Desktop/ChatLLM/ChatLLM.xcodeproj): Xcode project
+- [ContentView.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
+- [ChatView.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ChatView.swift): conversation screen and composer integration
+- [ChatViewModel.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
+- [ModelBackendBridge.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ModelBackendBridge.swift): backend selection and capability gating
+- [MLXModelManager.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
+- [VisionAnalyzer.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/VisionAnalyzer.swift): Vision-based image analysis pipeline
+- [TavilySearchService.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/TavilySearchService.swift): optional web search integration
 
-## Known limitations
+## Architecture Overview
 
-- The app currently exposes only English in the language picker, even though localized string files for other languages exist in the repository.
-- MLX multimodal loading has simulator limitations.
-- MLX model downloads are large, so first-run setup for local models is bandwidth- and storage-heavy.
-- Web search depends on a valid Tavily API key and network access.
+- `SwiftUI` drives the entire interface
+- `SwiftData` stores conversations, messages, and attachments
+- `FoundationModels` powers Apple Intelligence chats when available
+- `MLX` powers downloadable local Qwen models
+- `Vision` handles OCR and image analysis fallback
+- `UserDefaults` and Keychain store user settings and the Tavily API key
+
+## Testing
+
+The repository includes:
+
+- unit tests in `On-Device_LLM_ChatTests`
+- UI tests in `On-Device_LLM_ChatUITests`
+
+Run them from Xcode with `Product > Test`.
+
+## Notes for Contributors
+
+- Backend selection is effectively locked once a conversation has messages
+- Web search depends on both network connectivity and a configured Tavily key
+- MLX behavior is memory-sensitive and includes device-specific tuning
+- Image analysis may be precomputed when the selected model does not support native images
 
 ## License
 
-This project includes a license file at [LICENSE](/Users/nevioknogler/Desktop/ChatLLM/On-Device_LLM_Chat/LICENSE).
+See [LICENSE](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/LICENSE).
