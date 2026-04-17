@@ -361,8 +361,9 @@ extension ChatViewModel {
         let needsReasoningInstructions = reasoningActive
         let hasVisionImageAnalysisData = snapshotsContainVisionImageAnalysisData(snapshots)
 
+        // Static prefix first (stable across turns → friendly to KV-cache reuse),
+        // volatile datetime appended last.
         var systemPrompt = Self.baseSystemPrompt
-        systemPrompt += "\n\n" + Self.currentDateTimeContext()
 
         if hasVisionImageAnalysisData {
             systemPrompt += "\n\n" + Self.foundationVisionImageInstructions
@@ -378,6 +379,8 @@ extension ChatViewModel {
                 forceSearchRequired: forceWebSearchRequired
             )
         }
+
+        systemPrompt += "\n\n" + Self.currentDateTimeContext()
 
         parts.insert("System: \(systemPrompt)", at: 0)
 
@@ -458,10 +461,9 @@ extension ChatViewModel {
         webSearchEnabled: Bool,
         forceWebSearch: Bool
     ) -> String {
+        // Static prefix first (stable across turns → friendly to KV-cache reuse),
+        // volatile datetime appended last.
         var systemPrompt = qwenCompactSystemPrompt
-        if includeCurrentDateTime {
-            systemPrompt += "\n\n" + currentDateTimeContext()
-        }
         if hasNativeImages {
             systemPrompt += "\n\n" + qwenNativeImageInstructions
         }
@@ -470,6 +472,9 @@ extension ChatViewModel {
                 reasoningEnabled: false,
                 forceSearchRequired: forceWebSearch
             )
+        }
+        if includeCurrentDateTime {
+            systemPrompt += "\n\n" + currentDateTimeContext()
         }
         return systemPrompt
     }

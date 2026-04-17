@@ -93,11 +93,14 @@ extension ChatViewModel {
         if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && !Task.isCancelled {
             print("⚠️ Native image generation failed before output; falling back to Vision analysis context")
 
+            let cachedAttachmentAnalysis = userMsg.attachments
+                .first(where: { $0.type == .image })?
+                .getAnalysisResult()
             let resolvedAnalysis = await resolveVisionAnalysisResult(
                 canonicalImageURL: canonicalImageURL,
                 fallbackImage: image,
                 detections: detections,
-                analysisResult: analysisResult
+                analysisResult: analysisResult ?? cachedAttachmentAnalysis
             )
             let fallbackText = buildVisionEnhancedText(
                 userPrompt: userPrompt,

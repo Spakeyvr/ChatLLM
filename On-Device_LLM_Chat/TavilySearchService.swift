@@ -148,10 +148,19 @@ enum TavilySearchError: LocalizedError {
 
 /// Service for Tavily searches
 actor TavilySearchService {
+    private struct CacheEntry {
+        let value: String
+        let storedAt: Date
+    }
+
+    private static let cacheTTL: TimeInterval = 600 // 10 minutes
+    private static let cacheCapacity = 32
+
     private let apiKey: String
     private let baseURL = URL(string: "https://api.tavily.com/search")!
     private let session: URLSession
-    
+    private var cache: [String: CacheEntry] = [:]
+
     init(apiKey: String, session: URLSession = .shared) throws {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TavilySearchError.invalidAPIKey
@@ -159,7 +168,7 @@ actor TavilySearchService {
         self.apiKey = apiKey
         self.session = session
     }
-    
+
     func search(query: String, maxResults: Int = 3, searchDepth: String? = nil) async throws -> String {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
@@ -170,6 +179,16 @@ actor TavilySearchService {
             requestedMaxResults: maxResults,
             explicitSearchDepth: searchDepth
         )
+        let cacheKey = Self.makeCacheKey(
+            query: trimmedQuery,
+            maxResults: plan.maxResults,
+            topic: plan.topic?.rawValue,
+            searchDepth: plan.searchDepth?.rawValue,
+            timeRange: plan.timeRange?.rawValue
+        )
+        if let hit = cachedResult(for: cacheKey) {
+            return hit
+        }
         
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
@@ -221,7 +240,48 @@ actor TavilySearchService {
             throw TavilySearchError.noResults
         }
         
-        return formatResults(result, query: trimmedQuery)
+        let formatted = formatResults(result, query: trimmedQuery)
+        storeResult(formatted, for: cacheKey)
+        return formatted
+    }
+
+    private func cachedResult(for key: String) -> String? {
+        guard let entry = cache[key] else { return nil }
+        if Date().timeIntervalSince(entry.storedAt) > Self.cacheTTL {
+            cache.removeValue(forKey: key)
+            return nil
+        }
+        return entry.value
+    }
+
+    private func storeResult(_ value: String, for key: String) {
+        if cache.count >= Self.cacheCapacity {
+            if let oldest = cache.min(by: { $0.value.storedAt < $1.value.storedAt })?.key {
+                cache.removeValue(forKey: oldest)
+            }
+        }
+        cache[key] = CacheEntry(value: value, storedAt: Date())
+    }
+
+    private static func makeCacheKey(
+        query: String,
+        maxResults: Int,
+        topic: String?,
+        searchDepth: String?,
+        timeRange: String?
+    ) -> String {
+        let normalized = query
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return [
+            normalized,
+            String(maxResults),
+            topic ?? "-",
+            searchDepth ?? "-",
+            timeRange ?? "-"
+        ].joined(separator: "|")
     }
     
     private func formatResults(_ response: TavilySearchResponse, query: String) -> String {

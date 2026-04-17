@@ -692,6 +692,27 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
     nonisolated static let defaultPrefillStepSize = 512
+    nonisolated static let minimumAdaptivePrefillStepSize = 128
+
+    /// Scales the tuned prefill chunk size down when the actual prompt is small,
+    /// reducing peak memory without changing generation quality. Never exceeds
+    /// the tuned value.
+    nonisolated static func adaptivePrefillStepSize(
+        tuned: Int,
+        messages: [Chat.Message]
+    ) -> Int {
+        let approxTokens = messages.reduce(0) { partial, message in
+            partial + max(1, message.content.count / 4)
+        }
+        if approxTokens <= 0 {
+            return max(minimumAdaptivePrefillStepSize, min(tuned, 256))
+        }
+        var bucket = minimumAdaptivePrefillStepSize
+        while bucket < approxTokens && bucket < tuned {
+            bucket *= 2
+        }
+        return max(minimumAdaptivePrefillStepSize, min(tuned, bucket))
+    }
     nonisolated static let defaultQuantizedKVStartStep = 256
     nonisolated private static let memoryMaintenanceInterval: TimeInterval = 3
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
@@ -1967,7 +1988,11 @@ final class MLXModelManager: ObservableObject {
         }
         prepareMemoryForGeneration()
 
-        let prefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
+        let tunedPrefillStepSize = await inferenceWorker.prefillStepSize(for: currentModel.id)
+        let prefillStepSize = Self.adaptivePrefillStepSize(
+            tuned: tunedPrefillStepSize,
+            messages: messages
+        )
         let quantizedKVStart = await inferenceWorker.quantizedKVStart(for: currentModel.id)
         let tunedCacheCompression = generationConfiguration.cacheCompression.applying(startStep: quantizedKVStart)
         let params = Self.makeGenerateParameters(
