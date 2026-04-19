@@ -82,7 +82,7 @@ final class MessageAttachment {
             let attachmentsDir = documentsURL.appendingPathComponent("Attachments", isDirectory: true)
             return attachmentsDir.appendingPathComponent(fileURL.lastPathComponent)
         } catch {
-            print("⚠️ Error constructing file URL: \(error)")
+            print("Warning: Error constructing file URL: \(error)")
             return fileURL // Fallback to stored URL
         }
     }
@@ -98,7 +98,7 @@ final class MessageAttachment {
             self.detectionProcessed = true
             self.detectionSummary = result.generateSummary() // Use the smart summary
         } else {
-            print("❌ Failed to encode VisionAnalysisResult")
+            print("Error: Failed to encode VisionAnalysisResult")
         }
     }
     
@@ -110,10 +110,10 @@ final class MessageAttachment {
         do {
             return try decoder.decode(VisionAnalysisResult.self, from: data)
         } catch {
-            print("❌ Failed to decode VisionAnalysisResult: \(error)")
+            print("Error: Failed to decode VisionAnalysisResult: \(error)")
             // Fallback for old [DetectedObject] data
             if let oldDetections = try? decoder.decode([DetectedObject].self, from: data) {
-                print("⚠️ Decoded legacy [DetectedObject] data.")
+                print("Warning: Decoded legacy [DetectedObject] data.")
                 // For legacy data, create the result
                 return VisionAnalysisResult(objects: oldDetections)
             }
@@ -156,7 +156,7 @@ final class MessageAttachment {
             return image
         }
 
-        print("⚠️ Failed to load image from: \(imageURL.path)")
+        print("Warning: Failed to load image from: \(imageURL.path)")
         print("   File exists: \(FileManager.default.fileExists(atPath: imageURL.path))")
         return nil
     }

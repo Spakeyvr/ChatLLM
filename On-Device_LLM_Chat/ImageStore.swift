@@ -27,7 +27,7 @@ actor ImageStore {
     func save(image: UIImage, maxDimension: CGFloat = 1200, jpegQuality: CGFloat = 0.75) async throws -> URL {
         // Validate input dimensions and scale
         guard image.size.width > 0 && image.size.height > 0 && image.scale > 0 else {
-            logger.error("❌ Cannot save image with invalid dimensions or scale: \(image.size.width)x\(image.size.height) @ \(image.scale)x")
+            logger.error("Error: Cannot save image with invalid dimensions or scale: \(image.size.width)x\(image.size.height) @ \(image.scale)x")
             throw NSError(domain: "ImageStore", code: -2, userInfo: [
                 NSLocalizedDescriptionKey: "Image has invalid dimensions or scale"
             ])
@@ -35,7 +35,7 @@ actor ImageStore {
         
         // Validate that image has actual bitmap data
         guard image.cgImage != nil else {
-            logger.error("❌ Image has no CGImage backing")
+            logger.error("Error: Image has no CGImage backing")
             throw NSError(domain: "ImageStore", code: -3, userInfo: [
                 NSLocalizedDescriptionKey: "Image has no bitmap data"
             ])
@@ -45,7 +45,7 @@ actor ImageStore {
         guard let data = autoreleasepool(invoking: {
             scaled.jpegData(compressionQuality: jpegQuality)
         }) else {
-            logger.error("❌ JPEG encoding failed for image")
+            logger.error("Error: JPEG encoding failed for image")
             throw NSError(domain: "ImageStore", code: -1, userInfo: [NSLocalizedDescriptionKey: "JPEG encoding failed"])
         }
         
@@ -54,10 +54,10 @@ actor ImageStore {
         
         do {
             try data.write(to: url, options: [.atomic, .completeFileProtection])
-            logger.info("✅ Image saved: \(url.lastPathComponent) (\(data.count) bytes)")
+            logger.info("Image saved: \(url.lastPathComponent) (\(data.count) bytes)")
             return url
         } catch {
-            logger.error("❌ Failed to write image to disk: \(error.localizedDescription)")
+            logger.error("Error: Failed to write image to disk: \(error.localizedDescription)")
             throw error
         }
     }
@@ -93,7 +93,7 @@ actor ImageStore {
         }
 
         try rendered.data.write(to: outputURL, options: [.atomic, .completeFileProtection])
-        logger.info("🧠 Inference image ready \(outputURL.lastPathComponent, privacy: .public) [\(rendered.sourceWidth)x\(rendered.sourceHeight) -> \(rendered.outputWidth)x\(rendered.outputHeight)] (\(rendered.data.count) bytes)")
+        logger.info("Inference image ready \(outputURL.lastPathComponent, privacy: .public) [\(rendered.sourceWidth)x\(rendered.sourceHeight) -> \(rendered.outputWidth)x\(rendered.outputHeight)] (\(rendered.data.count) bytes)")
         return outputURL
     }
 
@@ -101,9 +101,9 @@ actor ImageStore {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
             try FileManager.default.removeItem(at: url)
-            logger.debug("✅ Deleted image: \(url.lastPathComponent)")
+            logger.debug("Deleted image: \(url.lastPathComponent)")
         } catch {
-            logger.error("❌ Failed to delete image \(url.lastPathComponent): \(error.localizedDescription)")
+            logger.error("Error: Failed to delete image \(url.lastPathComponent): \(error.localizedDescription)")
             throw error
         }
     }
@@ -113,10 +113,10 @@ actor ImageStore {
             let url = try inferenceVariantURL(for: sourceURL, maxDimension: max(64, min(maxDimension, nativeInferenceMaxDimension)))
             if FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)
-                logger.debug("✅ Deleted inference variant: \(url.lastPathComponent)")
+                logger.debug("Deleted inference variant: \(url.lastPathComponent)")
             }
         } catch {
-            logger.error("❌ Failed to delete inference variant for \(sourceURL.lastPathComponent): \(error.localizedDescription)")
+            logger.error("Error: Failed to delete inference variant for \(sourceURL.lastPathComponent): \(error.localizedDescription)")
         }
     }
 
@@ -169,7 +169,7 @@ actor ImageStore {
         }
 
         if deletedCount > 0 {
-            logger.info("🧹 Cleaned up \(deletedCount) orphaned images (freed \(ByteCountFormatter.string(fromByteCount: freedBytes, countStyle: .file)))")
+            logger.info("Cleaned up \(deletedCount) orphaned images (freed \(ByteCountFormatter.string(fromByteCount: freedBytes, countStyle: .file)))")
         }
     }
 

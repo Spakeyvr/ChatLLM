@@ -493,7 +493,7 @@ final class VisionAnalyzer: ObservableObject {
     private let objectDetector = VisionObjectDetector()
     
     init() {
-        print("✅ VisionAnalyzer initialized with pure Apple Vision Framework - no external models required")
+        print("VisionAnalyzer initialized with pure Apple Vision Framework - no external models required")
     }
     
     // MARK: - Main Analysis Method
@@ -502,7 +502,7 @@ final class VisionAnalyzer: ObservableObject {
     func analyze(image: UIImage, options: AnalysisOptions? = nil) async throws -> VisionAnalysisResult {
         let options = options ?? .all
         print("\n" + String(repeating: "=", count: 60))
-        print("🔍 VISION ANALYZER: Starting comprehensive analysis")
+        print("VISION ANALYZER: Starting comprehensive analysis")
         print(String(repeating: "=", count: 60))
         print("Options:")
         print("  • Objects: \(options.detectObjects)")
@@ -565,7 +565,7 @@ final class VisionAnalyzer: ObservableObject {
         }
         
         print("\n" + String(repeating: "=", count: 60))
-        print("✅ VISION ANALYZER: Analysis complete")
+        print("VISION ANALYZER: Analysis complete")
         print(String(repeating: "=", count: 60))
         print("Results:")
         print("  • Objects: \(results.0.count)")
@@ -586,34 +586,34 @@ final class VisionAnalyzer: ObservableObject {
     
     private func detectObjects(image: UIImage) async -> [DetectedObject] {
         do {
-            print("🎯 Running Vision Framework object detection...")
+            print("Running Vision Framework object detection...")
             let objects = try await objectDetector.detectObjects(in: image)
-            print("✅ Vision Framework detected \(objects.count) objects")
+            print("Vision Framework detected \(objects.count) objects")
             return objects
         } catch {
-            print("⚠️ Vision Framework detection failed: \(error.localizedDescription)")
+            print("Warning: Vision Framework detection failed: \(error.localizedDescription)")
             return []
         }
     }
     
     private func recognizeText(cgImage: CGImage, options: AnalysisOptions) async -> [RecognizedText] {
         await withCheckedContinuation { continuation in
-            print("📝 Running OCR text recognition...")
+            print("Running OCR text recognition...")
             
             let request = VNRecognizeTextRequest { request, error in
                 if let error = error {
-                    print("❌ OCR failed: \(error.localizedDescription)")
+                    print("Error: OCR failed: \(error.localizedDescription)")
                     continuation.resume(returning: [])
                     return
                 }
                 
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    print("⚠️ No text observations")
+                    print("Warning: No text observations")
                     continuation.resume(returning: [])
                     return
                 }
                 
-                print("📦 Processing \(observations.count) text observations...")
+                print("Processing \(observations.count) text observations...")
                 
                 var recognizedTexts: [RecognizedText] = []
                 
@@ -648,7 +648,7 @@ final class VisionAnalyzer: ObservableObject {
                     return first.boundingBox.minX < second.boundingBox.minX
                 }
                 
-                print("✅ OCR found \(recognizedTexts.count) text blocks")
+                print("OCR found \(recognizedTexts.count) text blocks")
                 continuation.resume(returning: recognizedTexts)
             }
             
@@ -665,7 +665,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ OCR request failed: \(error.localizedDescription)")
+                print("Error: OCR request failed: \(error.localizedDescription)")
                 continuation.resume(returning: [])
             }
         }
@@ -673,17 +673,17 @@ final class VisionAnalyzer: ObservableObject {
     
     private func detectFaces(cgImage: CGImage) async -> [DetectedFace]? {
         await withCheckedContinuation { continuation in
-            print("👤 Running face detection with quality assessment...")
+            print("Running face detection with quality assessment...")
             
             let request = VNDetectFaceCaptureQualityRequest { request, error in
                 if let error = error {
-                    print("❌ Face detection failed: \(error.localizedDescription)")
+                    print("Error: Face detection failed: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNFaceObservation], !observations.isEmpty else {
-                    print("⚠️ No faces detected")
+                    print("Warning: No faces detected")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -708,7 +708,7 @@ final class VisionAnalyzer: ObservableObject {
                     )
                 }
                 
-                print("✅ Detected \(faces.count) face(s)")
+                print("Detected \(faces.count) face(s)")
                 continuation.resume(returning: faces)
             }
             
@@ -716,7 +716,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Face detection request failed: \(error.localizedDescription)")
+                print("Error: Face detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }
@@ -724,18 +724,18 @@ final class VisionAnalyzer: ObservableObject {
     
     private func detectBodyPoses(cgImage: CGImage) async -> [BodyPose]? {
         await withCheckedContinuation { continuation in
-            print("🧍 Running body pose detection...")
+            print("Running body pose detection...")
             
             let request = VNDetectHumanBodyPoseRequest { [continuation] request, error in
                 Task { @MainActor in
                     if let error = error {
-                        print("❌ Body pose detection failed: \(error.localizedDescription)")
+                        print("Error: Body pose detection failed: \(error.localizedDescription)")
                         continuation.resume(returning: nil)
                         return
                     }
                     
                     guard let observations = request.results as? [VNHumanBodyPoseObservation], !observations.isEmpty else {
-                        print("⚠️ No body poses detected")
+                        print("Warning: No body poses detected")
                         continuation.resume(returning: nil)
                         return
                     }
@@ -758,7 +758,7 @@ final class VisionAnalyzer: ObservableObject {
                         )
                     }
                     
-                    print("✅ Detected \(poses.count) body pose(s)")
+                    print("Detected \(poses.count) body pose(s)")
                     continuation.resume(returning: poses.isEmpty ? nil : poses)
                 }
             }
@@ -767,7 +767,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Body pose detection request failed: \(error.localizedDescription)")
+                print("Error: Body pose detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }
@@ -775,17 +775,17 @@ final class VisionAnalyzer: ObservableObject {
     
     private func detectBarcodes(cgImage: CGImage) async -> [Barcode]? {
         await withCheckedContinuation { continuation in
-            print("📊 Running barcode detection...")
+            print("Running barcode detection...")
             
             let request = VNDetectBarcodesRequest { request, error in
                 if let error = error {
-                    print("❌ Barcode detection failed: \(error.localizedDescription)")
+                    print("Error: Barcode detection failed: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNBarcodeObservation], !observations.isEmpty else {
-                    print("⚠️ No barcodes detected")
+                    print("Warning: No barcodes detected")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -800,7 +800,7 @@ final class VisionAnalyzer: ObservableObject {
                     )
                 }
                 
-                print("✅ Detected \(barcodes.count) barcode(s)")
+                print("Detected \(barcodes.count) barcode(s)")
                 continuation.resume(returning: barcodes.isEmpty ? nil : barcodes)
             }
             
@@ -808,7 +808,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Barcode detection request failed: \(error.localizedDescription)")
+                print("Error: Barcode detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }
@@ -816,18 +816,18 @@ final class VisionAnalyzer: ObservableObject {
     
     private func detectHands(cgImage: CGImage) async -> [HandPose]? {
         await withCheckedContinuation { continuation in
-            print("✋ Running hand pose detection...")
+            print("Running hand pose detection...")
             
             let request = VNDetectHumanHandPoseRequest { [continuation] request, error in
                 Task { @MainActor in
                     if let error = error {
-                        print("❌ Hand detection failed: \(error.localizedDescription)")
+                        print("Error: Hand detection failed: \(error.localizedDescription)")
                         continuation.resume(returning: nil)
                         return
                     }
                     
                     guard let observations = request.results as? [VNHumanHandPoseObservation], !observations.isEmpty else {
-                        print("⚠️ No hands detected")
+                        print("Warning: No hands detected")
                         continuation.resume(returning: nil)
                         return
                     }
@@ -854,7 +854,7 @@ final class VisionAnalyzer: ObservableObject {
                         )
                     }
                     
-                    print("✅ Detected \(hands.count) hand(s)")
+                    print("Detected \(hands.count) hand(s)")
                     continuation.resume(returning: hands.isEmpty ? nil : hands)
                 }
             }
@@ -863,7 +863,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Hand detection request failed: \(error.localizedDescription)")
+                print("Error: Hand detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }
@@ -887,7 +887,7 @@ final class VisionAnalyzer: ObservableObject {
             issues.append("slightly blurry")
         }
         
-        print("📸 Photo quality assessed: \(String(format: "%.0f%%", avgQuality * 100))")
+        print("Photo quality assessed: \(String(format: "%.0f%%", avgQuality * 100))")
         
         return PhotoQuality(
             overallQuality: avgQuality,
@@ -899,18 +899,18 @@ final class VisionAnalyzer: ObservableObject {
     // --- NEW: Scene Classification ("Vibe Check") ---
     private func classifyScene(cgImage: CGImage) async -> [String]? {
         await withCheckedContinuation { continuation in
-            print("🏞️ Running scene classification...")
+            print("Running scene classification...")
             
             // This uses Apple's built-in taxonomy—super efficient
             let request = VNClassifyImageRequest { request, error in
                 if let error = error {
-                    print("❌ Scene classification failed: \(error.localizedDescription)")
+                    print("Error: Scene classification failed: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNClassificationObservation] else {
-                    print("⚠️ No scene observations")
+                    print("Warning: No scene observations")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -921,7 +921,7 @@ final class VisionAnalyzer: ObservableObject {
                     .prefix(3)
                     .map { $0.identifier.components(separatedBy: ", ").first ?? $0.identifier } // Clean up labels like "Office, Cubicle"
                 
-                print("✅ Scene classified: \(labels)")
+                print("Scene classified: \(labels)")
                 continuation.resume(returning: labels.isEmpty ? nil : labels)
             }
             
@@ -929,7 +929,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Scene classification request failed: \(error.localizedDescription)")
+                print("Error: Scene classification request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }
@@ -939,11 +939,11 @@ final class VisionAnalyzer: ObservableObject {
     private func getSaliencyRect(cgImage: CGImage) async -> CGRect? {
         // Returns the bounding box of the "most interesting" part of the image
         await withCheckedContinuation { continuation in
-            print("✨ Running saliency (attention) detection...")
+            print("Running saliency (attention) detection...")
             
             let request = VNGenerateAttentionBasedSaliencyImageRequest { request, error in
                 if let error = error {
-                    print("❌ Saliency detection failed: \(error.localizedDescription)")
+                    print("Error: Saliency detection failed: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -951,13 +951,13 @@ final class VisionAnalyzer: ObservableObject {
                 guard let observation = request.results?.first as? VNSaliencyImageObservation,
                       let salientObjects = observation.salientObjects,
                       let primary = salientObjects.first else {
-                    print("⚠️ No salient objects found")
+                    print("Warning: No salient objects found")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 // This is the CGRect (0-1) of the main subject
-                print("✅ Saliency rect found: \(primary.boundingBox)")
+                print("Saliency rect found: \(primary.boundingBox)")
                 continuation.resume(returning: primary.boundingBox)
             }
             
@@ -965,7 +965,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Saliency detection request failed: \(error.localizedDescription)")
+                print("Error: Saliency detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: nil)
             }
         }

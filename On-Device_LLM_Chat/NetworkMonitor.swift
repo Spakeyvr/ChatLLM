@@ -78,9 +78,9 @@ final class NetworkMonitor: ObservableObject {
                 }
 
                 if resolvedStatus {
-                    print("🌐 Network connection restored")
+                    print("Network connection restored")
                 } else {
-                    print("📡 Network connection lost")
+                    print("Network connection lost")
                 }
             }
         }

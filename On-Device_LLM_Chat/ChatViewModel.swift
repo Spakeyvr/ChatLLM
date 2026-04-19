@@ -140,7 +140,7 @@ final class ChatViewModel: ObservableObject {
                 self.saveCount = 0
                 self.lastSaveTime = Date()
             } catch {
-                print("❌ Failed to save context: \(error.localizedDescription)")
+                print("Error: Failed to save context: \(error.localizedDescription)")
                 // Retry once more immediately on failure
                 try? self.context.save()
             }
@@ -164,7 +164,7 @@ final class ChatViewModel: ObservableObject {
         do {
             try context.save()
         } catch {
-            print("Failed to immediately save context: \(error)")
+            print("Error: Failed to immediately save context: \(error)")
         }
     }
 
@@ -381,14 +381,14 @@ final class ChatViewModel: ObservableObject {
                 await task.value
             }
         } catch is GenerationTimeoutError {
-            print("⚠️ waitForStreamToFinish timed out; cancelling task")
+            print("Warning: waitForStreamToFinish timed out; cancelling task")
             task.cancel()
             // Give cancellation a brief window to propagate before we force-reset.
             _ = try? await withTimeout(.seconds(1)) {
                 await task.value
             }
         } catch {
-            print("⚠️ waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
+            print("Warning: waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
         }
 
         // Ensure flags are down regardless of how the task exited.
@@ -537,10 +537,10 @@ final class ChatViewModel: ObservableObject {
         disableWebSearch: Bool = false,
         allowNativeImages: Bool = true
     ) async -> StreamOutcome {
-        print("🔄 streamAssistant: Starting (order: \(order), messageID: \(assistantMessage.id))")
+        print("streamAssistant: Starting (order: \(order), messageID: \(assistantMessage.id))")
 
         guard !Task.isCancelled else {
-            print("⚠️ streamAssistant: Task cancelled before starting")
+            print("Warning: streamAssistant: Task cancelled before starting")
             return .cancelled
         }
 
@@ -867,10 +867,10 @@ final class ChatViewModel: ObservableObject {
                 "streamAssistant raw output: chars=\(result.cumulativeText.count, privacy: .public) wrote_any=\(result.wroteAny, privacy: .public)"
             )
         } catch is CancellationError {
-            print("⚠️ streaming Task: Cancelled")
+            print("Warning: streaming Task: Cancelled")
             result.outcome = .cancelled
         } catch {
-            print("❌ streaming Task: Error - \(error)")
+            print("Error: streaming Task: Error - \(error)")
             logger.error(
                 "streamAssistant generation error: question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public) partial_chars=\(result.cumulativeText.count, privacy: .public) error=\((error as NSError).localizedDescription, privacy: .public)"
             )

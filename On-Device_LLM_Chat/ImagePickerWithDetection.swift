@@ -216,7 +216,7 @@ struct ImagePickerWithDetection: View {
     private func loadAndDetect(item: PhotosPickerItem?) async {
         guard let item = item else { return }
         
-        print("\n🖼️ ImagePicker: Starting to load and detect image...")
+        print("\nImagePicker: Starting to load and detect image...")
         
         isProcessing = true
         errorMessage = nil
@@ -229,15 +229,15 @@ struct ImagePickerWithDetection: View {
                               userInfo: [NSLocalizedDescriptionKey: "Failed to load image"])
             }
             
-            print("✓ Image loaded: \(image.size.width)x\(image.size.height)")
+            print("Image loaded: \(image.size.width)x\(image.size.height)")
             
             await MainActor.run {
                 selectedImage = image
             }
             
-            print("🔍 Calling detector.detectObjects()...")
+            print("Calling detector.detectObjects()...")
             let detections = try await detector.detectObjects(in: image)
-            print("✅ Detection returned \(detections.count) objects")
+            print("Detection returned \(detections.count) objects")
             
             await MainActor.run {
                 detectedObjects = detections
@@ -306,4 +306,3 @@ struct ImagePickerWithDetection: View {
     
     return PreviewWrapper()
 }
-

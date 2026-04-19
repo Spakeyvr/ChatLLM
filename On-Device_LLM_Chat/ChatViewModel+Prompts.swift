@@ -342,7 +342,7 @@ extension ChatViewModel {
             // *** CRITICAL FIX: Only include finalized assistant messages in the prompt ***
             // This prevents incomplete/streaming assistant messages from polluting the context
             if msg.role == .assistant && !msg.isFinal {
-                print("🚫 Skipping non-finalized assistant message from prompt")
+                print("Skipping non-finalized assistant message from prompt")
                 return nil
             }
 

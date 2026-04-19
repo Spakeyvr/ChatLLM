@@ -49,7 +49,7 @@ extension ChatViewModel {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = re.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
             if result != cleaned {
-                print("🧹 Removed leading Markdown artifact")
+                print("Removed leading Markdown artifact")
                 cleaned = result
             }
         }
@@ -59,7 +59,7 @@ extension ChatViewModel {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
             if result != cleaned {
-                print("🧹 Fixed word boundary glitch")
+                print("Fixed word boundary glitch")
                 cleaned = result
             }
         }
@@ -71,7 +71,7 @@ extension ChatViewModel {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
             if result != cleaned {
-                print("🧹 Normalized common typo pattern")
+                print("Normalized common typo pattern")
                 cleaned = result
             }
         }
@@ -90,7 +90,7 @@ extension ChatViewModel {
                       let nextEnd = cleaned.index(nextIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
                       nextEnd <= cleaned.endIndex else { break }
                 if cleaned[prevIdx..<prevEnd] == cleaned[nextIdx..<nextEnd] {
-                    print("🧹 Cleaning repetition (window \(windowSize))")
+                    print("Cleaning repetition (window \(windowSize))")
                     cleaned.removeSubrange(prevIdx..<prevEnd)
                     return cleanGlitchedText(cleaned)
                 }
@@ -108,7 +108,7 @@ extension ChatViewModel {
             if i + 1 < words.count {
                 let nextWord = words[i + 1]
                 if word.count < 4 && word.count > 0 && nextWord.count > word.count && nextWord.hasPrefix(word) {
-                    print("🧹 Fixing mid-word glitch")
+                    print("Fixing mid-word glitch")
                     fixedWords.append(nextWord)
                     i += 2
                     continue

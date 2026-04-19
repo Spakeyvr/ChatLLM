@@ -1266,7 +1266,7 @@ final class MLXModelManager: ObservableObject {
                     self.applySteadyStateMemoryCachePolicy()
                     self.loadTask = nil
                 }
-                print("✅ MLX model loaded: \(model.displayName)")
+                print("MLX model loaded: \(model.displayName)")
                 self.logger.notice("MLX container load finished: id=\(model.id, privacy: .public)")
                 await MainActor.run {
                     self.logToolTemplateSupport(for: model)
@@ -1299,7 +1299,7 @@ final class MLXModelManager: ObservableObject {
                     self.loadError = "Failed to load model: \(error.localizedDescription)"
                 }
                 self.tearDownCurrentModel(reason: "load failure for \(model.id)")
-                print("❌ MLX model load error: \(error)")
+                print("Error: MLX model load error: \(error)")
                 self.logger.error("MLX container load failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1348,7 +1348,7 @@ final class MLXModelManager: ObservableObject {
                 await MainActor.run {
                     self.startLoading(modelID: model.id, source: "download_complete")
                 }
-                print("✅ Model downloaded: \(model.displayName)")
+                print("Model downloaded: \(model.displayName)")
             } catch is CancellationError {
                 await MainActor.run {
                     self.isDownloading = false
@@ -1366,7 +1366,7 @@ final class MLXModelManager: ObservableObject {
                     self.downloadErrorModelID = model.id
                 }
                 self.cleanupPartialDownload(at: targetDir)
-                print("❌ Download error: \(error)")
+                print("Error: Download error: \(error)")
             }
         }
     }
@@ -1437,7 +1437,7 @@ final class MLXModelManager: ObservableObject {
     /// pass and triggers EXC_BAD_ACCESS.
     private func prewarmModelShaders(for model: MLXModelInfo, reason: String) async {
         #if targetEnvironment(simulator)
-        print("⚠️ Skipping LM shader pre-warm on simulator")
+        print("Warning: Skipping LM shader pre-warm on simulator")
         return
         #else
         guard let container else { return }
@@ -1450,7 +1450,7 @@ final class MLXModelManager: ObservableObject {
         }
         prewarmInFlightModelID = model.id
         logger.notice("MLX prewarm start: id=\(model.id, privacy: .public) reason=\(reason, privacy: .public)")
-        print("🔥 Pre-warming LM Metal shaders...")
+        print("Pre-warming LM Metal shaders...")
         // Free every cached Metal buffer before shader compilation so the compilation
         // spike has the maximum possible headroom on top of the ~3 GB model weights.
         prepareMemoryForPrewarm()
@@ -1468,7 +1468,7 @@ final class MLXModelManager: ObservableObject {
             cleanupMemoryAfterPrewarm()
             deferredPrewarmModelID = nil
             prewarmInFlightModelID = nil
-            print("✅ LM Metal shaders pre-warmed")
+            print("LM Metal shaders pre-warmed")
             logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
         } catch is CancellationError {
             cleanupMemoryAfterPrewarm()
@@ -1477,7 +1477,7 @@ final class MLXModelManager: ObservableObject {
         } catch {
             cleanupMemoryAfterPrewarm()
             prewarmInFlightModelID = nil
-            print("⚠️ Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
+            print("Warning: Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
             logger.error("MLX prewarm failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
         #endif
@@ -1623,9 +1623,9 @@ final class MLXModelManager: ObservableObject {
         do {
             try FileManager.default.removeItem(at: dir)
             refreshModelAvailability()
-            print("🗑️ Deleted model '\(model.localDirName)' from Documents/Models/")
+            print("Deleted model '\(model.localDirName)' from Documents/Models/")
         } catch let error as NSError where error.code == NSFileNoSuchFileError {
-            print("ℹ️ Model '\(model.localDirName)' not found in Documents/Models/ — nothing to delete.")
+            print("Model '\(model.localDirName)' not found in Documents/Models/ - nothing to delete.")
         }
     }
 
@@ -1636,25 +1636,25 @@ final class MLXModelManager: ObservableObject {
     func unloadAllModels() {
         cancelCurrentLoad(reason: "unloadAllModels", tearDownModel: false)
         tearDownCurrentModel(reason: "unloadAllModels")
-        print("🧹 Unloaded all MLX models")
+        print("Unloaded all MLX models")
     }
 
     func printModelLocations() {
         for model in availableModels {
             if let url = modelDirectoryURL(for: model) {
-                print("📁 \(model.name): \(url.path) — available: \(model.isAvailable)")
+                print("Model file \(model.name): \(url.path) - available: \(model.isAvailable)")
             } else {
-                print("📁 \(model.name): not found in Documents/Models/ — available: \(model.isAvailable)")
+                print("Model file \(model.name): not found in Documents/Models/ - available: \(model.isAvailable)")
             }
         }
     }
 
     func printModelInputOutputInfo() {
         guard let current = currentModel else {
-            print("⚠️ No model loaded")
+            print("Warning: No model loaded")
             return
         }
-        print("ℹ️ Current model: \(current.displayName)")
+        print("Current model: \(current.displayName)")
         print("   Context length: \(current.contextLength) tokens")
         print("   Reasoning: \(current.supportsReasoning)")
     }
@@ -2032,14 +2032,14 @@ final class MLXModelManager: ObservableObject {
         let inspection = toolTemplateInspection(for: model)
         switch inspection.support {
         case .supported:
-            print("✅ MLX tool template support confirmed for \(model.displayName)")
+            print("MLX tool template support confirmed for \(model.displayName)")
             if let preferredToolCallFormat = inspection.preferredToolCallFormat {
                 logger.notice(
                     "MLX tool template inspection: id=\(model.id, privacy: .public) format=\(preferredToolCallFormat.rawValue, privacy: .public) wrapped_xml=\(inspection.usesWrappedXMLToolCalls, privacy: .public)"
                 )
             }
         case .unsupported(let message):
-            print("⚠️ MLX tool template support unavailable: \(message)")
+            print("Warning: MLX tool template support unavailable: \(message)")
         }
     }
 

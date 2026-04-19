@@ -26,17 +26,17 @@ final class VisionObjectDetector: ObservableObject {
     private let maxDetections: Int = 50
     
     init() {
-        print("✅ VisionObjectDetector initialized - using pure Apple Vision Framework")
+        print("VisionObjectDetector initialized - using pure Apple Vision Framework")
     }
     
     // MARK: - Main Detection Method
     
     /// Detect objects in an image using Vision Framework APIs
     func detectObjects(in image: UIImage) async throws -> [DetectedObject] {
-        print("🔍 Starting Vision Framework object detection...")
+        print("Starting Vision Framework object detection...")
         
         guard let cgImage = image.cgImage else {
-            print("❌ Could not get CGImage from UIImage")
+            print("Error: Could not get CGImage from UIImage")
             throw VisionDetectorError.invalidImage
         }
         
@@ -57,7 +57,7 @@ final class VisionObjectDetector: ObservableObject {
         let sortedDetections = filteredDetections.sorted { $0.confidence > $1.confidence }
         let finalDetections = Array(sortedDetections.prefix(maxDetections))
         
-        print("✅ Vision Framework detected \(finalDetections.count) objects")
+        print("Vision Framework detected \(finalDetections.count) objects")
         return finalDetections
     }
     
@@ -66,17 +66,17 @@ final class VisionObjectDetector: ObservableObject {
     /// Detect animals (cats, dogs) using VNRecognizeAnimalsRequest
     private func detectAnimals(cgImage: CGImage) async -> [DetectedObject] {
         await withCheckedContinuation { continuation in
-            print("🐾 Running animal detection...")
+            print("Running animal detection...")
             
             let request = VNRecognizeAnimalsRequest { request, error in
                 if let error = error {
-                    print("❌ Animal detection failed: \(error.localizedDescription)")
+                    print("Error: Animal detection failed: \(error.localizedDescription)")
                     continuation.resume(returning: [])
                     return
                 }
                 
                 guard let observations = request.results as? [VNRecognizedObjectObservation] else {
-                    print("⚠️ No animal observations")
+                    print("Warning: No animal observations")
                     continuation.resume(returning: [])
                     return
                 }
@@ -94,7 +94,7 @@ final class VisionObjectDetector: ObservableObject {
                     )
                 }
                 
-                print("✅ Detected \(detections.count) animal(s)")
+                print("Detected \(detections.count) animal(s)")
                 continuation.resume(returning: detections)
             }
             
@@ -102,7 +102,7 @@ final class VisionObjectDetector: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("❌ Animal detection request failed: \(error.localizedDescription)")
+                print("Error: Animal detection request failed: \(error.localizedDescription)")
                 continuation.resume(returning: [])
             }
         }
