@@ -374,41 +374,27 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Internals
 
     internal func waitForStreamToFinish() async {
-        if let task = currentStreamTask {
-            do {
-                try await withTimeout(.seconds(4)) {
-                    await task.value
-                }
-            } catch is GenerationTimeoutError {
-                print("⚠️ waitForStreamToFinish timed out after 4 seconds")
-                task.cancel()
-                print("🛑 Cancelled stale streaming task")
-            } catch {
-                print("⚠️ waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
+        guard let task = currentStreamTask else { return }
+
+        do {
+            try await withTimeout(.seconds(4)) {
+                await task.value
             }
-        }
-        // Also ensure flags are down (in case a fast-path set them slightly later)
-        var attempts = 0
-        while (isGenerating || currentStreamTask != nil) && attempts < 100 {
-            try? await Task.sleep(for: .milliseconds(40))
-            attempts += 1
+        } catch is GenerationTimeoutError {
+            print("⚠️ waitForStreamToFinish timed out; cancelling task")
+            task.cancel()
+            // Give cancellation a brief window to propagate before we force-reset.
+            _ = try? await withTimeout(.seconds(1)) {
+                await task.value
+            }
+        } catch {
+            print("⚠️ waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
         }
 
-        if attempts >= 100 {
-            if let task = currentStreamTask {
-                task.cancel()
-
-                for _ in 0..<10 {
-                    try? await Task.sleep(for: .milliseconds(50))
-                    if currentStreamTask == nil && !isGenerating {
-                        break
-                    }
-                }
-            }
-
+        // Ensure flags are down regardless of how the task exited.
+        if isGenerating || currentStreamTask != nil {
             isGenerating = false
             currentStreamTask = nil
-            print("🔄 Force-reset streaming state after cancellation attempt")
         }
     }
 

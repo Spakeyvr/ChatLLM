@@ -7,12 +7,18 @@
 
 import Foundation
 import Security
+import os.log
 
 enum TavilyAPIKeyStore {
     static let userDefaultsKey = "tavilyApiKey"
     static let service = "com.yourapp.tavily"
     static let account = "TavilyAPIKey"
     static let didChangeNotification = Notification.Name("TavilyKeyChanged")
+
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
+        category: "TavilyAPIKeyStore"
+    )
 
     static func currentKey() -> String? {
         currentKey(
@@ -116,6 +122,7 @@ enum TavilyAPIKeyStore {
 
     private static func saveKeychainValue(_ value: String, service: String, account: String) {
         guard let valueData = value.data(using: .utf8) else {
+            logger.error("Tavily key save failed: UTF-8 encoding returned nil")
             return
         }
 
@@ -127,8 +134,15 @@ enum TavilyAPIKeyStore {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        let deleteStatus = SecItemDelete(query as CFDictionary)
+        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
+            logger.error("Tavily key SecItemDelete failed: OSStatus \(deleteStatus)")
+        }
+
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        if addStatus != errSecSuccess {
+            logger.error("Tavily key SecItemAdd failed: OSStatus \(addStatus)")
+        }
     }
 
     private static func getKeychainValue(service: String, account: String) -> String? {
@@ -158,6 +172,9 @@ enum TavilyAPIKeyStore {
             kSecAttrAccount as String: account
         ]
 
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            logger.error("Tavily key SecItemDelete failed: OSStatus \(status)")
+        }
     }
 }

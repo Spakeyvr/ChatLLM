@@ -324,7 +324,10 @@ struct VisionAnalysisResult: Codable, Sendable {
             // Fallback if saliency check found nothing but we *do* have objects
             desc += "DETECTED OBJECTS:\n"
             let counts = Dictionary(grouping: objects, by: { $0.label })
-                .map { "  • \($0.value.count)x \($0.key) (\($0.value.first!.confidencePercentage))" }
+                .compactMap { key, value -> String? in
+                    guard let first = value.first else { return nil }
+                    return "  • \(value.count)x \(key) (\(first.confidencePercentage))"
+                }
                 .prefix(5) // Limit to top 5 to avoid bloat
                 .joined(separator: "\n")
             desc += "\(counts)\n\n"
