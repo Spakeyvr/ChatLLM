@@ -120,4 +120,4 @@ Run them from Xcode with `Product > Test`.
 
 ## License
 
-See [LICENSE](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/LICENSE).
+See [LICENSE](LICENSE).
