@@ -438,41 +438,313 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     }
 }
 
+private struct TurboQuantCodebook: Sendable {
+    let centroids: [Float]
+    let boundaries: [Float]
+}
+
+private struct TurboQuantOrthogonalTransform: Sendable {
+    let matrix: [[Float]]
+    let transpose: [[Float]]
+}
+
+private struct TurboQuantGaussianRandom: Sendable {
+    private var state: UInt64
+    private var spare: Double?
+
+    init(seed: UInt64) {
+        self.state = seed &+ 0x9E37_79B9_7F4A_7C15
+        self.spare = nil
+    }
+
+    private mutating func nextUInt64() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
+    private mutating func nextUnit() -> Double {
+        let raw = nextUInt64() >> 11
+        return Double(raw) / Double(1 << 53)
+    }
+
+    mutating func nextGaussian() -> Float {
+        if let spare {
+            self.spare = nil
+            return Float(spare)
+        }
+
+        var u1 = nextUnit()
+        if u1 < 1e-12 {
+            u1 = 1e-12
+        }
+        let u2 = nextUnit()
+        let radius = sqrt(-2.0 * log(u1))
+        let theta = 2.0 * Double.pi * u2
+        spare = radius * sin(theta)
+        return Float(radius * cos(theta))
+    }
+}
+
+private enum TurboQuantMath {
+    static func orthogonalTransform(dimension: Int, seed: UInt64) -> TurboQuantOrthogonalTransform {
+        precondition(dimension > 0, "TurboQuant requires a positive dimension")
+
+        var generator = TurboQuantGaussianRandom(seed: seed)
+        var matrix = Array(
+            repeating: Array(repeating: Float(0), count: dimension),
+            count: dimension
+        )
+        for row in 0 ..< dimension {
+            for column in 0 ..< dimension {
+                matrix[row][column] = generator.nextGaussian()
+            }
+        }
+
+        var qColumns = Array(
+            repeating: Array(repeating: Float(0), count: dimension),
+            count: dimension
+        )
+
+        for column in 0 ..< dimension {
+            var vector = (0 ..< dimension).map { matrix[$0][column] }
+            for previous in 0 ..< column {
+                let projection = dot(vector, qColumns[previous])
+                for index in 0 ..< dimension {
+                    vector[index] -= projection * qColumns[previous][index]
+                }
+            }
+
+            var norm = sqrt(max(dot(vector, vector), Float(1e-12)))
+            if norm < 1e-6 {
+                vector = Array(repeating: Float(0), count: dimension)
+                vector[column] = 1
+                for previous in 0 ..< column {
+                    let projection = dot(vector, qColumns[previous])
+                    for index in 0 ..< dimension {
+                        vector[index] -= projection * qColumns[previous][index]
+                    }
+                }
+                norm = sqrt(max(dot(vector, vector), Float(1e-12)))
+            }
+
+            for index in 0 ..< dimension {
+                qColumns[column][index] = vector[index] / norm
+            }
+        }
+
+        var rotation = Array(
+            repeating: Array(repeating: Float(0), count: dimension),
+            count: dimension
+        )
+        var transpose = Array(
+            repeating: Array(repeating: Float(0), count: dimension),
+            count: dimension
+        )
+        for row in 0 ..< dimension {
+            for column in 0 ..< dimension {
+                rotation[row][column] = qColumns[column][row]
+                transpose[column][row] = rotation[row][column]
+            }
+        }
+        return TurboQuantOrthogonalTransform(matrix: rotation, transpose: transpose)
+    }
+
+    static func codebook(dimension: Int, bits: Int) -> TurboQuantCodebook {
+        precondition(dimension >= 3, "TurboQuant requires dimension >= 3")
+        precondition((1 ... 4).contains(bits), "TurboQuant MSE stage supports 1-4 bits.")
+
+        let clusterCount = 1 << bits
+        let gridCount = 16_385
+        let epsilon = Float(1e-4)
+        let lowerBound = -1 + epsilon
+        let upperBound = 1 - epsilon
+        let dx = (upperBound - lowerBound) / Float(gridCount - 1)
+        let halfDimension = Double(dimension) / 2.0
+        let halfPreviousDimension = Double(dimension - 1) / 2.0
+        let logConstant =
+            Foundation.lgamma(halfDimension)
+            - 0.5 * Foundation.log(Double.pi)
+            - Foundation.lgamma(halfPreviousDimension)
+        let constant = Float(Foundation.exp(logConstant))
+        let exponent = Float(dimension - 3) / 2
+
+        var grid = Array(repeating: Float(0), count: gridCount)
+        var pdf = Array(repeating: Float(0), count: gridCount)
+        var cdf = Array(repeating: Float(0), count: gridCount)
+        var running = Float(0)
+
+        for index in 0 ..< gridCount {
+            let x = lowerBound + Float(index) * dx
+            let value = max(1 - x * x, Float(1e-12))
+            let density = constant * pow(value, exponent)
+            grid[index] = x
+            pdf[index] = density
+            running += density * dx
+            cdf[index] = running
+        }
+
+        let cdfScale = max(running, Float(1e-12))
+        for index in 0 ..< gridCount {
+            cdf[index] /= cdfScale
+        }
+
+        var centroids = Array(repeating: Float(0), count: clusterCount)
+        for cluster in 0 ..< clusterCount {
+            let target = (Float(cluster) + 0.5) / Float(clusterCount)
+            let chosenIndex = cdf.firstIndex(where: { $0 >= target }) ?? (gridCount - 1)
+            centroids[cluster] = grid[chosenIndex]
+        }
+
+        let maxIterations = 200
+        let tolerance = Float(1e-6)
+        var previousCost = Float.infinity
+        for _ in 0 ..< maxIterations {
+            let boundaries = fullBoundaries(for: centroids)
+            var nextCentroids = Array(repeating: Float(0), count: clusterCount)
+            var cost = Float(0)
+
+            for cluster in 0 ..< clusterCount {
+                let lower = boundaries[cluster]
+                let upper = boundaries[cluster + 1]
+                var numerator = Float(0)
+                var denominator = Float(0)
+
+                for index in 0 ..< gridCount {
+                    let x = grid[index]
+                    if x <= lower || x > upper {
+                        continue
+                    }
+                    let weight = pdf[index] * dx
+                    numerator += x * weight
+                    denominator += weight
+                }
+
+                let centroid =
+                    denominator > 1e-12 ? numerator / denominator : (lower + upper) * 0.5
+                nextCentroids[cluster] = centroid
+            }
+
+            let nextBoundaries = fullBoundaries(for: nextCentroids)
+            for cluster in 0 ..< clusterCount {
+                let lower = nextBoundaries[cluster]
+                let upper = nextBoundaries[cluster + 1]
+                let centroid = nextCentroids[cluster]
+                for index in 0 ..< gridCount {
+                    let x = grid[index]
+                    if x <= lower || x > upper {
+                        continue
+                    }
+                    let diff = x - centroid
+                    cost += diff * diff * pdf[index] * dx
+                }
+            }
+
+            centroids = nextCentroids
+            if abs(previousCost - cost) < tolerance {
+                break
+            }
+            previousCost = cost
+        }
+
+        return TurboQuantCodebook(
+            centroids: centroids,
+            boundaries: fullBoundaries(for: centroids)
+        )
+    }
+
+    private static func fullBoundaries(for centroids: [Float]) -> [Float] {
+        var boundaries = Array(repeating: Float(0), count: centroids.count + 1)
+        boundaries[0] = -1
+        boundaries[boundaries.count - 1] = 1
+        for index in 0 ..< (centroids.count - 1) {
+            boundaries[index + 1] = (centroids[index] + centroids[index + 1]) * 0.5
+        }
+        return boundaries
+    }
+
+    private static func dot(_ lhs: [Float], _ rhs: [Float]) -> Float {
+        zip(lhs, rhs).reduce(Float(0)) { partial, pair in
+            partial + pair.0 * pair.1
+        }
+    }
+}
+
+private enum TurboQuantCacheStore {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var orthogonalTransforms: [String: TurboQuantOrthogonalTransform] = [:]
+    nonisolated(unsafe) private static var codebooks: [String: TurboQuantCodebook] = [:]
+
+    static func orthogonalTransform(dimension: Int, seed: UInt64) -> TurboQuantOrthogonalTransform {
+        let key = "\(dimension)-\(seed)"
+        lock.lock()
+        if let cached = orthogonalTransforms[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let transform = TurboQuantMath.orthogonalTransform(dimension: dimension, seed: seed)
+
+        lock.lock()
+        orthogonalTransforms[key] = transform
+        lock.unlock()
+        return transform
+    }
+
+    static func codebook(dimension: Int, bits: Int) -> TurboQuantCodebook {
+        let key = "\(dimension)-\(bits)"
+        lock.lock()
+        if let cached = codebooks[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let codebook = TurboQuantMath.codebook(dimension: dimension, bits: bits)
+
+        lock.lock()
+        codebooks[key] = codebook
+        lock.unlock()
+        return codebook
+    }
+}
+
 private final class TurboQuantMSEQuantizer {
     let dimension: Int
     let bits: Int
-    let signs: MLXArray
     let centroids: MLXArray
-    let boundaries: [Float]
     let boundariesArray: MLXArray
-    let normalizedHadamard: MLXArray
-    let rotationScale: Float
+    let rotation: MLXArray
+    let inverseRotation: MLXArray
 
     init(dimension: Int, bits: Int, seed: UInt64) {
-        precondition(
-            dimension > 0 && (dimension & (dimension - 1)) == 0,
-            "TurboQuant requires a power-of-two head dimension"
-        )
+        precondition(dimension > 0, "TurboQuant requires a positive head dimension")
         precondition((1 ... 4).contains(bits), "TurboQuant MSE stage supports 1-4 bits.")
         self.dimension = dimension
         self.bits = bits
-        self.signs = Self.makeSigns(dimension: dimension, seed: seed)
-        self.centroids = MLXArray(Self.gaussianCodebook(bits: bits)).asType(.float32)
-        self.boundaries = Self.gaussianBoundaries(bits: bits)
-        self.boundariesArray = MLXArray(self.boundaries).asType(.float32)
-        self.normalizedHadamard = Self.makeNormalizedHadamardMatrix(dimension: dimension)
-        self.rotationScale = sqrt(Float(dimension))
+
+        let codebook = TurboQuantCacheStore.codebook(dimension: dimension, bits: bits)
+        self.centroids = MLXArray(codebook.centroids).asType(.float32)
+        self.boundariesArray = MLXArray(Array(codebook.boundaries.dropFirst().dropLast())).asType(.float32)
+
+        let transform = TurboQuantCacheStore.orthogonalTransform(dimension: dimension, seed: seed)
+        self.rotation = MLXArray(transform.matrix.flatMap { $0 }, [dimension, dimension]).asType(.float32)
+        self.inverseRotation = MLXArray(transform.transpose.flatMap { $0 }, [dimension, dimension]).asType(.float32)
     }
 
-    func quantize(_ vectors: MLXArray) -> (indices: MLXArray, norms: MLXArray, reconstructed: MLXArray) {
+    func quantizeWithReconstruction(_ vectors: MLXArray)
+        -> (indices: MLXArray, norms: MLXArray, reconstructed: MLXArray)
+    {
         let floatVectors = vectors.asType(.float32)
         let norms = sqrt(sum(floatVectors * floatVectors, axis: -1, keepDims: true))
         let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
-        let rotated = matmul((floatVectors / safeNorms) * signs, normalizedHadamard)
-        let scaled = rotated * rotationScale
+        let rotated = matmul(floatVectors / safeNorms, rotation)
         let indices = sum(
             greater(
-                scaled.expandedDimensions(axis: -1),
+                rotated.expandedDimensions(axis: -1),
                 boundariesArray
             ).asType(.uint8),
             axis: -1
@@ -482,55 +754,29 @@ private final class TurboQuantMSEQuantizer {
         return (indices, squeezedNorms, reconstructed)
     }
 
+    func quantize(_ vectors: MLXArray) -> (indices: MLXArray, norms: MLXArray) {
+        let floatVectors = vectors.asType(.float32)
+        let norms = sqrt(sum(floatVectors * floatVectors, axis: -1, keepDims: true))
+        let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
+        let rotated = matmul(floatVectors / safeNorms, rotation)
+        let indices = sum(
+            greater(
+                rotated.expandedDimensions(axis: -1),
+                boundariesArray
+            ).asType(.uint8),
+            axis: -1
+        ).asType(.uint8)
+        return (indices, norms.squeezed(axis: -1))
+    }
+
     func dequantize(indices: MLXArray, norms: MLXArray, dtype: DType) -> MLXArray {
         let shape = indices.shape
         let flatCount = shape.reduce(1, *)
         let flatIndices = indices.reshaped([flatCount])
-        let rotated = centroids[flatIndices].reshaped(shape) / rotationScale
-        let restoredUnit = matmul(rotated, normalizedHadamard) * signs
+        let rotated = centroids[flatIndices].reshaped(shape)
+        let restoredUnit = matmul(rotated, inverseRotation)
         let restored = restoredUnit * expandedDimensions(norms.asType(.float32), axis: -1)
         return restored.asType(dtype)
-    }
-
-    private static func gaussianCodebook(bits: Int) -> [Float] {
-        switch bits {
-        case 1:
-            return [-0.7979, 0.7979]
-        case 2:
-            return [-1.5104, -0.4528, 0.4528, 1.5104]
-        case 3:
-            return [-2.1520, -1.3440, -0.7560, -0.2451, 0.2451, 0.7560, 1.3440, 2.1520]
-        case 4:
-            return [
-                -2.7326, -2.0690, -1.6180, -1.2562, -0.9423, -0.6568, -0.3881, -0.1284,
-                0.1284, 0.3881, 0.6568, 0.9423, 1.2562, 1.6180, 2.0690, 2.7326,
-            ]
-        default:
-            fatalError("TurboQuant supports 1-4 bits. Received \(bits).")
-        }
-    }
-
-    private static func gaussianBoundaries(bits: Int) -> [Float] {
-        let codebook = gaussianCodebook(bits: bits)
-        return zip(codebook, codebook.dropFirst()).map { ($0 + $1) / 2.0 }
-    }
-
-    private static func makeSigns(dimension: Int, seed: UInt64) -> MLXArray {
-        let key = MLXRandom.key(seed)
-        let mask = MLXRandom.bernoulli(0.5, [dimension], key: key)
-        return MLX.where(mask, MLXArray(1.0), MLXArray(-1.0)).asType(.float32)
-    }
-
-    private static func makeNormalizedHadamardMatrix(dimension: Int) -> MLXArray {
-        var matrix: [[Float]] = [[1.0]]
-        while matrix.count < dimension {
-            let top = matrix.map { row in row + row }
-            let bottom = matrix.map { row in row + row.map { -$0 } }
-            matrix = top + bottom
-        }
-        let scale: Float = 1.0 / sqrt(Float(dimension))
-        let flattened = matrix.flatMap { row in row.map { $0 * scale } }
-        return MLXArray(flattened, [dimension, dimension]).asType(.float32)
     }
 }
 
@@ -543,13 +789,11 @@ private final class TurboQuantResidualSketch {
     init(dimension: Int, sketchDimension: Int? = nil, seed: UInt64) {
         self.dimension = dimension
         self.sketchDimension = sketchDimension ?? dimension
-        let key = MLXRandom.key(seed)
-        self.projection = MLXRandom.normal(
-            [dimension, self.sketchDimension],
-            type: Float.self,
-            key: key
-        ).asType(.float32)
         self.estimatorScale = sqrt(Float.pi / 2.0) / Float(self.sketchDimension)
+
+        var generator = TurboQuantGaussianRandom(seed: seed)
+        let values = (0 ..< (dimension * self.sketchDimension)).map { _ in generator.nextGaussian() }
+        self.projection = MLXArray(values, [dimension, self.sketchDimension]).asType(.float32)
     }
 
     func quantize(_ residual: MLXArray) -> (signs: MLXArray, norms: MLXArray) {
@@ -559,35 +803,6 @@ private final class TurboQuantResidualSketch {
         let projected = matmul(floatResidual / safeNorms, projection)
         let signs = greaterEqual(projected, MLXArray(Float(0.0))).asType(.uint8)
         return (signs, norms.squeezed(axis: -1))
-    }
-
-    func score(
-        queries: MLXArray,
-        signs: MLXArray,
-        norms: MLXArray
-    ) -> MLXArray {
-        let projectedQueries = matmul(queries.asType(.float32), projection)
-        return scoreWithProjectedQueries(
-            projectedQueries: projectedQueries,
-            signs: signs,
-            norms: norms
-        )
-    }
-
-    func scoreWithProjectedQueries(
-        projectedQueries: MLXArray,
-        signs: MLXArray,
-        norms: MLXArray
-    ) -> MLXArray {
-        let signedResidual = signs.asType(.float32) * 2.0 - 1.0
-        let rawScores = matmul(projectedQueries, signedResidual.swappedAxes(-1, -2))
-        let broadcastNorms =
-            if norms.shape.count == rawScores.shape.count - 1 {
-                expandedDimensions(norms.asType(.float32), axis: -2)
-            } else {
-                norms.asType(.float32)
-            }
-        return rawScores * broadcastNorms * estimatorScale
     }
 }
 
@@ -681,8 +896,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     private var compressedCapacity: Int = 0
     private var exactCount: Int = 0
     private var step: Int
-    public private(set) var bits: Int
-    public private(set) var seed: UInt64
+    public private(set) var configuration: TurboQuantConfiguration
     private var keyQuantizer: TurboQuantMSEQuantizer?
     private var valueQuantizer: TurboQuantMSEQuantizer?
     private var residualSketch: TurboQuantResidualSketch?
@@ -690,29 +904,60 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     private var valueDimension: Int?
     private var originalDType: DType = .float16
 
-    private var keyBits: Int { bits - 1 }
+    public var bits: Int { configuration.keyTotalBits }
+    public var valueBits: Int { configuration.valueBits }
+    public var seed: UInt64 { configuration.seed }
+    private var keyBits: Int { max(1, configuration.keyTotalBits - 1) }
     private var keyPackedWidth: Int {
         guard let keyDimension else { return 0 }
         return TurboQuantBitPacker.packedByteCount(valueCount: keyDimension, bitWidth: keyBits)
     }
     private var residualPackedWidth: Int {
-        let residualDimension = residualSketch?.sketchDimension ?? keyDimension ?? 0
+        let residualDimension =
+            residualSketch?.sketchDimension
+            ?? configuration.qjlProjectionDimension
+            ?? keyDimension
+            ?? 0
         return TurboQuantBitPacker.packedByteCount(valueCount: residualDimension, bitWidth: 1)
     }
     private var valuePackedWidth: Int {
         guard let valueDimension else { return 0 }
-        return TurboQuantBitPacker.packedByteCount(valueCount: valueDimension, bitWidth: bits)
+        return TurboQuantBitPacker.packedByteCount(valueCount: valueDimension, bitWidth: configuration.valueBits)
     }
-    private let attentionBlockTokens = 256
-    private var exactBufferSize: Int
+    private var attentionBlockTokens: Int { max(configuration.attentionBlockTokens, 1) }
+    private var exactBufferSize: Int {
+        get { configuration.exactBufferSize }
+        set { configuration.exactBufferSize = newValue }
+    }
 
-    public init(bits: Int = 3, seed: UInt64 = 42, step: Int = 256, exactBufferSize: Int = 128) {
-        precondition((2 ... 4).contains(bits), "TurboQuant supports 2-4 total bits.")
-        self.bits = bits
-        self.seed = seed
+    public init(configuration: TurboQuantConfiguration, step: Int = 256) {
+        precondition((2 ... 4).contains(configuration.keyTotalBits), "TurboQuant supports 2-4 total key bits.")
+        precondition((1 ... 4).contains(configuration.valueBits), "TurboQuant supports 1-4 value bits.")
+        self.configuration = configuration
         self.step = step
-        self.exactBufferSize = exactBufferSize
         super.init()
+    }
+
+    public convenience init(
+        bits: Int = 3,
+        seed: UInt64 = 42,
+        step: Int = 256,
+        exactBufferSize: Int = 128,
+        valueBits: Int = 2,
+        attentionBlockTokens: Int = 256,
+        qjlProjectionDimension: Int? = nil
+    ) {
+        self.init(
+            configuration: TurboQuantConfiguration(
+                keyTotalBits: bits,
+                valueBits: valueBits,
+                seed: seed,
+                exactBufferSize: exactBufferSize,
+                attentionBlockTokens: attentionBlockTokens,
+                qjlProjectionDimension: qjlProjectionDimension
+            ),
+            step: step
+        )
     }
 
     public override func innerState() -> [MLXArray] {
@@ -852,7 +1097,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 let residualNorms = keyResidualNorms[.ellipsis, start..<end]
                 let unpackedValueIndices = TurboQuantBitPacker.unpack(
                     valueIndices[.ellipsis, start..<end, 0...],
-                    bitWidth: bits,
+                    bitWidth: configuration.valueBits,
                     valueCount: valueDimension!
                 )
                 let approxValues = valueQuantizer.dequantize(
@@ -1022,8 +1267,11 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             [
                 String(step),
                 String(offset),
-                String(bits),
-                String(seed),
+                String(configuration.keyTotalBits),
+                String(configuration.valueBits),
+                String(configuration.seed),
+                String(configuration.attentionBlockTokens),
+                String(configuration.qjlProjectionDimension ?? 0),
                 String(keyDimension ?? 0),
                 String(valueDimension ?? 0),
                 Self.dtypeName(originalDType),
@@ -1033,22 +1281,42 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             ]
         }
         set {
-            guard newValue.count == 7 || newValue.count == 10 else {
-                fatalError("TurboQuantKVCache metaState must have 7 or 10 values")
+            guard [7, 10, 13].contains(newValue.count) else {
+                fatalError("TurboQuantKVCache metaState must have 7, 10, or 13 values")
             }
             step = Int(newValue[0]) ?? step
             offset = Int(newValue[1]) ?? 0
-            bits = Int(newValue[2]) ?? bits
-            seed = UInt64(newValue[3]) ?? seed
-            keyDimension = (Int(newValue[4]) ?? 0) > 0 ? Int(newValue[4]) : nil
-            valueDimension = (Int(newValue[5]) ?? 0) > 0 ? Int(newValue[5]) : nil
-            originalDType = Self.dtype(from: newValue[6])
-            if newValue.count == 10 {
+            if newValue.count == 13 {
+                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
+                configuration.valueBits = Int(newValue[3]) ?? configuration.valueBits
+                configuration.seed = UInt64(newValue[4]) ?? configuration.seed
+                configuration.attentionBlockTokens =
+                    Int(newValue[5]) ?? configuration.attentionBlockTokens
+                let qjlDimension = Int(newValue[6]) ?? 0
+                configuration.qjlProjectionDimension = qjlDimension > 0 ? qjlDimension : nil
+                keyDimension = (Int(newValue[7]) ?? 0) > 0 ? Int(newValue[7]) : nil
+                valueDimension = (Int(newValue[8]) ?? 0) > 0 ? Int(newValue[8]) : nil
+                originalDType = Self.dtype(from: newValue[9])
+                compressedCount = Int(newValue[10]) ?? 0
+                exactCount = Int(newValue[11]) ?? 0
+                exactBufferSize = Int(newValue[12]) ?? exactBufferSize
+                offset = compressedCount + exactCount
+            } else if newValue.count == 10 {
+                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
+                configuration.seed = UInt64(newValue[3]) ?? configuration.seed
+                keyDimension = (Int(newValue[4]) ?? 0) > 0 ? Int(newValue[4]) : nil
+                valueDimension = (Int(newValue[5]) ?? 0) > 0 ? Int(newValue[5]) : nil
+                originalDType = Self.dtype(from: newValue[6])
                 compressedCount = Int(newValue[7]) ?? 0
                 exactCount = Int(newValue[8]) ?? 0
                 exactBufferSize = Int(newValue[9]) ?? exactBufferSize
                 offset = compressedCount + exactCount
             } else {
+                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
+                configuration.seed = UInt64(newValue[3]) ?? configuration.seed
+                keyDimension = (Int(newValue[4]) ?? 0) > 0 ? Int(newValue[4]) : nil
+                valueDimension = (Int(newValue[5]) ?? 0) > 0 ? Int(newValue[5]) : nil
+                originalDType = Self.dtype(from: newValue[6])
                 compressedCount = offset
                 exactCount = 0
             }
@@ -1108,13 +1376,13 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
 
         if exactBufferSize == 0 {
             if let exactKeys, let exactValues, exactCount > 0 {
-                appendCompressed(
+                appendCompressedChunked(
                     keys: exactKeys[.ellipsis, ..<exactCount, 0...],
                     values: exactValues[.ellipsis, ..<exactCount, 0...]
                 )
                 self.exactCount = 0
             }
-            appendCompressed(keys: keys, values: values)
+            appendCompressedChunked(keys: keys, values: values)
             offset = compressedCount
             return
         }
@@ -1130,14 +1398,14 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             let newFlushCount = flushCount - existingFlushCount
 
             if existingFlushCount > 0, let exactKeys, let exactValues {
-                appendCompressed(
+                appendCompressedChunked(
                     keys: exactKeys[.ellipsis, ..<existingFlushCount, 0...],
                     values: exactValues[.ellipsis, ..<existingFlushCount, 0...]
                 )
             }
 
             if newFlushCount > 0 {
-                appendCompressed(
+                appendCompressedChunked(
                     keys: keys[.ellipsis, ..<newFlushCount, 0...],
                     values: values[.ellipsis, ..<newFlushCount, 0...]
                 )
@@ -1171,13 +1439,16 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         let previous = compressedCount
         ensureStorage(batch: keys.dim(0), kvHeads: keys.dim(1), tokenCount: keys.dim(2))
 
-        let quantizedKeys = keyQuantizer!.quantize(keys)
+        let quantizedKeys = keyQuantizer!.quantizeWithReconstruction(keys)
         let keyResidual = keys.asType(.float32) - quantizedKeys.reconstructed
         let residualQuantization = residualSketch!.quantize(keyResidual)
         let quantizedValues = valueQuantizer!.quantize(values)
         let packedKeyIndices = TurboQuantBitPacker.pack(quantizedKeys.indices, bitWidth: keyBits)
         let packedResidualSigns = TurboQuantBitPacker.pack(residualQuantization.signs, bitWidth: 1)
-        let packedValueIndices = TurboQuantBitPacker.pack(quantizedValues.indices, bitWidth: bits)
+        let packedValueIndices = TurboQuantBitPacker.pack(
+            quantizedValues.indices,
+            bitWidth: configuration.valueBits
+        )
 
         compressedCount += keys.dim(2)
 
@@ -1187,6 +1458,24 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         keyResidualNorms?[.ellipsis, previous ..< compressedCount] = residualQuantization.norms
         valueIndices?[.ellipsis, previous ..< compressedCount, 0...] = packedValueIndices
         valueNorms?[.ellipsis, previous ..< compressedCount] = quantizedValues.norms
+    }
+
+    private func appendCompressedChunked(keys: MLXArray, values: MLXArray) {
+        guard keys.dim(2) > 0 else { return }
+
+        let chunkTokens = max(16, min(64, step / 4))
+        if keys.dim(2) <= chunkTokens {
+            appendCompressed(keys: keys, values: values)
+            return
+        }
+
+        for start in stride(from: 0, to: keys.dim(2), by: chunkTokens) {
+            let end = min(start + chunkTokens, keys.dim(2))
+            appendCompressed(
+                keys: keys[.ellipsis, start..<end, 0...],
+                values: values[.ellipsis, start..<end, 0...]
+            )
+        }
     }
 
     private func ensureStorage(batch: Int, kvHeads: Int, tokenCount: Int) {
@@ -1253,20 +1542,20 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             self.keyQuantizer = TurboQuantMSEQuantizer(
                 dimension: keyDimension,
                 bits: keyBits,
-                seed: seed
+                seed: configuration.seed
             )
             self.residualSketch = TurboQuantResidualSketch(
                 dimension: keyDimension,
-                sketchDimension: keyDimension,
-                seed: seed &+ 0x9E37_79B9_7F4A_7C15
+                sketchDimension: configuration.qjlProjectionDimension ?? keyDimension,
+                seed: configuration.seed &+ 0x9E37_79B9_7F4A_7C15
             )
         }
         if self.valueDimension != valueDimension || valueQuantizer == nil {
             self.valueDimension = valueDimension
             self.valueQuantizer = TurboQuantMSEQuantizer(
                 dimension: valueDimension,
-                bits: bits,
-                seed: seed &+ 1
+                bits: configuration.valueBits,
+                seed: configuration.seed &+ 1
             )
         }
     }
@@ -1337,7 +1626,7 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             let currentKeyNorms = keyBaseNorms[.ellipsis, ..<compressedCount]
             let currentValueIndices = TurboQuantBitPacker.unpack(
                 valueIndices[.ellipsis, ..<compressedCount, 0...],
-                bitWidth: bits,
+                bitWidth: configuration.valueBits,
                 valueCount: valueDimension!
             )
             let currentValueNorms = valueNorms[.ellipsis, ..<compressedCount]
@@ -1400,8 +1689,10 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
 }
 
 extension KVCacheSimple {
-    public func toTurboQuantized(bits: Int = 3, seed: UInt64 = 42) -> TurboQuantKVCache {
-        let turboQuantCache = TurboQuantKVCache(bits: bits, seed: seed)
+    public func toTurboQuantized(
+        configuration: TurboQuantConfiguration = TurboQuantConfiguration()
+    ) -> TurboQuantKVCache {
+        let turboQuantCache = TurboQuantKVCache(configuration: configuration)
 
         if let keys = self.keys, let values = self.values {
             let currentKeys = keys[.ellipsis, ..<offset, 0...]
@@ -2433,8 +2724,8 @@ public func makeLayerKVCache(
         return RotatingKVCache(maxSize: maxKVSize, keep: 4)
     }
 
-    if case .turboQuant(let bits, _, let seed)? = parameters?.resolvedCacheCompression {
-        return TurboQuantKVCache(bits: bits, seed: seed &+ UInt64(layerIndex))
+    if case .turboQuant(let configuration)? = parameters?.resolvedCacheCompression {
+        return TurboQuantKVCache(configuration: configuration.configurationForLayer(layerIndex))
     }
 
     return KVCacheSimple()
@@ -2591,29 +2882,6 @@ public func maybeQuantizeKVCache(
     }
 }
 
-public func maybeTurboQuantizeKVCache(
-    cache: inout [KVCache],
-    bits: Int,
-    startStep: Int = 0,
-    seed: UInt64 = 42
-) {
-    guard !cache.isEmpty,
-          !(cache[0] is TurboQuantKVCache),
-          cache[0].offset > startStep
-    else {
-        return
-    }
-
-    for index in 0 ..< cache.count {
-        if let simpleCache = cache[index] as? KVCacheSimple {
-            cache[index] = simpleCache.toTurboQuantized(
-                bits: bits,
-                seed: seed &+ UInt64(index)
-            )
-        }
-    }
-}
-
 public func maybeApplyKVCacheCompression(
     cache: inout [KVCache],
     compression: KVCacheCompressionMode?
@@ -2628,12 +2896,9 @@ public func maybeApplyKVCacheCompression(
             kvGroupSize: groupSize,
             quantizedKVStart: startStep
         )
-    case .turboQuant(let bits, let startStep, let seed):
-        maybeTurboQuantizeKVCache(
-            cache: &cache,
-            bits: bits,
-            startStep: startStep,
-            seed: seed
-        )
+    case .turboQuant:
+        // Paper-faithful TurboQuant is a cache-construction-time strategy.
+        // Delayed conversion after prefill is intentionally unsupported.
+        break
     }
 }

@@ -624,11 +624,11 @@ public class Qwen3NextModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        return model.layers.map { layer in
+        return model.layers.enumerated().map { layerIndex, layer in
             if layer.isLinear {
                 return MambaCache()
             }
-            return KVCacheSimple()
+            return makeLayerKVCache(parameters: parameters, layerIndex: layerIndex)
         }
     }
 

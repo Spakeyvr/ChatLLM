@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxTurboQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, TurboQuant experimentally compresses the KV cache after an initial warmup to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and unsupported runs can fall back internally to the app's legacy MLX cache compression path.")
-    static let mlxTurboQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, and unsupported paths can fall back automatically.")
+    static let mlxTurboQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, TurboQuant uses a paper-faithful key/value cache compression profile with 3-bit keys, 2-bit values, exact recent-token buffering, and per-layer deterministic projections to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and mixed-attention models keep their sliding-window layers on rotating caches.")
+    static let mlxTurboQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, while full-attention layers use TurboQuant compression.")
 
     @Binding var settings: AppSettingsDraft
 

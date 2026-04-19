@@ -321,6 +321,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesQuantizedPersistentCacheOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
+            preferTurboQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -339,6 +340,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationKeepsToolTurnsUnboundedWhenQuantizationIsOffOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: false,
+            preferTurboQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -357,6 +359,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithTools() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
+            preferTurboQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -375,6 +378,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithMedia() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
+            preferTurboQuant: false,
             hasTools: false,
             hasMedia: true,
             memoryConstrained: false,
@@ -392,6 +396,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationClampsLowMemoryMaxKVSizeToConfiguredContextWindow() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
+            preferTurboQuant: false,
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -562,14 +567,61 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func settingsSheetDescribesAdaptiveKVCacheBehavior() {
-        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("Enabled by default"))
-        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("less than 12 GB"))
-        #expect(SettingsSheet.mlxKVCacheInfoMessage.contains("does not support quantizing rotating KV caches"))
-        #expect(SettingsSheet.mlxKVCacheAccessibilityHint.contains("Low-memory devices"))
+        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("Enabled by default"))
+        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("3-bit keys"))
+        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("2-bit values"))
+        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("less than 12 GB"))
+        #expect(SettingsSheet.mlxTurboQuantAccessibilityHint.contains("full-attention layers"))
+    }
+
+    @Test func generationConfigurationUsesStructuredTurboQuantWhenPreferred() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            preferTurboQuant: true,
+            hasTools: false,
+            hasMedia: false,
+            memoryConstrained: false,
+            prefersBoundedCache: false,
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 32768
+        )
+
+        guard case .turboQuant(let turboConfiguration) = configuration.cacheCompression else {
+            Issue.record("Expected TurboQuant cache compression")
+            return
+        }
+
+        #expect(turboConfiguration.keyTotalBits == 3)
+        #expect(turboConfiguration.valueBits == 2)
+        #expect(turboConfiguration.exactBufferSize == 128)
+        #expect(turboConfiguration.attentionBlockTokens == 256)
+    }
+
+    @Test func generationConfigurationUsesMediaTunedTurboQuantProfile() {
+        let configuration = MLXModelManager.generationConfiguration(
+            isEnabled: true,
+            preferTurboQuant: true,
+            hasTools: false,
+            hasMedia: true,
+            memoryConstrained: false,
+            prefersBoundedCache: false,
+            configuredMaxOutputTokens: 2048,
+            configuredContextWindow: 32768
+        )
+
+        guard case .turboQuant(let turboConfiguration) = configuration.cacheCompression else {
+            Issue.record("Expected TurboQuant cache compression")
+            return
+        }
+
+        #expect(turboConfiguration.keyTotalBits == 3)
+        #expect(turboConfiguration.valueBits == 2)
+        #expect(turboConfiguration.exactBufferSize == 32)
+        #expect(turboConfiguration.attentionBlockTokens == 64)
     }
 
     @Test func userDefaultsKVQuantizationDefaultsToEnabledWhenUnset() {
-        let key = "mlxEnableKVCacheQuantization"
+        let key = AppSettingsKeys.mlxEnableTurboQuant
         let defaults = UserDefaults.standard
         let hadExistingValue = defaults.object(forKey: key) != nil
         let previousValue = defaults.bool(forKey: key)
@@ -583,16 +635,16 @@ struct On_Device_LLM_ChatTests {
             }
         }
 
-        #expect(defaults.mlxEnableKVCacheQuantization)
+        #expect(defaults.mlxEnableTurboQuant)
     }
 
     @Test func resetSettingsRestoresKVQuantizationDefault() {
         var draft = AppSettingsDraft.defaults()
-        draft.mlxEnableKVCacheQuantization = false
+        draft.mlxEnableTurboQuant = false
 
         draft.resetToDefaults()
 
-        #expect(draft.mlxEnableKVCacheQuantization)
+        #expect(draft.mlxEnableTurboQuant)
     }
 
     @Test func resetSettingsRestoresDeveloperModeDefault() {
@@ -691,7 +743,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func resetForRegenerationClearsDeveloperMetadata() {
         let conversation = Conversation(title: "Test")
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "Visible",
             order: 1,
@@ -750,7 +802,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func clearingSearchInvocationsAlsoClearsLegacySearchQuery() {
         let conversation = Conversation(title: "Test")
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "Answer",
             order: 1,
@@ -888,7 +940,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func conversationSearchableVisibleTextUsesDisplayedContent() {
         let conversation = Conversation(title: "Vision")
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: """
             [HIDDEN_IMAGE_CONTEXT]ocr: secret token[/HIDDEN_IMAGE_CONTEXT]
@@ -898,7 +950,7 @@ struct On_Device_LLM_ChatTests {
             conversation: conversation,
             isFinal: true
         )
-        let assistant = Message(
+        let assistant = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "intermediate",
             order: 1,
@@ -1011,7 +1063,7 @@ struct On_Device_LLM_ChatTests {
 
         let viewModel = try makeViewModel()
         let conversation = viewModel.conversation
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "",
             order: 1,
@@ -1054,7 +1106,7 @@ struct On_Device_LLM_ChatTests {
 
         let viewModel = try makeViewModel()
         let conversation = viewModel.conversation
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "",
             order: 1,
@@ -1090,14 +1142,14 @@ struct On_Device_LLM_ChatTests {
         let viewModel = try makeViewModel()
         viewModel.conversation.reasoningMode = true
 
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "What changed in Swift 6.2?",
             order: 0,
             conversation: viewModel.conversation,
             isFinal: true
         )
-        let assistant = Message(
+        let assistant = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "Swift 6.2 is now available.",
             order: 1,
@@ -1107,7 +1159,7 @@ struct On_Device_LLM_ChatTests {
             finalAnswer: "Swift 6.2 is now available.",
             isReasoningMode: true
         )
-        let nextUser = Message(
+        let nextUser = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Should I upgrade now?",
             order: 2,
@@ -1129,14 +1181,14 @@ struct On_Device_LLM_ChatTests {
     @Test func buildPromptIncludesPersistedSystemPrompt() throws {
         let viewModel = try makeViewModel()
 
-        let system = Message(
+        let system = On_Device_LLM_Chat.Message(
             role: .system,
             text: "Always answer like a pirate.",
             order: 0,
             conversation: viewModel.conversation,
             isFinal: true
         )
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Say hello",
             order: 1,
@@ -1156,14 +1208,14 @@ struct On_Device_LLM_ChatTests {
         let viewModel = try makeViewModel()
         viewModel.conversation.reasoningMode = true
 
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "What changed in Swift 6.2?",
             order: 0,
             conversation: viewModel.conversation,
             isFinal: true
         )
-        let assistant = Message(
+        let assistant = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "Swift 6.2 is now available.",
             order: 1,
@@ -1173,7 +1225,7 @@ struct On_Device_LLM_ChatTests {
             finalAnswer: "Swift 6.2 is now available.",
             isReasoningMode: true
         )
-        let nextUser = Message(
+        let nextUser = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Should I upgrade now?",
             order: 2,
@@ -1196,14 +1248,14 @@ struct On_Device_LLM_ChatTests {
     @Test func buildQwenMessagesIncludePersistedSystemPrompt() async throws {
         let viewModel = try makeViewModel()
 
-        let system = Message(
+        let system = On_Device_LLM_Chat.Message(
             role: .system,
             text: "Respond in terse bullet points.",
             order: 0,
             conversation: viewModel.conversation,
             isFinal: true
         )
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Summarize SwiftData",
             order: 1,
@@ -1222,7 +1274,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func buildQwenMessagesKeepsOrdinaryMLXPromptStable() async throws {
         let viewModel = try makeViewModel()
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Explain value types in Swift.",
             order: 0,
@@ -1243,7 +1295,7 @@ struct On_Device_LLM_ChatTests {
 
     @Test func buildQwenMessagesAddsTimeContextForTimeSensitiveMLXTurn() async throws {
         let viewModel = try makeViewModel()
-        let user = Message(
+        let user = On_Device_LLM_Chat.Message(
             role: .user,
             text: "What is the latest Swift release today?",
             order: 0,
@@ -1263,7 +1315,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func reasoningOnlyStreamingIsNotTreatedAsEmptyOutput() async throws {
-        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let schema = Schema([Conversation.self, On_Device_LLM_Chat.Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -1276,7 +1328,7 @@ struct On_Device_LLM_ChatTests {
             conversation: conversation
         )
 
-        let userMessage = Message(
+        let userMessage = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Explain your thinking.",
             order: 0,
@@ -1285,7 +1337,7 @@ struct On_Device_LLM_ChatTests {
         )
         conversation.messages.append(userMessage)
 
-        let assistantMessage = Message(
+        let assistantMessage = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: "",
             order: 1,
@@ -1309,6 +1361,8 @@ struct On_Device_LLM_ChatTests {
     @Test func longFirstMessageFallsBackToGeneratedTitle() async throws {
         let viewModel = try makeViewModel()
         let longInput = String(repeating: "swiftdata ", count: 80)
+        viewModel.conversation.title = "New Chat"
+        viewModel.conversation.hasAutoGeneratedTitle = false
 
         await viewModel.generateChatTitle(fromUserMessage: longInput)
 
@@ -1317,7 +1371,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func deleteMessageAndMaybeTrimDeletesPersistentModel() async throws {
-        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let schema = Schema([Conversation.self, On_Device_LLM_Chat.Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -1326,7 +1380,7 @@ struct On_Device_LLM_ChatTests {
         let conversation = Conversation(title: "Test")
         context.insert(conversation)
 
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .user,
             text: "Delete me",
             order: 0,
@@ -1344,13 +1398,13 @@ struct On_Device_LLM_ChatTests {
 
         await viewModel.deleteMessageAndMaybeTrim(message)
 
-        let remainingMessages = try context.fetch(FetchDescriptor<Message>())
+        let remainingMessages = try context.fetch(FetchDescriptor<On_Device_LLM_Chat.Message>())
         #expect(!conversation.messages.contains(where: { $0.id == message.id }))
         #expect(!remainingMessages.contains(where: { $0.id == message.id }))
     }
 
     @Test func selectingModelPersistsChoiceToConversationStore() throws {
-        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let schema = Schema([Conversation.self, On_Device_LLM_Chat.Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -1383,7 +1437,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func messageDisplayTextStripsThinkTags() {
-        let message = Message(
+        let message = On_Device_LLM_Chat.Message(
             role: .assistant,
             text: """
             <think>
@@ -1399,7 +1453,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func cancelledGenerationBeforeFirstTokenRemovesEmptyAssistantPlaceholder() async throws {
-        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let schema = Schema([Conversation.self, On_Device_LLM_Chat.Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -1554,7 +1608,7 @@ struct On_Device_LLM_ChatTests {
     }
 
     private func makeViewModel(generator: LLMGenerator = TestLLMGenerator()) throws -> ChatViewModel {
-        let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
+        let schema = Schema([Conversation.self, On_Device_LLM_Chat.Message.self, MessageAttachment.self])
         let container = try ModelContainer(
             for: schema,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]

@@ -572,11 +572,11 @@ public class AfMoEModel: Module, LLMModel, KVCacheDimensionProvider {
 
     public func newCache(parameters: GenerateParameters?) -> [KVCache] {
         // Create cache based on layer type (rotating for sliding attention, simple for full attention)
-        layerUsesSliding.map { usesSliding in
+        layerUsesSliding.enumerated().map { layerIndex, usesSliding in
             if usesSliding {
                 RotatingKVCache(maxSize: slidingWindow)
             } else {
-                KVCacheSimple()
+                makeLayerKVCache(parameters: parameters, layerIndex: layerIndex)
             }
         }
     }

@@ -698,7 +698,7 @@ public class Gemma3nLanguageModel: Module {
         for i in 0 ..< firstKvSharedLayerIdx {
             let layerType = layerTypes[i]
             if layerType == "full_attention" {
-                caches.append(StandardKVCache())
+                caches.append(makeLayerKVCache(parameters: parameters, layerIndex: i))
             } else if layerType == "sliding_attention" {
                 caches.append(RotatingKVCache(maxSize: slidingWindow, keep: 0))
             } else {

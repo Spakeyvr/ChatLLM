@@ -523,11 +523,11 @@ public class GraniteMoeHybridModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        configuration.layerTypes.map { layerType in
+        configuration.layerTypes.enumerated().map { layerIndex, layerType in
             if layerType == "mamba" {
                 return MambaCache()
             } else {
-                return KVCacheSimple()
+                return makeLayerKVCache(parameters: parameters, layerIndex: layerIndex)
             }
         }
     }

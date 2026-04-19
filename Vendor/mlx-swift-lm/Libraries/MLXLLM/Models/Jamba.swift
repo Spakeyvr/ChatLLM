@@ -476,9 +476,9 @@ public class JambaModel: Module, LLMModel, KVCacheDimensionProvider {
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
     public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        return model.layers.map { layer in
+        return model.layers.enumerated().map { layerIndex, layer in
             if layer.isAttn {
-                return KVCacheSimple()
+                return makeLayerKVCache(parameters: parameters, layerIndex: layerIndex)
             } else {
                 return MambaCache()
             }
@@ -509,9 +509,9 @@ public class JambaModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func makeCache() -> [KVCache] {
-        return model.layers.map { layer in
+        return model.layers.enumerated().map { layerIndex, layer in
             if layer.isAttn {
-                return KVCacheSimple()
+                return makeLayerKVCache(parameters: nil, layerIndex: layerIndex)
             } else {
                 return MambaCache()
             }

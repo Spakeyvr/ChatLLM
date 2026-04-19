@@ -250,8 +250,13 @@ final class MLXModelManager: ObservableObject {
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
     nonisolated private static let kvQuantizationBits = 8
     nonisolated private static let kvQuantizationGroupSize = 64
-    nonisolated private static let turboQuantBits = 3
+    nonisolated private static let turboQuantKeyTotalBits = 3
+    nonisolated private static let turboQuantValueBits = 2
     nonisolated private static let turboQuantSeed: UInt64 = 42
+    nonisolated private static let turboQuantExactBufferSize = 128
+    nonisolated private static let turboQuantAttentionBlockTokens = 256
+    nonisolated private static let turboQuantMediaExactBufferSize = 32
+    nonisolated private static let turboQuantMediaAttentionBlockTokens = 64
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
@@ -324,7 +329,7 @@ final class MLXModelManager: ObservableObject {
     enum CacheCompressionMode: Equatable, Sendable {
         case none
         case legacyQuantized(KVQuantizationConfiguration)
-        case turboQuant(bits: Int, startStep: Int, seed: UInt64)
+        case turboQuant(TurboQuantConfiguration)
 
         nonisolated var diagnosticLabel: String {
             switch self {
@@ -332,8 +337,8 @@ final class MLXModelManager: ObservableObject {
                 return "none"
             case .legacyQuantized:
                 return "legacy-quantized"
-            case .turboQuant:
-                return "turboquant"
+            case .turboQuant(let configuration):
+                return "turboquant(k\(configuration.keyTotalBits),v\(configuration.valueBits),exact\(configuration.exactBufferSize),block\(configuration.attentionBlockTokens))"
             }
         }
 
@@ -357,9 +362,6 @@ final class MLXModelManager: ObservableObject {
                     )
                 )
             case .turboQuant:
-                // TurboQuant needs to be active from cache creation to reduce
-                // prefill peak memory; carrying forward the legacy delayed
-                // quantization start step preserves the long-context crash.
                 return self
             }
         }
@@ -374,8 +376,8 @@ final class MLXModelManager: ObservableObject {
                     groupSize: configuration.groupSize,
                     startStep: configuration.startStep
                 )
-            case .turboQuant(let bits, let startStep, let seed):
-                return .turboQuant(bits: bits, startStep: startStep, seed: seed)
+            case .turboQuant(let configuration):
+                return .turboQuant(configuration)
             }
         }
     }
@@ -391,6 +393,17 @@ final class MLXModelManager: ObservableObject {
 
         var usesCompressedPersistentCache: Bool {
             cachePolicy == .persistentQuantizedSimple && cacheCompression != .none
+        }
+
+        var kvQuantization: KVQuantizationConfiguration? {
+            if case .legacyQuantized(let configuration) = cacheCompression {
+                return configuration
+            }
+            return nil
+        }
+
+        var usesQuantizedToolCacheStrategy: Bool {
+            usesCompressedPersistentCache
         }
     }
 
@@ -1711,7 +1724,8 @@ final class MLXModelManager: ObservableObject {
             cachePolicy: clampedCachePolicy,
             cacheCompression: cacheCompressionMode(
                 cachePolicy: clampedCachePolicy,
-                preferTurboQuant: preferTurboQuant
+                preferTurboQuant: preferTurboQuant,
+                hasMedia: hasMedia
             )
         )
     }
@@ -1773,17 +1787,25 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func cacheCompressionMode(
         cachePolicy: MLXCachePolicy,
-        preferTurboQuant: Bool
+        preferTurboQuant: Bool,
+        hasMedia: Bool = false
     ) -> CacheCompressionMode {
         guard cachePolicy.usesDynamicKVQuantization else {
             return .none
         }
 
         if preferTurboQuant {
+            let exactBufferSize = hasMedia ? turboQuantMediaExactBufferSize : turboQuantExactBufferSize
+            let attentionBlockTokens =
+                hasMedia ? turboQuantMediaAttentionBlockTokens : turboQuantAttentionBlockTokens
             return .turboQuant(
-                bits: turboQuantBits,
-                startStep: 0,
-                seed: turboQuantSeed
+                TurboQuantConfiguration(
+                    keyTotalBits: turboQuantKeyTotalBits,
+                    valueBits: turboQuantValueBits,
+                    seed: turboQuantSeed,
+                    exactBufferSize: exactBufferSize,
+                    attentionBlockTokens: attentionBlockTokens
+                )
             )
         }
 
@@ -1794,6 +1816,19 @@ final class MLXModelManager: ObservableObject {
                 startStep: defaultQuantizedKVStartStep
             )
         )
+    }
+
+    nonisolated internal static func kvQuantizationConfiguration(
+        cachePolicy: MLXCachePolicy
+    ) -> KVQuantizationConfiguration? {
+        if case .persistentQuantizedSimple = cachePolicy {
+            return KVQuantizationConfiguration(
+                bits: kvQuantizationBits,
+                groupSize: kvQuantizationGroupSize,
+                startStep: defaultQuantizedKVStartStep
+            )
+        }
+        return nil
     }
 
     nonisolated private static func makeGenerateParameters(

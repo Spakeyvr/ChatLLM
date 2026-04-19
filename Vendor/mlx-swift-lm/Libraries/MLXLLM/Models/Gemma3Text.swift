@@ -406,10 +406,7 @@ public class Gemma3TextModel: Module, LLMModel {
             let isGlobalLayer = (i % slidingWindowPattern == slidingWindowPattern - 1)
 
             if isGlobalLayer {
-                // For global layers, use standard cache but with reasonable step size for long sequences
-                let cache = StandardKVCache()
-                cache.step = 1024  // Larger step size for efficiency with long sequences
-                caches.append(cache)
+                caches.append(makeLayerKVCache(parameters: parameters, layerIndex: i))
             } else {
                 // For sliding window layers, use rotating cache
                 caches.append(

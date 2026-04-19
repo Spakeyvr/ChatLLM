@@ -229,9 +229,9 @@ public class Olmo3Model: Module, LLMModel, KVCacheDimensionProvider {
 
     public func newCache(parameters: GenerateParameters) -> [KVCache] {
         var caches: [KVCache] = []
-        for layerType in args.layerTypes {
+        for (layerIndex, layerType) in args.layerTypes.enumerated() {
             if layerType == "full_attention" {
-                caches.append(KVCacheSimple())
+                caches.append(makeLayerKVCache(parameters: parameters, layerIndex: layerIndex))
             } else {
                 caches.append(RotatingKVCache(maxSize: args.slidingWindow))
             }

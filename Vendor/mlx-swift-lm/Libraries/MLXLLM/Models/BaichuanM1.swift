@@ -267,7 +267,9 @@ public class BaichuanM1Model: Module, LLMModel, KVCacheDimensionProvider {
             let isSWA = configuration.slidingWindowLayers.contains(i)
             let convCache = MambaCache()
             let kvCache: KVCache =
-                isSWA ? RotatingKVCache(maxSize: configuration.slidingWindow) : KVCacheSimple()
+                isSWA
+                ? RotatingKVCache(maxSize: configuration.slidingWindow)
+                : makeLayerKVCache(parameters: parameters, layerIndex: i)
             return CacheList(convCache, kvCache)
         }
     }

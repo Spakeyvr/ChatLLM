@@ -51,9 +51,40 @@ public protocol LogitProcessor: Sendable {
 /// - ``LogitProcessor``
 ///
 /// for the `TokenIterator`.
+public struct TurboQuantConfiguration: Sendable, Equatable {
+    public var keyTotalBits: Int
+    public var valueBits: Int
+    public var seed: UInt64
+    public var exactBufferSize: Int
+    public var attentionBlockTokens: Int
+    public var qjlProjectionDimension: Int?
+
+    public init(
+        keyTotalBits: Int = 3,
+        valueBits: Int = 2,
+        seed: UInt64 = 42,
+        exactBufferSize: Int = 128,
+        attentionBlockTokens: Int = 256,
+        qjlProjectionDimension: Int? = nil
+    ) {
+        self.keyTotalBits = keyTotalBits
+        self.valueBits = valueBits
+        self.seed = seed
+        self.exactBufferSize = exactBufferSize
+        self.attentionBlockTokens = attentionBlockTokens
+        self.qjlProjectionDimension = qjlProjectionDimension
+    }
+
+    public func configurationForLayer(_ layerIndex: Int) -> TurboQuantConfiguration {
+        var derived = self
+        derived.seed = seed &+ UInt64(layerIndex)
+        return derived
+    }
+}
+
 public enum KVCacheCompressionMode: Sendable, Equatable {
     case quantized(bits: Int, groupSize: Int, startStep: Int)
-    case turboQuant(bits: Int, startStep: Int, seed: UInt64)
+    case turboQuant(TurboQuantConfiguration)
 }
 
 public struct GenerateParameters: Sendable {

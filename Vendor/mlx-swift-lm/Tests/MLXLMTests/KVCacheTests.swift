@@ -47,7 +47,15 @@ func testCacheSerialization(creator: (() -> any KVCache)) async throws {
 
 @Test
 func testTurboQuantAttentionPath() {
-    let cache = TurboQuantKVCache(bits: 3)
+    let cache = TurboQuantKVCache(
+        configuration: TurboQuantConfiguration(
+            keyTotalBits: 3,
+            valueBits: 2,
+            seed: 42,
+            exactBufferSize: 0,
+            attentionBlockTokens: 64
+        )
+    )
     let queries = MLXArray.ones([1, 4, 1, 64], dtype: .float16)
     let keys = MLXArray.ones([1, 4, 2, 64], dtype: .float16)
     let values = MLXArray.ones([1, 4, 2, 64], dtype: .float16)
@@ -62,7 +70,7 @@ func testTurboQuantAttentionPath() {
     )
 
     #expect(cache.offset == 2)
-    #expect(cache.state.count == 2)
+    #expect(cache.state.count == 6)
     #expect(output.shape == [1, 4, 1, 64])
 }
 
@@ -105,7 +113,15 @@ func testTurboQuantMaskSentinel() {
 
 @Test
 func testTurboQuantCompressedStateRemainsPacked() {
-    let cache = TurboQuantKVCache(bits: 3, exactBufferSize: 0)
+    let cache = TurboQuantKVCache(
+        configuration: TurboQuantConfiguration(
+            keyTotalBits: 3,
+            valueBits: 2,
+            seed: 42,
+            exactBufferSize: 0,
+            attentionBlockTokens: 64
+        )
+    )
     let keys = MLXArray.ones([1, 2, 4, 64], dtype: .float16)
     let values = MLXArray.ones([1, 2, 4, 64], dtype: .float16)
 
@@ -118,8 +134,56 @@ func testTurboQuantCompressedStateRemainsPacked() {
     #expect(runtime.count == 6)
     #expect(serialized[0].shape == [1, 2, 4, 16])
     #expect(serialized[2].shape == [1, 2, 4, 8])
-    #expect(serialized[4].shape == [1, 2, 4, 24])
+    #expect(serialized[4].shape == [1, 2, 4, 16])
     #expect(runtime[0].shape == serialized[0].shape)
     #expect(runtime[2].shape == serialized[2].shape)
     #expect(runtime[4].shape == serialized[4].shape)
+}
+
+@Test
+func testTurboQuantMetaStatePersistsStructuredConfiguration() {
+    let cache = TurboQuantKVCache(
+        configuration: TurboQuantConfiguration(
+            keyTotalBits: 3,
+            valueBits: 2,
+            seed: 77,
+            exactBufferSize: 16,
+            attentionBlockTokens: 32,
+            qjlProjectionDimension: 40
+        )
+    )
+
+    #expect(cache.metaState.count == 13)
+    #expect(cache.metaState[2] == "3")
+    #expect(cache.metaState[3] == "2")
+    #expect(cache.metaState[5] == "32")
+    #expect(cache.metaState[6] == "40")
+}
+
+@Test
+func testTurboQuantSupportsNonPowerOfTwoHeadDimensions() {
+    let cache = TurboQuantKVCache(
+        configuration: TurboQuantConfiguration(
+            keyTotalBits: 3,
+            valueBits: 2,
+            seed: 11,
+            exactBufferSize: 0,
+            attentionBlockTokens: 32
+        )
+    )
+    let queries = MLXArray.ones([1, 2, 1, 80], dtype: .float16)
+    let keys = MLXArray.ones([1, 2, 3, 80], dtype: .float16)
+    let values = MLXArray.ones([1, 2, 3, 80], dtype: .float16)
+
+    let output = attentionWithCacheUpdate(
+        queries: queries,
+        keys: keys,
+        values: values,
+        cache: cache,
+        scale: 1.0 / sqrt(80.0),
+        mask: .causal
+    )
+
+    #expect(output.shape == [1, 2, 1, 80])
+    #expect(cache.offset == 3)
 }

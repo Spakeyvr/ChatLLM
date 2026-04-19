@@ -529,9 +529,9 @@ public class GPTOSSModel: Module, LLMModel, KVCacheDimensionProvider {
     public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
         var caches: [KVCache] = []
 
-        for lt in model.layerTypes {
+        for (layerIndex, lt) in model.layerTypes.enumerated() {
             if lt == "full_attention" {
-                caches.append(StandardKVCache())
+                caches.append(makeLayerKVCache(parameters: parameters, layerIndex: layerIndex))
             } else {
                 caches.append(
                     RotatingKVCache(maxSize: configuration.slidingWindow, keep: 0)
