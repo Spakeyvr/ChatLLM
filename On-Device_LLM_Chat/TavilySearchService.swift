@@ -110,11 +110,17 @@ private struct TavilyAPIErrorResponse: Decodable, Sendable {
     let detail: String?
     let message: String?
     let error: String?
+    let nestedError: NestedError?
 
     enum CodingKeys: String, CodingKey {
         case detail
         case message
         case error
+    }
+
+    struct NestedError: Decodable, Sendable {
+        let message: String?
+        let code: String?
     }
 }
 
@@ -123,7 +129,8 @@ extension TavilyAPIErrorResponse {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.detail = try container.decodeIfPresent(String.self, forKey: .detail)
         self.message = try container.decodeIfPresent(String.self, forKey: .message)
-        self.error = try container.decodeIfPresent(String.self, forKey: .error)
+        self.error = try? container.decodeIfPresent(String.self, forKey: .error)
+        self.nestedError = try? container.decodeIfPresent(NestedError.self, forKey: .error)
     }
 }
 
@@ -232,9 +239,12 @@ actor TavilySearchService {
             )
         }
         
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let result = try decoder.decode(TavilySearchResponse.self, from: data)
+        let result: TavilySearchResponse
+        do {
+            result = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
+        } catch {
+            throw TavilySearchError.decodingError(error)
+        }
         
         guard !result.results.isEmpty else {
             throw TavilySearchError.noResults
@@ -299,6 +309,13 @@ actor TavilySearchService {
         for (index, result) in response.results.prefix(2).enumerated() {
             lines.append("[\(index + 1)] \(result.title)")
             lines.append(result.url)
+            if let publishedDate = compactWhitespace(result.publishedDate), !publishedDate.isEmpty {
+                lines.append("Published: \(publishedDate)")
+            }
+            if let content = compactWhitespace(result.content), !content.isEmpty {
+                let snippet = content.count > 320 ? Self.truncateAtWordBoundary(content, maxChars: 320) : content
+                lines.append(snippet)
+            }
         }
 
         let joined = lines.joined(separator: "\n")
@@ -379,7 +396,7 @@ actor TavilySearchService {
     private func parseErrorMessage(from data: Data) -> String? {
         guard !data.isEmpty else { return nil }
         if let decoded = try? JSONDecoder().decode(TavilyAPIErrorResponse.self, from: data) {
-            return decoded.detail ?? decoded.message ?? decoded.error
+            return decoded.detail ?? decoded.message ?? decoded.error ?? decoded.nestedError?.message ?? decoded.nestedError?.code
         }
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }

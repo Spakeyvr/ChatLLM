@@ -114,14 +114,14 @@ struct CoTStepView: View {
         }
         .padding(.leading, 16)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                 .fill(.regularMaterial.opacity(0.5))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                 .stroke(.blue.opacity(0.1), lineWidth: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
     }
 }
 
@@ -227,7 +227,7 @@ struct StepByStepReasoningSheet: View {
                         }
                         .padding()
                         .background {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                                 .fill(.regularMaterial)
                         }
                     } else {
@@ -399,16 +399,16 @@ struct SearchStepCard: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                     .fill(.thinMaterial)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                     .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .contentShape(Rectangle())
     }
 }

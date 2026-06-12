@@ -137,8 +137,12 @@ class ModelBackendBridge: ObservableObject {
             conversation.preferredModelID = preferredModelID
         }
 
-        if preferredBackend == .mlx, let preferredModelID {
-            switchToMLXModel(preferredModelID, source: "conversation.bind")
+        if preferredBackend == .mlx {
+            if let preferredModelID {
+                switchToMLXModel(preferredModelID, source: "conversation.bind")
+            } else {
+                selectBackend(.mlx, source: "conversation.bind")
+            }
         } else {
             selectBackend(.foundationModels, source: "conversation.bind")
         }
@@ -192,8 +196,16 @@ class ModelBackendBridge: ObservableObject {
         persistSelectionToActiveConversation()
 
         guard let manager = modelManager,
-              let model = manager.model(withID: modelID),
-              model.isAvailable else {
+              let model = manager.model(withID: modelID) else {
+            modelManager?.unloadAllModels()
+            modelManager?.loadError = "Selected MLX model '\(modelID)' is no longer known. Choose another model."
+            return
+        }
+        guard model.isAvailable else {
+            notifyPipelineReset(reason: "backend.mlx.unavailable.\(modelID)")
+            manager.unloadAllModels()
+            manager.loadError = manager.availabilityIssue(for: model) ??
+                "Model '\(model.displayName)' is not available. Download it before selecting MLX."
             return
         }
 
@@ -234,8 +246,8 @@ class ModelBackendBridge: ObservableObject {
         guard selectedBackend == .mlx else {
             return false
         }
-        if let manager = modelManager, manager.supportsNativeThinking {
-            return true
+        if let model = selectedMLXModel {
+            return model.supportsReasoning
         }
         guard let modelID = selectedModelID else { return false }
         return Self.knownReasoningPrefixes.contains(where: { modelID.contains($0) })
@@ -247,10 +259,13 @@ class ModelBackendBridge: ObservableObject {
 
     /// Get the current model's display name
     var currentModelDisplayName: String? {
-        if let model = modelManager?.currentModel {
+        guard let modelID = selectedModelID else { return nil }
+        if let model = modelManager?.model(withID: modelID) {
             return "\(model.name) (\(model.parameters))"
         }
-        guard let modelID = selectedModelID else { return nil }
+        if let model = modelManager?.currentModel, model.id == modelID {
+            return "\(model.name) (\(model.parameters))"
+        }
         switch modelID {
         case "qwen3.5-4b-mixed36":
             return "Qwen 3.5 (4B)"
@@ -262,13 +277,13 @@ class ModelBackendBridge: ObservableObject {
     }
 
     private var selectedMLXModel: MLXModelManager.MLXModelInfo? {
-        if let model = modelManager?.currentModel {
-            return model
+        if let modelID = selectedModelID {
+            if let current = modelManager?.currentModel, current.id == modelID {
+                return current
+            }
+            return modelManager?.model(withID: modelID)
         }
-        guard let modelID = selectedModelID else {
-            return nil
-        }
-        return modelManager?.model(withID: modelID)
+        return modelManager?.currentModel
     }
 
     var toolCallsAvailableForCurrentBackend: Bool {

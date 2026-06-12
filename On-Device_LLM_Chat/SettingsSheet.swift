@@ -836,10 +836,10 @@ struct NativePromptEditor: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                 .fill(.thinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                         .strokeBorder(isEditorFocused ? Color.accentColor.opacity(0.7) : Color.secondary.opacity(0.15), lineWidth: isEditorFocused ? 1.5 : 1)
                 )
 
@@ -861,7 +861,7 @@ struct NativePromptEditor: View {
                     .allowsHitTesting(false)
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .onTapGesture {
             isEditorFocused = true
         }

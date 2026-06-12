@@ -47,7 +47,11 @@ struct AppSettingsDraft: Equatable {
             appAppearance: defaults.string(forKey: AppSettingsKeys.appAppearance) ?? "system",
             appLanguage: defaults.string(forKey: AppSettingsKeys.appLanguage) ?? "en",
             customPresets: decodePresets(from: defaults.data(forKey: AppSettingsKeys.customSystemPromptPresets) ?? Data()),
-            tavilyApiKey: TavilyAPIKeyStore.currentKey() ?? "",
+            tavilyApiKey: TavilyAPIKeyStore.currentKey(
+                userDefaults: defaults,
+                service: TavilyAPIKeyStore.service,
+                account: TavilyAPIKeyStore.account
+            ) ?? "",
             sendOnReturn: defaults.sendOnReturn,
             enableHaptics: defaults.enableHapticsPreference,
             reasoningModeDefault: defaults.bool(forKey: AppSettingsKeys.reasoningModeDefault),

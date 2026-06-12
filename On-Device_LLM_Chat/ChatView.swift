@@ -46,9 +46,11 @@ struct ChatView: View {
     // Image attachment state
     @State private var showImagePicker = false
     @State private var selectedImage: UIImage?
+    @State private var selectedImageToken = UUID()
     @State private var detectedObjects: [DetectedObject]?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var fullImageAnalysis: VisionAnalysisResult?
+    @State private var capturedCameraImage: UIImage?
 
     // Error handling states
     @State private var errorAlert: ErrorAlert?
@@ -220,9 +222,7 @@ struct ChatView: View {
                         // Remove button
                         Button {
                             withAnimation {
-                                selectedImage = nil
-                                detectedObjects = nil
-                                fullImageAnalysis = nil
+                                clearSelectedImage()
                             }
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -277,37 +277,24 @@ struct ChatView: View {
                 guard let item = newItem else { return }
                 guard let image = await loadAndDownscaleImage(from: item) else {
                     logger.error("Failed to load image from picker item")
-                    selectedPhotoItem = nil
+                    await MainActor.run {
+                        selectedPhotoItem = nil
+                    }
+                    await handleError(ImageError.invalidFormat, title: "Photo Import Failed", retry: nil)
                     return
                 }
-                await MainActor.run {
-                    selectedImage = image
-                    forceSearch = false
-                }
-                if shouldPrecomputeVisionAnalysis {
-                    await runVisionAnalysis(on: image)
-                } else {
-                    await MainActor.run {
-                        detectedObjects = nil
-                        fullImageAnalysis = nil
-                    }
-                }
-                selectedPhotoItem = nil
+                await prepareSelectedImage(image)
+                await MainActor.run { selectedPhotoItem = nil }
             }
         }
         .onChange(of: showCameraCapture) { _, isPresented in
             // When camera sheet is dismissed with a captured image, downscale then run Vision analysis.
             // Camera images can be 12 MP+; downscaling here prevents OOM overlap with the MLX model.
-            guard !isPresented, let image = selectedImage else { return }
-            detectedObjects = nil
-            fullImageAnalysis = nil
-            forceSearch = false
+            guard !isPresented, let image = capturedCameraImage else { return }
+            capturedCameraImage = nil
             Task {
                 let scaled = await downscaleForPipeline(image)
-                await MainActor.run { selectedImage = scaled }
-                if shouldPrecomputeVisionAnalysis {
-                    await runVisionAnalysis(on: scaled)
-                }
+                await prepareSelectedImage(scaled)
             }
         }
         .alert(item: $errorAlert) { alert in
@@ -380,7 +367,7 @@ struct ChatView: View {
                 .ignoresSafeArea()
         }
         .sheet(isPresented: $showCameraCapture) {
-            CameraCapturePicker(image: $selectedImage, isPresented: $showCameraCapture)
+            CameraCapturePicker(image: $capturedCameraImage, isPresented: $showCameraCapture)
                 .ignoresSafeArea()
         }
     }
@@ -390,7 +377,7 @@ struct ChatView: View {
         ComposerView(
             text: $inputText,
             placeholder: String(localized: "Ask anything"),
-            canSend: !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            canSend: selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             isGenerating: viewModel.isGenerating,
             onSend: {
                 Task { await sendIfPossible() }
@@ -441,15 +428,18 @@ struct ChatView: View {
 
         // Check if we have an image to send
         if let image = selectedImage {
-            let detections = detectedObjects ?? []
-            let analysis = fullImageAnalysis
             guard !viewModel.isGenerating else { return }
+
+            var analysis = fullImageAnalysis
+            var detections = detectedObjects ?? []
+            if shouldPrecomputeVisionAnalysis && analysis == nil {
+                analysis = await analyzeImage(image)
+                detections = analysis?.objects ?? detections
+            }
 
             // Clear immediately for snappy feel, then send
             inputText = ""
-            selectedImage = nil
-            detectedObjects = nil
-            fullImageAnalysis = nil
+            clearSelectedImage()
 
             Task {
                 await viewModel.sendWithImage(
@@ -534,45 +524,70 @@ struct ChatView: View {
             ) else {
                 throw ImageError.invalidFormat
             }
-            await handleImageForOCR(image)
+            await prepareSelectedImage(image)
         case .failure(let error):
             logger.error("File importer failed: \(error.localizedDescription)")
             throw error
         }
     }
 
-    private func runVisionAnalysis(on image: UIImage) async {
-        let analyzer = VisionAnalyzer()
-        var options = AnalysisOptions.all
-        options.minimumTextConfidence = 0.3
-        options.useAccurateOCR = true
-        if let result = try? await analyzer.analyze(image: image, options: options) {
-            await MainActor.run {
-                detectedObjects = result.objects
-                fullImageAnalysis = result
-            }
+    private func prepareSelectedImage(_ image: UIImage) async {
+        let token = await MainActor.run {
+            setSelectedImage(image)
+        }
+        let shouldAnalyze = await MainActor.run {
+            shouldPrecomputeVisionAnalysis
+        }
+        if shouldAnalyze {
+            await runVisionAnalysis(on: image, token: token)
         } else {
             await MainActor.run {
-                detectedObjects = []
+                guard selectedImageToken == token else { return }
+                detectedObjects = nil
                 fullImageAnalysis = nil
             }
         }
     }
 
-    private func handleImageForOCR(_ image: UIImage) async {
-        let text = await viewModel.extractOCR(from: image)
-        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedText.isEmpty {
-            errorAlert = ErrorAlert(
-                title: String(localized: "OCR Result"),
-                message: String(localized: "No text found in the selected image."),
-                retry: nil
-            )
+    @MainActor
+    @discardableResult
+    private func setSelectedImage(_ image: UIImage) -> UUID {
+        selectedImage = image
+        detectedObjects = nil
+        fullImageAnalysis = nil
+        selectedImageToken = UUID()
+        forceSearch = false
+        return selectedImageToken
+    }
+
+    @MainActor
+    private func clearSelectedImage() {
+        selectedImage = nil
+        detectedObjects = nil
+        fullImageAnalysis = nil
+        selectedImageToken = UUID()
+    }
+
+    private func analyzeImage(_ image: UIImage) async -> VisionAnalysisResult? {
+        let analyzer = VisionAnalyzer()
+        var options = AnalysisOptions.all
+        options.minimumTextConfidence = 0.3
+        options.useAccurateOCR = true
+        return try? await analyzer.analyze(image: image, options: options)
+    }
+
+    private func runVisionAnalysis(on image: UIImage, token: UUID) async {
+        if let result = await analyzeImage(image) {
+            await MainActor.run {
+                guard selectedImageToken == token else { return }
+                detectedObjects = result.objects
+                fullImageAnalysis = result
+            }
         } else {
-            if inputText.isEmpty {
-                inputText = trimmedText
-            } else {
-                inputText += "\n" + trimmedText
+            await MainActor.run {
+                guard selectedImageToken == token else { return }
+                detectedObjects = []
+                fullImageAnalysis = nil
             }
         }
     }

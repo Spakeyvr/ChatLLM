@@ -524,7 +524,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func currentContextWindowLimit() -> Int {
-        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
+        let bridge = ModelBackendBridge.shared
+        let model = bridge.selectedModelID.flatMap { bridge.modelManager?.model(withID: $0) } ??
+            bridge.modelManager?.currentModel
+        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens(for: model)
         return UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
     }
 
@@ -602,6 +605,8 @@ final class ChatViewModel: ObservableObject {
         let previousText = assistantMessage.text
         let previousReasoning = assistantMessage.reasoning
         let previousFinal = assistantMessage.finalAnswer
+        let forcedSearchQuery = assistantMessage.requiresWebSearch == true ? assistantMessage.searchQuery : nil
+        let forcedSearchRequirement = assistantMessage.requiresWebSearch
         let forceSearchRequired = assistantMessage.requiresWebSearch == true ||
             (assistantMessage.searchInvocations == nil && assistantMessage.searchQuery != nil)
         let latestUserQuestion = conversation.messages
@@ -621,6 +626,8 @@ final class ChatViewModel: ObservableObject {
         }
 
         target.resetForRegeneration()
+        target.requiresWebSearch = forcedSearchRequirement
+        target.searchQuery = forcedSearchQuery
 
         conversation.lastUpdated = Date()
         immediateSave()
@@ -852,6 +859,10 @@ final class ChatViewModel: ObservableObject {
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
                     }
                 }
+            }
+
+            if Task.isCancelled {
+                result.outcome = .cancelled
             }
 
             if result.wroteAny,

@@ -24,7 +24,7 @@ struct TextFormattingToolbar: View {
                     .foregroundStyle(isBold ? .blue : .secondary)
                     .frame(width: 32, height: 32)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.small, style: .continuous)
                             .fill(isBold ? Color.blue.opacity(0.15) : Color.clear)
                     )
             }
@@ -38,7 +38,7 @@ struct TextFormattingToolbar: View {
                     .foregroundStyle(isItalic ? .blue : .secondary)
                     .frame(width: 32, height: 32)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.small, style: .continuous)
                             .fill(isItalic ? Color.blue.opacity(0.15) : Color.clear)
                     )
             }

@@ -64,13 +64,20 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
     }
 
     var maxContextWindowTokens: Int {
+        maxContextWindowTokens(for: nil)
+    }
+
+    func maxContextWindowTokens(for model: MLXModelManager.MLXModelInfo?) -> Int {
         let normalizedGigabytes = Int(normalizedMemoryBytes / Self.gibibyte)
-        if normalizedGigabytes >= 12 {
-            return 6_144
+        if isPhone, let overrides = model?.phoneContextWindowOverride {
+            let tokens = overrides
+                .filter { normalizedGigabytes >= $0.key }
+                .max(by: { $0.key < $1.key })
+                .map(\.value)
+            if let tokens { return tokens }
         }
-        if normalizedGigabytes >= 8 {
-            return 2_048
-        }
+        if normalizedGigabytes >= 12 { return 6_144 }
+        if normalizedGigabytes >= 8 { return 2_048 }
         return 1_024
     }
 

@@ -292,22 +292,28 @@ actor ImageStore {
     }
 
     private func downscale(image: UIImage, maxDimension: CGFloat) async -> UIImage {
-        let size = image.size
-        let maxSide = max(size.width, size.height)
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let maxSide = max(pixelWidth, pixelHeight)
         guard maxSide > maxDimension else { 
             logger.debug("Image already within max dimension (\(maxSide) <= \(maxDimension)), skipping downscale")
             return image 
         }
 
         let scale = maxDimension / maxSide
-        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let newSize = CGSize(
+            width: (pixelWidth * scale).rounded(),
+            height: (pixelHeight * scale).rounded()
+        )
         
-        logger.debug("Downscaling image from \(Int(size.width))x\(Int(size.height)) to \(Int(newSize.width))x\(Int(newSize.height))")
+        logger.debug("Downscaling image from \(Int(pixelWidth))x\(Int(pixelHeight)) to \(Int(newSize.width))x\(Int(newSize.height))")
 
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let img = autoreleasepool(invoking: {
-                    let renderer = UIGraphicsImageRenderer(size: newSize)
+                    let format = UIGraphicsImageRendererFormat()
+                    format.scale = 1.0
+                    let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
                     return renderer.image { _ in
                         image.draw(in: CGRect(origin: .zero, size: newSize))
                     }

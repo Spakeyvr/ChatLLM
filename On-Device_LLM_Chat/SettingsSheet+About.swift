@@ -63,7 +63,7 @@ extension SettingsSheet {
                     }
                 } icon: {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .symbolRenderingMode(.monochrome)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.blue)
                 }
             }
@@ -85,7 +85,7 @@ extension SettingsSheet {
                     Text(String(localized: "Beta Build"))
                         .font(.headline)
                     Text(String(localized: "This is a beta version. Please expect bugs and report any issues on Discord or through the Support Email."))
-                        .font(.system(size: 14, weight: .medium, design: .default))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 Divider()
@@ -95,7 +95,7 @@ extension SettingsSheet {
                     Text(String(localized: "Email Support"))
                         .font(.headline)
                     Text("Have any issues and can't use Discord? Contact me at chatllm@icloud.com")
-                        .font(.system(size: 14, weight: .medium, design: .default))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .tint(.blue)
                         .onTapGesture {

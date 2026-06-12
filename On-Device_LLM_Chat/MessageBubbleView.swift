@@ -32,7 +32,7 @@ private struct ErrorCalloutView: View {
             .font(.callout)
             .foregroundStyle(.red)
             .padding(10)
-            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.small))
             .padding(.top, topPadding)
     }
 }
@@ -331,19 +331,19 @@ struct StandardMessageBubble: View {
             .padding(.vertical, 10)
             .background(alignment: .center) {
                 if isUser {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                         .fill(Color.blue.opacity(0.15))
                 } else {
-                    RoundedRectangle(cornerRadius: isSystem ? 12 : 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
                         .fill(Color.clear)
                         .background(
                             .ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: isSystem ? 12 : 14, style: .continuous)
+                            in: RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
                         )
                 }
             }
             .overlay(
-                RoundedRectangle(cornerRadius: isSystem ? 12 : 14, style: .continuous)
+                RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
                     .strokeBorder(Color.secondary.opacity(0.12))
             )
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -515,15 +515,15 @@ struct ReasoningMessageBubble: View {
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                             .fill(Color.clear)
                             .background(
                                 .ultraThinMaterial,
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                             )
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                             .strokeBorder(Color.secondary.opacity(0.12))
                     )
                 }
@@ -592,7 +592,7 @@ struct SourcesSheetView: View {
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                                 .strokeBorder(.secondary.opacity(0.2), lineWidth: 1)
                         }
                     }
@@ -689,7 +689,7 @@ private struct DeveloperMessageSheet: View {
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                             .fill(.ultraThinMaterial)
                     )
 
@@ -703,7 +703,7 @@ private struct DeveloperMessageSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
                             .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                                     .fill(Color.primary.opacity(0.06))
                             )
                     }
@@ -840,10 +840,10 @@ struct EditMessageSheet: View {
                         .autocorrectionDisabled(false)
                         .padding(12)
                         .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                                 .fill(.ultraThinMaterial)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                                         .strokeBorder(Color.secondary.opacity(0.2))
                                 )
                         )

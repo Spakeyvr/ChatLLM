@@ -23,7 +23,7 @@ extension SettingsSheet {
                         .foregroundStyle(.primary)
                 } icon: {
                     Image(systemName: "square.and.arrow.up")
-                        .symbolRenderingMode(.monochrome)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.blue)
                 }
             }
@@ -42,7 +42,7 @@ extension SettingsSheet {
                         .foregroundStyle(.primary)
                 } icon: {
                     Image(systemName: "trash")
-                        .symbolRenderingMode(.monochrome)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.red)
                 }
             }
@@ -61,7 +61,7 @@ extension SettingsSheet {
                         .foregroundStyle(.primary)
                 } icon: {
                     Image(systemName: "trash")
-                        .symbolRenderingMode(.monochrome)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.red)
                 }
             }
@@ -76,7 +76,7 @@ extension SettingsSheet {
                         .foregroundStyle(.primary)
                 } icon: {
                     Image(systemName: "arrow.counterclockwise")
-                        .symbolRenderingMode(.monochrome)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.red)
                 }
             }

@@ -57,9 +57,8 @@ final class MessageAttachment {
     ) {
         self.id = id
         self.type = type
-        // Store a relative URL using file:// scheme with just the filename
-        // This makes it container-agnostic
-        self.fileURL = URL(fileURLWithPath: fileURL.lastPathComponent)
+        // Store a relative URL with just the filename so it stays container-agnostic.
+        self.fileURL = URL(string: fileURL.lastPathComponent) ?? URL(fileURLWithPath: fileURL.lastPathComponent)
         self.fileName = fileName
         self.createdAt = createdAt
     }

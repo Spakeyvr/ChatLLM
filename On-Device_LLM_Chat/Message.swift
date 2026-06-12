@@ -160,7 +160,8 @@ final class Message {
     // Cached values for expensive computations
     private var _cachedDisplayText: String?
     private var _cachedContentLength: Int?
-    private var _lastTextHash: Int?
+    private var _lastDisplayTextHash: Int?
+    private var _lastContentLengthHash: Int?
 
     // Cached decoded values for JSON-backed computed properties (not persisted)
     @Transient private var _cachedReasoningSteps: [ReasoningStep]?
@@ -182,7 +183,7 @@ final class Message {
         // Use a more collision-resistant combination than XOR
         let combinedHash = textHash &+ (reasoningHash &* 31) &+ (finalAnswerHash &* 17)
         
-        if let cached = _cachedDisplayText, _lastTextHash == combinedHash {
+        if let cached = _cachedDisplayText, _lastDisplayTextHash == combinedHash {
             return cached
         }
         
@@ -233,7 +234,7 @@ final class Message {
         }
         
         _cachedDisplayText = result
-        _lastTextHash = combinedHash
+        _lastDisplayTextHash = combinedHash
         return result
     }
     
@@ -247,7 +248,7 @@ final class Message {
         // Match displayText's hash calculation exactly
         let combinedHash = textHash &+ (reasoningHash &* 31) &+ (finalAnswerHash &* 17)
         
-        if let cached = _cachedContentLength, _lastTextHash == combinedHash {
+        if let cached = _cachedContentLength, _lastContentLengthHash == combinedHash {
             return cached
         }
         
@@ -255,7 +256,7 @@ final class Message {
         // This ensures UI sizing is based on what the user actually sees
         let result = displayText.count
         _cachedContentLength = result
-        // Note: We don't set _lastTextHash here since displayText already sets it
+        _lastContentLengthHash = combinedHash
         return result
     }
     
@@ -268,7 +269,8 @@ final class Message {
     private func invalidateCache() {
         _cachedDisplayText = nil
         _cachedContentLength = nil
-        _lastTextHash = nil
+        _lastDisplayTextHash = nil
+        _lastContentLengthHash = nil
     }
     
     // MARK: - Optimized Initializers
@@ -430,6 +432,9 @@ extension Message {
     
     /// Reset message state before regeneration so the next run starts clean.
     func resetForRegeneration() {
+        let preservedRequiresWebSearch = requiresWebSearch
+        let preservedForcedSearchQuery = requiresWebSearch == true ? searchQuery : nil
+
         // Only clear if needed
         let needsReset = !self.text.isEmpty ||
                         self.reasoning != nil ||
@@ -440,7 +445,9 @@ extension Message {
             self.generationBackend != nil ||
             self.generationModelName != nil ||
             self.generationStartedAt != nil ||
-            self.generationCompletedAt != nil
+            self.generationCompletedAt != nil ||
+            self.searchInvocations != nil ||
+            self.searchQuery != nil
 
         if needsReset {
             invalidateCache()
@@ -456,7 +463,8 @@ extension Message {
             self.generationCompletedAt = nil
             self.streamingReasoningPhase = nil
             self.searchInvocations = nil
-            self.searchQuery = nil
+            self.requiresWebSearch = preservedRequiresWebSearch
+            self.searchQuery = preservedForcedSearchQuery
         }
     }
 }

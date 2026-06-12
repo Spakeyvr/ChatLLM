@@ -151,7 +151,10 @@ extension ChatViewModel {
     }
 
     private func effectiveContextWindowTokenLimit() -> Int {
-        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens
+        let bridge = ModelBackendBridge.shared
+        let model = bridge.selectedModelID.flatMap { bridge.modelManager?.model(withID: $0) } ??
+            bridge.modelManager?.currentModel
+        let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens(for: model)
         return UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
     }
 
@@ -552,8 +555,9 @@ extension ChatViewModel {
         toolsAvailable: Bool = false,
         forceWebSearch: Bool = false
     ) async throws -> [Chat.Message] {
+        let allSnapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
         let snapshots = await trimmedSnapshotsForMLXPrompt(
-            from: messageSnapshots(upToOrderExclusive: maxOrderExclusive),
+            from: allSnapshots,
             maxMessages: maxMessages
         )
         let latestUserOrder = snapshots
@@ -578,7 +582,7 @@ extension ChatViewModel {
             forceWebSearch: forceWebSearch
         )
         let effectiveSystemPrompt: String
-        if let customSystemPrompt = customSystemPromptText(from: snapshots),
+        if let customSystemPrompt = customSystemPromptText(from: allSnapshots),
            !customSystemPrompt.isEmpty {
             effectiveSystemPrompt = systemPrompt + "\n\n" + customSystemPrompt
         } else {

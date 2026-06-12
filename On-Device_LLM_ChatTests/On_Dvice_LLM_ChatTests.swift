@@ -23,8 +23,19 @@ struct On_Device_LLM_ChatTests {
 
         #expect(result.contains("Swift 6.2 Released"))
         #expect(result.contains("https://example.com/swift"))
+        #expect(result.contains("Swift 6.2 adds more concurrency fixes."))
+        #expect(result.contains("Published: 2026-02-28"))
         #expect(bridge.allInvocations.count == 1)
         #expect(bridge.allInvocations.first?.query == "latest swift release")
+    }
+
+    @Test func tavilySearchServiceDecodesSnakeCaseMetadataWithExplicitCodingKeys() async throws {
+        let service = try makeSearchService()
+
+        let result = try await service.search(query: "latest swift release")
+
+        #expect(result.contains("Published: 2026-02-28"))
+        #expect(result.contains("Swift 6.2 adds more concurrency fixes."))
     }
 
     @Test func webSearchBridgeExecutesMLXToolCall() async throws {
@@ -566,6 +577,57 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.availabilityIssue(for: fourBModel) == nil)
     }
 
+    @Test func phoneContextOverridesDoNotClampNonPhoneDevices() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: false,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let compactModel = try! #require(manager.model(withID: "qwen3.5-0.8b-4bit"))
+
+        #expect(profile.maxContextWindowTokens(for: compactModel) == 2_048)
+    }
+
+    @Test func modelManagerRejectsIncompatibleProgrammaticDownloads() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+
+        manager.startDownload(for: model)
+
+        #expect(!manager.isDownloading)
+        #expect(manager.downloadErrorModelID == model.id)
+        #expect(manager.downloadError?.contains("8 GB") == true)
+    }
+
+    @Test func modelManagerReportsUndownloadedModelLoadError() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: false,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let model = MLXModelManager.MLXModelInfo(
+            id: "undownloaded-test-model",
+            name: "Undownloaded Test",
+            localDirName: "UndownloadedTest",
+            hfRepoId: "local/undownloaded",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            description: "A compatible model that has not been downloaded.",
+            contextLength: 4096,
+            isAvailable: false,
+            supportsReasoning: true
+        )
+        manager.availableModels = [model]
+
+        manager.startLoading(modelID: model.id, source: "test")
+
+        #expect(manager.loadError?.contains("not downloaded") == true)
+    }
+
     @Test func settingsSheetDescribesAdaptiveKVCacheBehavior() {
         #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("Enabled by default"))
         #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("3-bit keys"))
@@ -763,6 +825,32 @@ struct On_Device_LLM_ChatTests {
         #expect(message.generationModelName == nil)
         #expect(message.generationStartedAt == nil)
         #expect(message.generationCompletedAt == nil)
+    }
+
+    @Test func resetForRegenerationPreservesForcedSearchRequirement() {
+        let conversation = Conversation(title: "Test")
+        let message = On_Device_LLM_Chat.Message(
+            role: .assistant,
+            text: "Answer",
+            order: 1,
+            conversation: conversation,
+            searchQuery: "latest swift release",
+            requiresWebSearch: true
+        )
+        message.searchInvocations = [
+            SearchInvocation(
+                query: "old query",
+                results: "Old result"
+            )
+        ]
+        message.requiresWebSearch = true
+        message.searchQuery = "latest swift release"
+
+        message.resetForRegeneration()
+
+        #expect(message.requiresWebSearch == true)
+        #expect(message.searchQuery == "latest swift release")
+        #expect(message.searchInvocations == nil)
     }
 
     @Test func searchInvocationMergePreservesAnchorsAcrossFinalization() {
@@ -1436,6 +1524,43 @@ struct On_Device_LLM_ChatTests {
         #expect(storedConversation.preferredModelID == "persisted-model")
     }
 
+    @Test func bridgeDisplayNameUsesSelectedModelInsteadOfStaleLoadedModel() {
+        let bridge = ModelBackendBridge()
+        let manager = MLXModelManager()
+        let loadedModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+
+        manager.currentModel = loadedModel
+        bridge.modelManager = manager
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = "qwen3.5-0.8b-4bit"
+
+        #expect(bridge.currentModelDisplayName == "Qwen 3.5 (0.8B (4-bit))")
+    }
+
+    @Test func reasoningAvailabilityTracksSelectedModelSupport() {
+        let bridge = ModelBackendBridge()
+        let manager = MLXModelManager()
+        let plainModel = MLXModelManager.MLXModelInfo(
+            id: "plain-local-model",
+            name: "Plain Local",
+            localDirName: "PlainLocal",
+            hfRepoId: "local/plain",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            description: "A non-reasoning local model.",
+            contextLength: 4096,
+            isAvailable: true,
+            supportsReasoning: false
+        )
+        manager.availableModels = [plainModel]
+        manager.currentModel = plainModel
+        bridge.modelManager = manager
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = plainModel.id
+
+        #expect(!bridge.reasoningAvailable)
+    }
+
     @Test func messageDisplayTextStripsThinkTags() {
         let message = On_Device_LLM_Chat.Message(
             role: .assistant,
@@ -1450,6 +1575,33 @@ struct On_Device_LLM_ChatTests {
         )
 
         #expect(message.displayText == "The tags should not be visible.")
+    }
+
+    @Test func messageContentLengthCacheTracksDisplayTextAfterDirectTextMutation() {
+        let message = On_Device_LLM_Chat.Message(
+            role: .assistant,
+            text: "One",
+            order: 0
+        )
+
+        let initialLength = message.contentLength
+        message.text = "A much longer visible answer"
+        _ = message.displayText
+
+        #expect(initialLength == 3)
+        #expect(message.contentLength == message.displayText.count)
+        #expect(message.contentLength == 28)
+    }
+
+    @Test func messageAttachmentStoresContainerAgnosticRelativeURL() {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "/tmp/Attachments/example.jpg"),
+            fileName: "example.jpg"
+        )
+
+        #expect(attachment.fileURL.path == "example.jpg")
+        #expect(!attachment.fileURL.path.hasPrefix("/"))
     }
 
     @Test func cancelledGenerationBeforeFirstTokenRemovesEmptyAssistantPlaceholder() async throws {

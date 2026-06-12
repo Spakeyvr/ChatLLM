@@ -160,9 +160,7 @@ struct NavigationTitleView: View {
             }
 
             if isSwitching {
-                Text("Switching…")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                LoadingDotsLabel(label: String(localized: "Loading"), font: .headline)
             } else {
                 Text(displayName)
                     .font(.headline)

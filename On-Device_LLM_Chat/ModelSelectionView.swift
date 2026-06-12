@@ -22,7 +22,7 @@ struct ModelSelectionView: View {
                 if let modelManager {
                     listContent(modelManager: modelManager)
                 } else {
-                    ProgressView()
+                    LoadingIndicator()
                 }
             }
                 .navigationTitle("Language Models")

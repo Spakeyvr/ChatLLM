@@ -128,9 +128,9 @@ struct SidebarHeader: View {
         .padding(.vertical, 10)
         .glassEffect(
             .regular.tint(isAvailable ? .blue.opacity(0.1) : .orange.opacity(0.1)),
-            in: .rect(cornerRadius: 18)
+            in: .rect(cornerRadius: DesignTokens.CornerRadius.xlarge)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xlarge, style: .continuous))
         .listRowSeparator(.hidden)
         .accessibilityElement(children: .contain)
     }
@@ -140,8 +140,7 @@ struct SidebarHeader: View {
             Image(systemName: "sparkles")
                 .symbolRenderingMode(.hierarchical)
                 .font(.system(size: 24, weight: .semibold))
-                // Slightly darker purple than previous, still soft
-                .foregroundStyle(Color(red: 0.65, green: 0.52, blue: 0.94).opacity(0.95))
+                .foregroundStyle(.purple)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(String(localized: "Apple Intelligence"))

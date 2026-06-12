@@ -139,6 +139,9 @@ final class MLXModelManager: ObservableObject {
         let requiredProcessorClass: String?
         let minimumPhoneMemoryBytes: UInt64?
         let minimumPhoneMemoryForToolCallsBytes: UInt64?
+        /// Per-device-tier context window override. Keys are minimum RAM in GiB; the
+        /// highest matching key wins. Falls through to the device default if no key matches.
+        let phoneContextWindowOverride: [Int: Int]?
 
         init(
             id: String,
@@ -155,7 +158,8 @@ final class MLXModelManager: ObservableObject {
             supportsNativeImages: Bool = false,
             requiredProcessorClass: String? = nil,
             minimumPhoneMemoryBytes: UInt64? = nil,
-            minimumPhoneMemoryForToolCallsBytes: UInt64? = nil
+            minimumPhoneMemoryForToolCallsBytes: UInt64? = nil,
+            phoneContextWindowOverride: [Int: Int]? = nil
         ) {
             self.id = id
             self.name = name
@@ -172,6 +176,7 @@ final class MLXModelManager: ObservableObject {
             self.requiredProcessorClass = requiredProcessorClass
             self.minimumPhoneMemoryBytes = minimumPhoneMemoryBytes
             self.minimumPhoneMemoryForToolCallsBytes = minimumPhoneMemoryForToolCallsBytes
+            self.phoneContextWindowOverride = phoneContextWindowOverride
         }
 
         var displayName: String { "\(name) (\(parameters))" }
@@ -294,6 +299,24 @@ final class MLXModelManager: ObservableObject {
             requiredProcessorClass: "Qwen3VLProcessor",
             minimumPhoneMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte,
             minimumPhoneMemoryForToolCallsBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        ),
+        MLXModelInfo(
+            id: "qwen3.5-0.8b-4bit",
+            name: "Qwen 3.5",
+            localDirName: "Qwen3.5-0.8B-MLX-4bit",
+            hfRepoId: "mlx-community/Qwen3.5-0.8B-4bit",
+            parameters: "0.8B (4-bit)",
+            downloadSizeLabel: "625 MB",
+            loadPolicy: .qwenMultimodal,
+            description: "Qwen 3.5 0.8B multimodal model with native reasoning and vision.",
+            contextLength: 262144,
+            isAvailable: false,
+            supportsReasoning: true,
+            supportsNativeImages: true,
+            requiredProcessorClass: "Qwen3VLProcessor",
+            minimumPhoneMemoryBytes: 4 * MLXDeviceSupportProfile.gibibyte,
+            minimumPhoneMemoryForToolCallsBytes: 6 * MLXDeviceSupportProfile.gibibyte,
+            phoneContextWindowOverride: [8: 4_096, 12: 6_144]
         )
     ]
 
@@ -834,9 +857,9 @@ final class MLXModelManager: ObservableObject {
         deviceSupportProfile.hasLowMemoryForPersistentKVCache
     }
 
-    private var configuredContextWindowLimit: Int {
+    private func configuredContextWindowLimit(for model: MLXModelInfo? = nil) -> Int {
         UserDefaults.standard.mlxContextWindowTokens(
-            deviceMaximum: deviceSupportProfile.maxContextWindowTokens
+            deviceMaximum: deviceSupportProfile.maxContextWindowTokens(for: model ?? currentModel)
         )
     }
 
@@ -860,7 +883,7 @@ final class MLXModelManager: ObservableObject {
             memoryConstrained: false,
             prefersBoundedCache: prefersBoundedKVCacheAcrossTurns,
             configuredMaxOutputTokens: UserDefaults.standard.mlxMaxOutputTokensLimit,
-            configuredContextWindow: configuredContextWindowLimit
+            configuredContextWindow: configuredContextWindowLimit(for: model)
         )
     }
 
@@ -1091,7 +1114,9 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice().cachePolicy.usesDynamicKVQuantization
+        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice(model: model)
+            .cacheCompression
+            .usesLegacyQuantization
         let needsPrefillTuning = persistedPrefill == nil
         let needsQuantizedTuning = shouldTuneQuantizedKV && persistedQuantizedKVStart == nil
         return needsPrefillTuning || needsQuantizedTuning
@@ -1121,7 +1146,8 @@ final class MLXModelManager: ObservableObject {
             return
         }
         guard model.isAvailable else {
-            loadError = compatibilityError(for: model)
+            loadError = compatibilityError(for: model) ??
+                "\(model.displayName) is not downloaded. Download it before loading."
             return
         }
 
@@ -1196,6 +1222,9 @@ final class MLXModelManager: ObservableObject {
 
     private func load(_ model: MLXModelInfo, loadID: UUID, source: String) {
         guard model.isAvailable, let modelURL = modelDirectoryURL(for: model) else {
+            activeLoadID = nil
+            isLoading = false
+            pendingModelToLoad = nil
             if let compatibilityError = compatibilityError(for: model) {
                 loadError = compatibilityError
             } else {
@@ -1249,7 +1278,18 @@ final class MLXModelManager: ObservableObject {
                         measurement: nil
                     )
                 )
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        if self.activeLoadID == loadID {
+                            self.isLoading = false
+                            self.pendingModelToLoad = nil
+                            self.loadTask = nil
+                            self.activeLoadID = nil
+                            self.cleanupMemoryAfterLoadInterruption()
+                        }
+                    }
+                    return
+                }
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
                     await self.inferenceWorker.clearLoadedModel()
@@ -1263,7 +1303,9 @@ final class MLXModelManager: ObservableObject {
                     self.currentModel = model
                     self.isLoading = false
                     self.pendingModelToLoad = nil
+                    self.activeLoadID = nil
                     self.applySteadyStateMemoryCachePolicy()
+                    self.startMemoryMaintenanceTimer()
                     self.loadTask = nil
                 }
                 print("MLX model loaded: \(model.displayName)")
@@ -1287,6 +1329,7 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.loadTask = nil
+                    self.activeLoadID = nil
                     self.cleanupMemoryAfterLoadInterruption()
                 }
                 self.logger.notice("MLX container load cancelled during execution: id=\(model.id, privacy: .public)")
@@ -1296,6 +1339,7 @@ final class MLXModelManager: ObservableObject {
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.loadTask = nil
+                    self.activeLoadID = nil
                     self.loadError = "Failed to load model: \(error.localizedDescription)"
                 }
                 self.tearDownCurrentModel(reason: "load failure for \(model.id)")
@@ -1309,6 +1353,11 @@ final class MLXModelManager: ObservableObject {
 
     func startDownload(for model: MLXModelInfo) {
         guard !isDownloading else { return }
+        if let issue = availabilityIssue(for: model) {
+            downloadError = issue
+            downloadErrorModelID = model.id
+            return
+        }
         isDownloading = true
         activeDownloadModelID = model.id
         downloadProgress = 0
@@ -1372,8 +1421,18 @@ final class MLXModelManager: ObservableObject {
     }
 
     func cancelDownload() {
+        let model = activeDownloadModel
         downloaderTask?.cancel()
         downloaderTask = nil
+        isDownloading = false
+        activeDownloadModelID = nil
+        downloadProgress = 0
+        downloadError = nil
+        downloadErrorModelID = nil
+        if let model {
+            let targetDir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
+            cleanupPartialDownload(at: targetDir)
+        }
     }
 
     private func startSimulatedDownload(for model: MLXModelInfo) {
@@ -1381,14 +1440,19 @@ final class MLXModelManager: ObservableObject {
             guard let self else { return }
 
             do {
-                for progress in [0.2, 0.55, 1.0] {
-                    try await Task.sleep(for: .milliseconds(120))
+                let progressSteps: [(progress: Double, delay: Duration)] = [
+                    (0.2, .milliseconds(120)),
+                    (0.55, .seconds(5)),
+                    (1.0, .milliseconds(120))
+                ]
+                for step in progressSteps {
+                    try await Task.sleep(for: step.delay)
                     guard !Task.isCancelled else {
                         throw CancellationError()
                     }
 
                     await MainActor.run {
-                        self.downloadProgress = progress
+                        self.downloadProgress = step.progress
                     }
                 }
 
@@ -1500,7 +1564,7 @@ final class MLXModelManager: ObservableObject {
         }
         let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
-        let configuredContextWindow = configuredContextWindowLimit
+        let configuredContextWindow = configuredContextWindowLimit(for: currentModel)
         let turboQuantRequested = UserDefaults.standard.mlxEnableTurboQuant
         let generationConfiguration = Self.generationConfiguration(
             isEnabled: turboQuantRequested,
@@ -1613,18 +1677,31 @@ final class MLXModelManager: ObservableObject {
             }
             return updated
         }
+        if let currentModel,
+           let refreshed = availableModels.first(where: { $0.id == currentModel.id }),
+           !refreshed.isAvailable {
+            tearDownCurrentModel(reason: "availability refresh invalidated \(currentModel.id)")
+        }
     }
 
     func deleteModel(_ model: MLXModelInfo) throws {
+        if isDownloading(modelID: model.id) {
+            cancelDownload()
+        }
+        if pendingModelToLoad?.id == model.id {
+            cancelCurrentLoad(reason: "delete \(model.id)", tearDownModel: false)
+        }
         if currentModel?.id == model.id {
             tearDownCurrentModel(reason: "delete \(model.id)")
         }
+        simulatedDownloadedModelIDs.remove(model.id)
         let dir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
         do {
             try FileManager.default.removeItem(at: dir)
             refreshModelAvailability()
             print("Deleted model '\(model.localDirName)' from Documents/Models/")
         } catch let error as NSError where error.code == NSFileNoSuchFileError {
+            refreshModelAvailability()
             print("Model '\(model.localDirName)' not found in Documents/Models/ - nothing to delete.")
         }
     }

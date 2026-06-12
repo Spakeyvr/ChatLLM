@@ -519,6 +519,10 @@ struct ContentView: View {
                     .onChange(of: searchText) { _, newValue in
                         // Debounce search input to avoid excessive filtering
                         searchDebounceTask?.cancel()
+                        if newValue.isEmpty {
+                            debouncedSearchText = ""
+                            return
+                        }
                         searchDebounceTask = Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(300))
                             guard !Task.isCancelled else { return }
@@ -537,7 +541,7 @@ struct ContentView: View {
                     if !searchText.isEmpty {
                         Button {
                             AppHaptics.impact(.light)
-                            searchText = ""
+                            clearSearch()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
@@ -630,10 +634,16 @@ struct ContentView: View {
             // Push detail column on compact (iPhone) so the draft chat is immediately visible.
             preferredCompactColumn = .detail
             if !searchText.isEmpty {
-                searchText = ""
-                isSearchFocused = false
+                clearSearch()
             }
         }
+    }
+
+    private func clearSearch() {
+        searchDebounceTask?.cancel()
+        searchText = ""
+        debouncedSearchText = ""
+        isSearchFocused = false
     }
 
     private func rename(_ conversation: Conversation) {

@@ -8,7 +8,7 @@
 import XCTest
 
 final class On_Device_LLM_ChatUITests: XCTestCase {
-    private let firstMLXModelID = "qwen3.5-4b-4bit"
+    private let firstMLXModelID = "qwen3.5-4b-mixed36"
     private let secondMLXModelID = "qwen3.5-2b-4bit"
 
     private func launchApp(
@@ -24,6 +24,10 @@ final class On_Device_LLM_ChatUITests: XCTestCase {
         }
         app.launch()
         return app
+    }
+
+    private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any)[identifier]
     }
 
     override func setUpWithError() throws {
@@ -95,7 +99,7 @@ final class On_Device_LLM_ChatUITests: XCTestCase {
         XCTAssertTrue(downloadButton.waitForExistence(timeout: 5))
         downloadButton.tap()
 
-        XCTAssertTrue(app.otherElements["onboarding.mlx.progress.\(firstMLXModelID)"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, identifier: "onboarding.mlx.progress.\(firstMLXModelID)").waitForExistence(timeout: 5))
 
         app.buttons["onboarding.finish"].tap()
         XCTAssertTrue(app.otherElements["content.root"].waitForExistence(timeout: 5))
@@ -112,7 +116,7 @@ final class On_Device_LLM_ChatUITests: XCTestCase {
         XCTAssertTrue(downloadButton.waitForExistence(timeout: 5))
         downloadButton.tap()
 
-        let firstProgress = app.otherElements["onboarding.mlx.progress.\(firstMLXModelID)"]
+        let firstProgress = element(in: app, identifier: "onboarding.mlx.progress.\(firstMLXModelID)")
         XCTAssertTrue(firstProgress.waitForExistence(timeout: 5))
 
         let secondModelButton = app.buttons["onboarding.mlx.model.\(secondMLXModelID)"]
@@ -120,7 +124,7 @@ final class On_Device_LLM_ChatUITests: XCTestCase {
         secondModelButton.tap()
 
         XCTAssertTrue(firstProgress.waitForExistence(timeout: 2))
-        XCTAssertFalse(app.otherElements["onboarding.mlx.progress.\(secondMLXModelID)"].exists)
+        XCTAssertFalse(element(in: app, identifier: "onboarding.mlx.progress.\(secondMLXModelID)").exists)
     }
 
     @MainActor

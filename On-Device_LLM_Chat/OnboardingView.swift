@@ -32,7 +32,6 @@ struct OnboardingView: View {
     @State private var step: Step = .intro
     @State private var tavilyKey: String = TavilyAPIKeyStore.currentKey() ?? ""
     @State private var selectedModelID: String?
-    @State private var startedDownload = false
 
     private var modelManager: MLXModelManager? { modelBackendBridge.modelManager }
 
@@ -83,6 +82,7 @@ struct OnboardingView: View {
                 .font(.title)
                 .fontWeight(.bold)
                 .foregroundStyle(.primary)
+                .accessibilityIdentifier(headerTitleIdentifier)
 
             Text(stepSubtitle)
                 .font(.body)
@@ -186,7 +186,7 @@ struct OnboardingView: View {
                     downloadStatus(for: selectedModel, modelManager: modelManager)
                 }
             } else {
-                ProgressView()
+                LoadingIndicator()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -266,17 +266,20 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("onboarding.mlx.progress.\(activeDownloadModel.id)")
-        } else if model.isAvailable || startedDownload {
-            Label("MLX setup is in progress or already installed.", systemImage: "checkmark.circle.fill")
+        } else if model.isAvailable {
+            Label("MLX model is installed.", systemImage: "checkmark.circle.fill")
                 .font(.subheadline)
                 .foregroundStyle(.green)
         } else if let issue = modelManager.availabilityIssue(for: model) {
             Text(issue)
                 .font(.caption)
                 .foregroundStyle(.orange)
+        } else if let error = modelManager.downloadError(for: model.id) {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
         } else {
             Button {
-                startedDownload = true
                 modelManager.startDownload(for: model)
             } label: {
                 Label("Download \(model.downloadSizeLabel)", systemImage: "arrow.down.circle.fill")
@@ -363,6 +366,17 @@ struct OnboardingView: View {
             return "onboarding.tavily.continue"
         case .mlx:
             return "onboarding.finish"
+        }
+    }
+
+    private var headerTitleIdentifier: String {
+        switch step {
+        case .intro:
+            return "onboarding.intro.title"
+        case .tavily:
+            return "onboarding.tavily.title"
+        case .mlx:
+            return "onboarding.mlx.title"
         }
     }
 
