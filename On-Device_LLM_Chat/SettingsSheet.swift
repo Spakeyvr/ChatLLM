@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxTurboQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, TurboQuant uses a paper-faithful key/value cache compression profile with 3-bit keys, 2-bit values, exact recent-token buffering, and per-layer deterministic projections to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and mixed-attention models keep their sliding-window layers on rotating caches.")
-    static let mlxTurboQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, while full-attention layers use TurboQuant compression.")
+    static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and mixed-attention models keep recurrent layers outside KV compression.")
+    static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, while full-attention layers use RotorQuant compression.")
+    static let mlxRotorQuantExperimentalTitle = String(localized: "RotorQuant Experimental")
+    static let mlxRotorQuantExperimentalMessage = String(localized: "RotorQuant is very early and in beta. It can reduce KV-cache memory, but speed and stability are still being tuned.")
 
     @Binding var settings: AppSettingsDraft
 
@@ -113,16 +115,20 @@ struct SettingsSheet: View {
                         Text(String(localized: "MLX Settings"))
                     }
 
-                    Toggle(isOn: $settings.mlxEnableTurboQuant) {
+                    Toggle(isOn: $settings.mlxEnableRotorQuant) {
                         HStack(spacing: 6) {
-                            Text(String(localized: "TurboQuant (MLX Only)"))
+                            Text(String(localized: "RotorQuant (MLX Only)"))
+                            ExperimentalBadgeButton(
+                                title: Self.mlxRotorQuantExperimentalTitle,
+                                message: Self.mlxRotorQuantExperimentalMessage
+                            )
                             InfoButton(
-                                title: String(localized: "TurboQuant (MLX Only)"),
-                                message: Self.mlxTurboQuantInfoMessage
+                                title: String(localized: "RotorQuant (MLX Only)"),
+                                message: Self.mlxRotorQuantInfoMessage
                             )
                         }
                     }
-                    .accessibilityHint(Self.mlxTurboQuantAccessibilityHint)
+                    .accessibilityHint(Self.mlxRotorQuantAccessibilityHint)
 
                     Toggle(isOn: $settings.developerModeEnabled) {
                         HStack(spacing: 6) {
@@ -795,6 +801,31 @@ private struct InfoButton: View {
                 .foregroundStyle(.secondary)
                 .font(.caption)
         }
+        .alert(title, isPresented: $showingInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(message)
+        }
+        .accessibilityLabel(title)
+        .accessibilityHint(message)
+    }
+}
+
+private struct ExperimentalBadgeButton: View {
+    let title: String
+    let message: String
+
+    @State private var showingInfo = false
+
+    var body: some View {
+        Button {
+            showingInfo = true
+        } label: {
+            Text("(E)")
+                .font(.caption.bold())
+                .foregroundStyle(.orange)
+        }
+        .buttonStyle(.plain)
         .alert(title, isPresented: $showingInfo) {
             Button("OK", role: .cancel) {}
         } message: {

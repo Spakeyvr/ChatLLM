@@ -667,7 +667,7 @@ extension ChatViewModel {
         var lines = [
             "WEB SEARCH:",
             "- You have a webSearch tool available.",
-            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information. In this case, also remember to add \(currentYear) to the search query.",
+            "- Use it when the user asks about current events, live data, recent changes, or anything that depends on up-to-date information. In this case, also remember to add \(currentYear) to the search query when it benfits. Otherwise, search for the the info without any date for more general information.",
             "- Use it when you need to verify a fact that may have changed recently.",
             "- Do not use it for stable general knowledge that you already know reliably."
         ]

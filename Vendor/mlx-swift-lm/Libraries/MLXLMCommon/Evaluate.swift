@@ -51,31 +51,37 @@ public protocol LogitProcessor: Sendable {
 /// - ``LogitProcessor``
 ///
 /// for the `TokenIterator`.
-public struct TurboQuantConfiguration: Sendable, Equatable {
-    public var keyTotalBits: Int
+public enum RotorQuantVariant: String, Sendable, Equatable {
+    case iso
+    case planar
+    case clifford
+}
+
+public struct RotorQuantConfiguration: Sendable, Equatable {
+    public var keyBits: Int
     public var valueBits: Int
     public var seed: UInt64
     public var exactBufferSize: Int
     public var attentionBlockTokens: Int
-    public var qjlProjectionDimension: Int?
+    public var variant: RotorQuantVariant
 
     public init(
-        keyTotalBits: Int = 3,
+        keyBits: Int = 3,
         valueBits: Int = 2,
         seed: UInt64 = 42,
         exactBufferSize: Int = 128,
-        attentionBlockTokens: Int = 256,
-        qjlProjectionDimension: Int? = nil
+        attentionBlockTokens: Int = 128,
+        variant: RotorQuantVariant = .iso
     ) {
-        self.keyTotalBits = keyTotalBits
+        self.keyBits = keyBits
         self.valueBits = valueBits
         self.seed = seed
         self.exactBufferSize = exactBufferSize
         self.attentionBlockTokens = attentionBlockTokens
-        self.qjlProjectionDimension = qjlProjectionDimension
+        self.variant = variant
     }
 
-    public func configurationForLayer(_ layerIndex: Int) -> TurboQuantConfiguration {
+    public func configurationForLayer(_ layerIndex: Int) -> RotorQuantConfiguration {
         var derived = self
         derived.seed = seed &+ UInt64(layerIndex)
         return derived
@@ -84,7 +90,7 @@ public struct TurboQuantConfiguration: Sendable, Equatable {
 
 public enum KVCacheCompressionMode: Sendable, Equatable {
     case quantized(bits: Int, groupSize: Int, startStep: Int)
-    case turboQuant(TurboQuantConfiguration)
+    case rotorQuant(RotorQuantConfiguration)
 }
 
 public struct GenerateParameters: Sendable {

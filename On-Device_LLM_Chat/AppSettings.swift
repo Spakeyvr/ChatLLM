@@ -11,7 +11,7 @@ enum AppSettingsKeys {
     static let messageFontSize = "messageFontSize"
     static let mlxMaxOutputTokens = "mlxMaxOutputTokens"
     static let mlxContextWindowTokens = "mlxContextWindowTokens"
-    static let mlxEnableTurboQuant = "mlxEnableTurboQuant"
+    static let mlxEnableRotorQuant = "mlxEnableRotorQuant"
     static let mlxEnableKVCacheQuantization = "mlxEnableKVCacheQuantization"
     static let mlxRepetitionPenalty = "mlxRepetitionPenalty"
     static let autoDeleteOldChats = "autoDeleteOldChats"
@@ -33,7 +33,7 @@ struct AppSettingsDraft: Equatable {
     var messageFontSize: Double
     var mlxMaxOutputTokens: Int
     var mlxContextWindowTokens: Int
-    var mlxEnableTurboQuant: Bool
+    var mlxEnableRotorQuant: Bool
     var mlxRepetitionPenalty: Double
     var autoDeleteOldChats: Bool
     var autoDeleteDays: Int
@@ -60,7 +60,7 @@ struct AppSettingsDraft: Equatable {
             mlxContextWindowTokens: defaults.object(forKey: AppSettingsKeys.mlxContextWindowTokens) != nil
                 ? defaults.integer(forKey: AppSettingsKeys.mlxContextWindowTokens)
                 : 0,
-            mlxEnableTurboQuant: defaults.mlxEnableTurboQuant,
+            mlxEnableRotorQuant: defaults.mlxEnableRotorQuant,
             mlxRepetitionPenalty: defaults.mlxRepetitionPenalty,
             autoDeleteOldChats: defaults.bool(forKey: AppSettingsKeys.autoDeleteOldChats),
             autoDeleteDays: defaults.object(forKey: AppSettingsKeys.autoDeleteDays) as? Int ?? 30,
@@ -83,7 +83,7 @@ struct AppSettingsDraft: Equatable {
             messageFontSize: 16.0,
             mlxMaxOutputTokens: 1024,
             mlxContextWindowTokens: 0,
-            mlxEnableTurboQuant: true,
+            mlxEnableRotorQuant: true,
             mlxRepetitionPenalty: 1.0,
             autoDeleteOldChats: false,
             autoDeleteDays: 30,
@@ -108,7 +108,7 @@ struct AppSettingsDraft: Equatable {
         defaults.set(messageFontSize, forKey: AppSettingsKeys.messageFontSize)
         defaults.mlxMaxOutputTokens = mlxMaxOutputTokens
         defaults.set(mlxContextWindowTokens, forKey: AppSettingsKeys.mlxContextWindowTokens)
-        defaults.mlxEnableTurboQuant = mlxEnableTurboQuant
+        defaults.mlxEnableRotorQuant = mlxEnableRotorQuant
         defaults.mlxRepetitionPenalty = mlxRepetitionPenalty
         defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
         defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)

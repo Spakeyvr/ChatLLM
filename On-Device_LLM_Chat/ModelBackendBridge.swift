@@ -363,17 +363,17 @@ extension UserDefaults {
         return min(max(storedValue, minimum), deviceMaximum)
     }
 
-    var mlxEnableTurboQuant: Bool {
+    var mlxEnableRotorQuant: Bool {
         get {
-            if object(forKey: AppSettingsKeys.mlxEnableTurboQuant) != nil {
-                return bool(forKey: AppSettingsKeys.mlxEnableTurboQuant)
+            if object(forKey: AppSettingsKeys.mlxEnableRotorQuant) != nil {
+                return bool(forKey: AppSettingsKeys.mlxEnableRotorQuant)
             }
             if object(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization) != nil {
                 return bool(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization)
             }
             return true
         }
-        set { set(newValue, forKey: AppSettingsKeys.mlxEnableTurboQuant) }
+        set { set(newValue, forKey: AppSettingsKeys.mlxEnableRotorQuant) }
     }
 
     var mlxRepetitionPenalty: Double {

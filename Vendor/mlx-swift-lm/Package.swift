@@ -24,6 +24,9 @@ let package = Package(
         .library(
             name: "MLXEmbedders",
             targets: ["MLXEmbedders"]),
+        .executable(
+            name: "RotorQuantEval",
+            targets: ["RotorQuantEval"]),
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.30.6")),
@@ -148,6 +151,20 @@ let package = Package(
                 "MLXLMCommon",
             ],
             path: "Tests/Benchmarks",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
+        ),
+        .executableTarget(
+            name: "RotorQuantEval",
+            dependencies: [
+                "MLXLLM",
+                "MLXLMCommon",
+                "MLXVLM",
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "MLX", package: "mlx-swift"),
+            ],
+            path: "Tools/RotorQuantEval",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]

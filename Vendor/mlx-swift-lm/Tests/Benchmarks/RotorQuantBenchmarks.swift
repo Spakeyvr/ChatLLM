@@ -5,27 +5,24 @@ import MLXLLM
 import MLXLMCommon
 import Testing
 
-private let turboQuantBenchmarksEnabled =
-    ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] != nil
-
 @Suite(.serialized)
-struct TurboQuantBenchmarks {
+struct RotorQuantBenchmarks {
     private let hub = HubApi()
 
     private var modelConfiguration: ModelConfiguration {
         let modelID =
-            ProcessInfo.processInfo.environment["TURBOQUANT_BENCHMARK_MODEL"]
+            ProcessInfo.processInfo.environment["ROTORQUANT_BENCHMARK_MODEL"]
             ?? "mlx-community/Qwen3-0.6B-4bit"
         return ModelConfiguration(id: modelID)
     }
 
     private var promptTokenCount: Int {
-        Int(ProcessInfo.processInfo.environment["TURBOQUANT_BENCHMARK_PROMPT_TOKENS"] ?? "")
+        Int(ProcessInfo.processInfo.environment["ROTORQUANT_BENCHMARK_PROMPT_TOKENS"] ?? "")
             ?? 4096
     }
 
     private var generatedTokenCount: Int {
-        Int(ProcessInfo.processInfo.environment["TURBOQUANT_BENCHMARK_GENERATED_TOKENS"] ?? "")
+        Int(ProcessInfo.processInfo.environment["ROTORQUANT_BENCHMARK_GENERATED_TOKENS"] ?? "")
             ?? 64
     }
 
@@ -73,7 +70,7 @@ struct TurboQuantBenchmarks {
         let input = try await container.prepare(input: UserInput(prompt: promptText))
         let stream = try await container.generate(input: input, parameters: parameters)
 
-        var finalInfo: GenerationInfo?
+        var finalInfo: GenerateCompletionInfo?
         var chunkCount = 0
         for await update in stream {
             switch update {
@@ -101,7 +98,6 @@ struct TurboQuantBenchmarks {
         print("  Chunks emitted:    \(chunkCount)")
     }
 
-    @Test(.enabled(if: turboQuantBenchmarksEnabled))
     func compareMemoryFootprintAgainstDenseAndLegacyQuantizedKV() async throws {
         let context = try await LLMModelFactory.shared.load(
             hub: hub,
@@ -117,15 +113,16 @@ struct TurboQuantBenchmarks {
             cacheCompression: .quantized(bits: 4, groupSize: 64, startStep: 0),
             prefillStepSize: 256
         )
-        let turboQuant = GenerateParameters(
+        let rotorQuant = GenerateParameters(
             maxTokens: generatedTokenCount,
-            cacheCompression: .turboQuant(
-                TurboQuantConfiguration(
-                    keyTotalBits: 3,
+            cacheCompression: .rotorQuant(
+                RotorQuantConfiguration(
+                    keyBits: 3,
                     valueBits: 2,
                     seed: 42,
                     exactBufferSize: 128,
-                    attentionBlockTokens: 256
+                    attentionBlockTokens: 256,
+                    variant: .iso
                 )
             ),
             prefillStepSize: 256
@@ -141,33 +138,33 @@ struct TurboQuantBenchmarks {
             parameters: legacyQuantized,
             context: context
         )
-        let turboMeasurement = try await measureConfiguration(
-            label: "TurboQuant KV",
-            parameters: turboQuant,
+        let rotorMeasurement = try await measureConfiguration(
+            label: "RotorQuant KV",
+            parameters: rotorQuant,
             context: context
         )
 
-        #expect(turboMeasurement.kvBytes < denseMeasurement.kvBytes)
-        #expect(turboMeasurement.peakActiveBytes <= denseMeasurement.peakActiveBytes)
-        #expect(turboMeasurement.kvBytes <= legacyMeasurement.kvBytes)
+        #expect(rotorMeasurement.kvBytes < denseMeasurement.kvBytes)
+        #expect(rotorMeasurement.peakActiveBytes <= denseMeasurement.peakActiveBytes)
+        #expect(rotorMeasurement.kvBytes <= legacyMeasurement.kvBytes)
     }
 
-    @Test(.enabled(if: turboQuantBenchmarksEnabled))
     func longContextDecodeSanityAndRegressionSnapshot() async throws {
         let container = try await LLMModelFactory.shared.loadContainer(
             hub: hub,
             configuration: modelConfiguration
         )
 
-        let turboQuant = GenerateParameters(
+        let rotorQuant = GenerateParameters(
             maxTokens: generatedTokenCount,
-            cacheCompression: .turboQuant(
-                TurboQuantConfiguration(
-                    keyTotalBits: 3,
+            cacheCompression: .rotorQuant(
+                RotorQuantConfiguration(
+                    keyBits: 3,
                     valueBits: 2,
                     seed: 42,
                     exactBufferSize: 128,
-                    attentionBlockTokens: 256
+                    attentionBlockTokens: 256,
+                    variant: .iso
                 )
             ),
             temperature: 0,
@@ -175,9 +172,9 @@ struct TurboQuantBenchmarks {
         )
 
         try await runGeneration(
-            label: "TurboQuant 3-bit key / 2-bit value",
+            label: "RotorQuant IsoQuant 3-bit key / 2-bit value",
             container: container,
-            parameters: turboQuant
+            parameters: rotorQuant
         )
     }
 }

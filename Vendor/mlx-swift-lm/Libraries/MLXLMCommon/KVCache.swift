@@ -117,8 +117,8 @@ public protocol QuantizedKVCacheProtocol: KVCache {
 
 /// Protocol for cache implementations that provide their own attention path.
 ///
-/// TurboQuant keys are not fully reconstructible from their compressed form, so
-/// the cache needs to participate in attention score computation directly.
+/// Compressed caches can use this hook to combine approximate and exact cache
+/// blocks without materializing the entire sequence at once.
 public protocol AttentionCapableKVCache: KVCache {
     func attention(
         queries: MLXArray,
@@ -438,17 +438,17 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     }
 }
 
-private struct TurboQuantCodebook: Sendable {
+private struct CentroidCodebook: Sendable {
     let centroids: [Float]
     let boundaries: [Float]
 }
 
-private struct TurboQuantOrthogonalTransform: Sendable {
+private struct OrthogonalTransform: Sendable {
     let matrix: [[Float]]
     let transpose: [[Float]]
 }
 
-private struct TurboQuantGaussianRandom: Sendable {
+private struct SeededGaussianRandom: Sendable {
     private var state: UInt64
     private var spare: Double?
 
@@ -488,11 +488,11 @@ private struct TurboQuantGaussianRandom: Sendable {
     }
 }
 
-private enum TurboQuantMath {
-    static func orthogonalTransform(dimension: Int, seed: UInt64) -> TurboQuantOrthogonalTransform {
-        precondition(dimension > 0, "TurboQuant requires a positive dimension")
+private enum CentroidQuantizationMath {
+    static func orthogonalTransform(dimension: Int, seed: UInt64) -> OrthogonalTransform {
+        precondition(dimension > 0, "Orthogonal transform requires a positive dimension")
 
-        var generator = TurboQuantGaussianRandom(seed: seed)
+        var generator = SeededGaussianRandom(seed: seed)
         var matrix = Array(
             repeating: Array(repeating: Float(0), count: dimension),
             count: dimension
@@ -549,12 +549,12 @@ private enum TurboQuantMath {
                 transpose[column][row] = rotation[row][column]
             }
         }
-        return TurboQuantOrthogonalTransform(matrix: rotation, transpose: transpose)
+        return OrthogonalTransform(matrix: rotation, transpose: transpose)
     }
 
-    static func codebook(dimension: Int, bits: Int) -> TurboQuantCodebook {
-        precondition(dimension >= 3, "TurboQuant requires dimension >= 3")
-        precondition((1 ... 4).contains(bits), "TurboQuant MSE stage supports 1-4 bits.")
+    static func codebook(dimension: Int, bits: Int) -> CentroidCodebook {
+        precondition(dimension >= 3, "Centroid quantization requires dimension >= 3")
+        precondition((1 ... 8).contains(bits), "MSE centroid stage supports 1-8 bits.")
 
         let clusterCount = 1 << bits
         let gridCount = 16_385
@@ -572,18 +572,23 @@ private enum TurboQuantMath {
         let exponent = Float(dimension - 3) / 2
 
         var grid = Array(repeating: Float(0), count: gridCount)
-        var pdf = Array(repeating: Float(0), count: gridCount)
         var cdf = Array(repeating: Float(0), count: gridCount)
+        var prefixWeight = Array(repeating: Float(0), count: gridCount + 1)
+        var prefixWeightedX = Array(repeating: Float(0), count: gridCount + 1)
+        var prefixWeightedX2 = Array(repeating: Float(0), count: gridCount + 1)
         var running = Float(0)
 
         for index in 0 ..< gridCount {
             let x = lowerBound + Float(index) * dx
             let value = max(1 - x * x, Float(1e-12))
             let density = constant * pow(value, exponent)
+            let weight = density * dx
             grid[index] = x
-            pdf[index] = density
-            running += density * dx
+            running += weight
             cdf[index] = running
+            prefixWeight[index + 1] = prefixWeight[index] + weight
+            prefixWeightedX[index + 1] = prefixWeightedX[index] + x * weight
+            prefixWeightedX2[index + 1] = prefixWeightedX2[index] + x * x * weight
         }
 
         let cdfScale = max(running, Float(1e-12))
@@ -601,6 +606,34 @@ private enum TurboQuantMath {
         let maxIterations = 200
         let tolerance = Float(1e-6)
         var previousCost = Float.infinity
+
+        func firstGridIndex(greaterThan boundary: Float) -> Int {
+            var low = 0
+            var high = gridCount
+            while low < high {
+                let mid = (low + high) / 2
+                if grid[mid] > boundary {
+                    high = mid
+                } else {
+                    low = mid + 1
+                }
+            }
+            return low
+        }
+
+        func rangeSums(lowerExclusive: Float, upperInclusive: Float)
+            -> (weight: Float, weightedX: Float, weightedX2: Float)
+        {
+            let start = firstGridIndex(greaterThan: lowerExclusive)
+            let end = firstGridIndex(greaterThan: upperInclusive)
+            guard start < end else { return (0, 0, 0) }
+            return (
+                prefixWeight[end] - prefixWeight[start],
+                prefixWeightedX[end] - prefixWeightedX[start],
+                prefixWeightedX2[end] - prefixWeightedX2[start]
+            )
+        }
+
         for _ in 0 ..< maxIterations {
             let boundaries = fullBoundaries(for: centroids)
             var nextCentroids = Array(repeating: Float(0), count: clusterCount)
@@ -609,21 +642,10 @@ private enum TurboQuantMath {
             for cluster in 0 ..< clusterCount {
                 let lower = boundaries[cluster]
                 let upper = boundaries[cluster + 1]
-                var numerator = Float(0)
-                var denominator = Float(0)
-
-                for index in 0 ..< gridCount {
-                    let x = grid[index]
-                    if x <= lower || x > upper {
-                        continue
-                    }
-                    let weight = pdf[index] * dx
-                    numerator += x * weight
-                    denominator += weight
-                }
+                let sums = rangeSums(lowerExclusive: lower, upperInclusive: upper)
 
                 let centroid =
-                    denominator > 1e-12 ? numerator / denominator : (lower + upper) * 0.5
+                    sums.weight > 1e-12 ? sums.weightedX / sums.weight : (lower + upper) * 0.5
                 nextCentroids[cluster] = centroid
             }
 
@@ -632,14 +654,8 @@ private enum TurboQuantMath {
                 let lower = nextBoundaries[cluster]
                 let upper = nextBoundaries[cluster + 1]
                 let centroid = nextCentroids[cluster]
-                for index in 0 ..< gridCount {
-                    let x = grid[index]
-                    if x <= lower || x > upper {
-                        continue
-                    }
-                    let diff = x - centroid
-                    cost += diff * diff * pdf[index] * dx
-                }
+                let sums = rangeSums(lowerExclusive: lower, upperInclusive: upper)
+                cost += sums.weightedX2 - 2 * centroid * sums.weightedX + centroid * centroid * sums.weight
             }
 
             centroids = nextCentroids
@@ -649,7 +665,7 @@ private enum TurboQuantMath {
             previousCost = cost
         }
 
-        return TurboQuantCodebook(
+        return CentroidCodebook(
             centroids: centroids,
             boundaries: fullBoundaries(for: centroids)
         )
@@ -672,12 +688,12 @@ private enum TurboQuantMath {
     }
 }
 
-private enum TurboQuantCacheStore {
+private enum QuantizationParameterStore {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var orthogonalTransforms: [String: TurboQuantOrthogonalTransform] = [:]
-    nonisolated(unsafe) private static var codebooks: [String: TurboQuantCodebook] = [:]
+    nonisolated(unsafe) private static var orthogonalTransforms: [String: OrthogonalTransform] = [:]
+    nonisolated(unsafe) private static var codebooks: [String: CentroidCodebook] = [:]
 
-    static func orthogonalTransform(dimension: Int, seed: UInt64) -> TurboQuantOrthogonalTransform {
+    static func orthogonalTransform(dimension: Int, seed: UInt64) -> OrthogonalTransform {
         let key = "\(dimension)-\(seed)"
         lock.lock()
         if let cached = orthogonalTransforms[key] {
@@ -686,7 +702,7 @@ private enum TurboQuantCacheStore {
         }
         lock.unlock()
 
-        let transform = TurboQuantMath.orthogonalTransform(dimension: dimension, seed: seed)
+        let transform = CentroidQuantizationMath.orthogonalTransform(dimension: dimension, seed: seed)
 
         lock.lock()
         orthogonalTransforms[key] = transform
@@ -694,7 +710,7 @@ private enum TurboQuantCacheStore {
         return transform
     }
 
-    static func codebook(dimension: Int, bits: Int) -> TurboQuantCodebook {
+    static func codebook(dimension: Int, bits: Int) -> CentroidCodebook {
         let key = "\(dimension)-\(bits)"
         lock.lock()
         if let cached = codebooks[key] {
@@ -703,7 +719,7 @@ private enum TurboQuantCacheStore {
         }
         lock.unlock()
 
-        let codebook = TurboQuantMath.codebook(dimension: dimension, bits: bits)
+        let codebook = CentroidQuantizationMath.codebook(dimension: dimension, bits: bits)
 
         lock.lock()
         codebooks[key] = codebook
@@ -712,61 +728,20 @@ private enum TurboQuantCacheStore {
     }
 }
 
-private final class TurboQuantMSEQuantizer {
+private final class FullMatrixCentroidQuantizer {
     let dimension: Int
-    let bits: Int
     let centroids: MLXArray
-    let boundariesArray: MLXArray
-    let rotation: MLXArray
     let inverseRotation: MLXArray
 
     init(dimension: Int, bits: Int, seed: UInt64) {
-        precondition(dimension > 0, "TurboQuant requires a positive head dimension")
-        precondition((1 ... 4).contains(bits), "TurboQuant MSE stage supports 1-4 bits.")
+        precondition(dimension > 0, "Centroid migration requires a positive head dimension")
+        precondition((1 ... 8).contains(bits), "Centroid migration supports 1-8 bits.")
         self.dimension = dimension
-        self.bits = bits
-
-        let codebook = TurboQuantCacheStore.codebook(dimension: dimension, bits: bits)
+        let codebook = QuantizationParameterStore.codebook(dimension: max(dimension, 3), bits: bits)
         self.centroids = MLXArray(codebook.centroids).asType(.float32)
-        self.boundariesArray = MLXArray(Array(codebook.boundaries.dropFirst().dropLast())).asType(.float32)
-
-        let transform = TurboQuantCacheStore.orthogonalTransform(dimension: dimension, seed: seed)
-        self.rotation = MLXArray(transform.matrix.flatMap { $0 }, [dimension, dimension]).asType(.float32)
-        self.inverseRotation = MLXArray(transform.transpose.flatMap { $0 }, [dimension, dimension]).asType(.float32)
-    }
-
-    func quantizeWithReconstruction(_ vectors: MLXArray)
-        -> (indices: MLXArray, norms: MLXArray, reconstructed: MLXArray)
-    {
-        let floatVectors = vectors.asType(.float32)
-        let norms = sqrt(sum(floatVectors * floatVectors, axis: -1, keepDims: true))
-        let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
-        let rotated = matmul(floatVectors / safeNorms, rotation)
-        let indices = sum(
-            greater(
-                rotated.expandedDimensions(axis: -1),
-                boundariesArray
-            ).asType(.uint8),
-            axis: -1
-        ).asType(.uint8)
-        let squeezedNorms = norms.squeezed(axis: -1)
-        let reconstructed = dequantize(indices: indices, norms: squeezedNorms, dtype: .float32)
-        return (indices, squeezedNorms, reconstructed)
-    }
-
-    func quantize(_ vectors: MLXArray) -> (indices: MLXArray, norms: MLXArray) {
-        let floatVectors = vectors.asType(.float32)
-        let norms = sqrt(sum(floatVectors * floatVectors, axis: -1, keepDims: true))
-        let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
-        let rotated = matmul(floatVectors / safeNorms, rotation)
-        let indices = sum(
-            greater(
-                rotated.expandedDimensions(axis: -1),
-                boundariesArray
-            ).asType(.uint8),
-            axis: -1
-        ).asType(.uint8)
-        return (indices, norms.squeezed(axis: -1))
+        let transform = QuantizationParameterStore.orthogonalTransform(dimension: dimension, seed: seed)
+        self.inverseRotation = MLXArray(transform.transpose.flatMap { $0 }, [dimension, dimension])
+            .asType(.float32)
     }
 
     func dequantize(indices: MLXArray, norms: MLXArray, dtype: DType) -> MLXArray {
@@ -778,35 +753,18 @@ private final class TurboQuantMSEQuantizer {
         let restored = restoredUnit * expandedDimensions(norms.asType(.float32), axis: -1)
         return restored.asType(dtype)
     }
+
 }
 
-private final class TurboQuantResidualSketch {
-    let dimension: Int
-    let sketchDimension: Int
-    let projection: MLXArray
-    let estimatorScale: Float
-
-    init(dimension: Int, sketchDimension: Int? = nil, seed: UInt64) {
-        self.dimension = dimension
-        self.sketchDimension = sketchDimension ?? dimension
-        self.estimatorScale = sqrt(Float.pi / 2.0) / Float(self.sketchDimension)
-
-        var generator = TurboQuantGaussianRandom(seed: seed)
-        let values = (0 ..< (dimension * self.sketchDimension)).map { _ in generator.nextGaussian() }
-        self.projection = MLXArray(values, [dimension, self.sketchDimension]).asType(.float32)
+private enum PackedCentroidIndices {
+    nonisolated(unsafe) private static let shiftValues = MLXArray((0 ..< 8).map(UInt8.init)).asType(.uint8)
+    nonisolated(unsafe) private static let byteWeights =
+        MLXArray([UInt32(1), 2, 4, 8, 16, 32, 64, 128]).asType(.uint32)
+    nonisolated(unsafe) private static let unpackWeightsByBitWidth: [MLXArray] = (0 ... 8).map { bitWidth in
+        let values = (0 ..< max(bitWidth, 1)).map { UInt32(1 << $0) }
+        return MLXArray(values).asType(.uint32)
     }
 
-    func quantize(_ residual: MLXArray) -> (signs: MLXArray, norms: MLXArray) {
-        let floatResidual = residual.asType(.float32)
-        let norms = sqrt(sum(floatResidual * floatResidual, axis: -1, keepDims: true))
-        let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
-        let projected = matmul(floatResidual / safeNorms, projection)
-        let signs = greaterEqual(projected, MLXArray(Float(0.0))).asType(.uint8)
-        return (signs, norms.squeezed(axis: -1))
-    }
-}
-
-private enum TurboQuantBitPacker {
     static func packedByteCount(valueCount: Int, bitWidth: Int) -> Int {
         precondition(valueCount >= 0)
         precondition((1 ... 8).contains(bitWidth))
@@ -831,7 +789,6 @@ private enum TurboQuantBitPacker {
             bitStream = concatenated([bitStream, padding], axis: bitStream.shape.count - 1)
         }
 
-        let byteWeights = MLXArray([UInt32(1), 2, 4, 8, 16, 32, 64, 128]).asType(.uint32)
         let packed = sum(
             bitStream.reshaped(prefixShape + [packedCount, 8]).asType(.uint32) * byteWeights,
             axis: -1
@@ -843,7 +800,6 @@ private enum TurboQuantBitPacker {
         precondition((1 ... 8).contains(bitWidth))
         let prefixShape = Array(packed.shape.dropLast())
         let packedCount = packed.dim(-1)
-        let shiftValues = MLXArray((0 ..< 8).map(UInt8.init)).asType(.uint8)
         let expanded = packed.asType(.uint8).expandedDimensions(axis: -1)
         var bitStream = bitwiseAnd(rightShift(expanded, shiftValues), UInt8(1)).asType(.uint8)
             .reshaped(prefixShape + [packedCount * 8])
@@ -853,7 +809,7 @@ private enum TurboQuantBitPacker {
             bitStream = bitStream[.ellipsis, ..<usedBits]
         }
 
-        let valueWeights = MLXArray((0 ..< bitWidth).map { UInt32(1 << $0) }).asType(.uint32)
+        let valueWeights = unpackWeightsByBitWidth[bitWidth]
         let unpacked = sum(
             bitStream.reshaped(prefixShape + [valueCount, bitWidth]).asType(.uint32) * valueWeights,
             axis: -1
@@ -862,109 +818,1156 @@ private enum TurboQuantBitPacker {
     }
 }
 
-private func turboQuantScoreBlock(
-    scaledQueries: MLXArray,
-    projectedQueries: MLXArray,
-    preparedKeys: MLXArray,
-    residualSigns: MLXArray,
-    residualNorms: MLXArray,
-    residualProjection: MLXArray
-) -> MLXArray {
-    let blockScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2)).asType(.float32)
-    let signedResidual = residualSigns.asType(.float32) * 2.0 - 1.0
-    let rawResidualScores = matmul(projectedQueries, signedResidual.swappedAxes(-1, -2))
-    let broadcastResidualNorms =
-        if residualNorms.shape.count == rawResidualScores.shape.count - 1 {
-            expandedDimensions(residualNorms.asType(.float32), axis: -2)
-        } else {
-            residualNorms.asType(.float32)
-        }
-    let estimatorScale = sqrt(Float.pi / 2.0) / Float(residualProjection.dim(-1))
-    return blockScores + rawResidualScores * broadcastResidualNorms * estimatorScale
+private func castIfNeeded(_ array: MLXArray, to dtype: DType) -> MLXArray {
+    array.dtype == dtype ? array : array.asType(dtype)
 }
 
-public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
-    private var keyBaseIndices: MLXArray?
-    private var keyBaseNorms: MLXArray?
-    private var keyResidualSigns: MLXArray?
-    private var keyResidualNorms: MLXArray?
+private func serializedDType(_ name: String) -> DType {
+    switch name {
+    case "bfloat16":
+        return .bfloat16
+    case "float32":
+        return .float32
+    default:
+        return .float16
+    }
+}
+
+func migrateLegacyCompressedPromptCache(
+    state: [MLXArray],
+    metaState: [String]
+) throws -> KVCacheSimple {
+    guard [7, 10, 13].contains(metaState.count) else {
+        throw KVCacheError(message: "Invalid legacy compressed cache metadata")
+    }
+
+    let legacyKeyTotalBits: Int
+    let valueBits: Int
+    let seed: UInt64
+    let keyDimension: Int?
+    let valueDimension: Int?
+    let dtype: DType
+    let compressedCount: Int
+    let exactCount: Int
+
+    if metaState.count == 13 {
+        legacyKeyTotalBits = Int(metaState[2]) ?? 3
+        valueBits = Int(metaState[3]) ?? 2
+        seed = UInt64(metaState[4]) ?? 42
+        keyDimension = (Int(metaState[7]) ?? 0) > 0 ? Int(metaState[7]) : nil
+        valueDimension = (Int(metaState[8]) ?? 0) > 0 ? Int(metaState[8]) : nil
+        dtype = serializedDType(metaState[9])
+        compressedCount = Int(metaState[10]) ?? 0
+        exactCount = Int(metaState[11]) ?? 0
+    } else if metaState.count == 10 {
+        legacyKeyTotalBits = Int(metaState[2]) ?? 3
+        valueBits = 2
+        seed = UInt64(metaState[3]) ?? 42
+        keyDimension = (Int(metaState[4]) ?? 0) > 0 ? Int(metaState[4]) : nil
+        valueDimension = (Int(metaState[5]) ?? 0) > 0 ? Int(metaState[5]) : nil
+        dtype = serializedDType(metaState[6])
+        compressedCount = Int(metaState[7]) ?? 0
+        exactCount = Int(metaState[8]) ?? 0
+    } else {
+        legacyKeyTotalBits = Int(metaState[2]) ?? 3
+        valueBits = 2
+        seed = UInt64(metaState[3]) ?? 42
+        keyDimension = (Int(metaState[4]) ?? 0) > 0 ? Int(metaState[4]) : nil
+        valueDimension = (Int(metaState[5]) ?? 0) > 0 ? Int(metaState[5]) : nil
+        dtype = serializedDType(metaState[6])
+        compressedCount = Int(metaState[1]) ?? 0
+        exactCount = 0
+    }
+
+    var keyBlocks: [MLXArray] = []
+    var valueBlocks: [MLXArray] = []
+
+    if state.count == 2 {
+        keyBlocks.append(state[0].asType(dtype))
+        valueBlocks.append(state[1].asType(dtype))
+    } else if [6, 8].contains(state.count), compressedCount > 0 {
+        guard let keyDimension, let valueDimension else {
+            throw KVCacheError(message: "Legacy compressed cache is missing head dimensions")
+        }
+        let keyBits = max(1, legacyKeyTotalBits - 1)
+        let keyQuantizer = FullMatrixCentroidQuantizer(
+            dimension: keyDimension,
+            bits: keyBits,
+            seed: seed
+        )
+        let valueQuantizer = FullMatrixCentroidQuantizer(
+            dimension: valueDimension,
+            bits: valueBits,
+            seed: seed &+ 1
+        )
+        let keyIndices = PackedCentroidIndices.unpack(
+            state[0][.ellipsis, ..<compressedCount, 0...],
+            bitWidth: keyBits,
+            valueCount: keyDimension
+        )
+        let valueIndices = PackedCentroidIndices.unpack(
+            state[4][.ellipsis, ..<compressedCount, 0...],
+            bitWidth: valueBits,
+            valueCount: valueDimension
+        )
+        keyBlocks.append(
+            keyQuantizer.dequantize(
+                indices: keyIndices,
+                norms: state[1][.ellipsis, ..<compressedCount],
+                dtype: dtype
+            )
+        )
+        valueBlocks.append(
+            valueQuantizer.dequantize(
+                indices: valueIndices,
+                norms: state[5][.ellipsis, ..<compressedCount],
+                dtype: dtype
+            )
+        )
+        if state.count == 8, exactCount > 0 {
+            keyBlocks.append(state[6][.ellipsis, ..<exactCount, 0...].asType(dtype))
+            valueBlocks.append(state[7][.ellipsis, ..<exactCount, 0...].asType(dtype))
+        }
+    } else if state.isEmpty {
+        return KVCacheSimple()
+    } else {
+        throw KVCacheError(message: "Invalid legacy compressed cache state")
+    }
+
+    guard let firstKeys = keyBlocks.first, let firstValues = valueBlocks.first else {
+        return KVCacheSimple()
+    }
+
+    let migrated = KVCacheSimple()
+    if keyBlocks.count == 1 {
+        migrated.state = [firstKeys, firstValues]
+    } else {
+        migrated.state = [
+            concatenated(keyBlocks, axis: 2),
+            concatenated(valueBlocks, axis: 2),
+        ]
+    }
+    return migrated
+}
+
+private struct RotorQuantRotationParameters: Sendable {
+    let variant: RotorQuantVariant
+    let blockSize: Int
+    let paddedDimension: Int
+    let parameters: [Float]
+}
+
+private enum RotorQuantRotationFactory {
+    static func effectiveVariant(_ requested: RotorQuantVariant, dimension: Int) -> RotorQuantVariant {
+        switch requested {
+        case .iso where dimension % 4 == 0:
+            return .iso
+        case .planar where dimension % 2 == 0:
+            return .planar
+        case .clifford where dimension % 3 == 0:
+            return .clifford
+        default:
+            if dimension % 4 == 0 {
+                return .iso
+            }
+            if dimension % 2 == 0 {
+                return .planar
+            }
+            return requested
+        }
+    }
+
+    static func make(dimension: Int, requestedVariant: RotorQuantVariant, seed: UInt64)
+        -> RotorQuantRotationParameters
+    {
+        let variant = effectiveVariant(requestedVariant, dimension: dimension)
+        var generator = SeededGaussianRandom(seed: seed)
+
+        switch variant {
+        case .iso:
+            let blockSize = 4
+            let groups = (dimension + blockSize - 1) / blockSize
+            var parameters: [Float] = []
+            parameters.reserveCapacity(groups * 4)
+            for _ in 0 ..< groups {
+                let q = normalized((0 ..< 4).map { _ in generator.nextGaussian() })
+                parameters.append(contentsOf: q)
+            }
+            return RotorQuantRotationParameters(
+                variant: .iso,
+                blockSize: blockSize,
+                paddedDimension: groups * blockSize,
+                parameters: parameters
+            )
+        case .planar:
+            let blockSize = 2
+            let groups = (dimension + blockSize - 1) / blockSize
+            var parameters: [Float] = []
+            parameters.reserveCapacity(groups * 2)
+            for _ in 0 ..< groups {
+                let pair = normalized([generator.nextGaussian(), generator.nextGaussian()])
+                parameters.append(contentsOf: pair)
+            }
+            return RotorQuantRotationParameters(
+                variant: .planar,
+                blockSize: blockSize,
+                paddedDimension: groups * blockSize,
+                parameters: parameters
+            )
+        case .clifford:
+            let blockSize = 3
+            let groups = (dimension + blockSize - 1) / blockSize
+            var parameters: [Float] = []
+            parameters.reserveCapacity(groups * 4)
+            for _ in 0 ..< groups {
+                let rotor = normalized((0 ..< 4).map { _ in generator.nextGaussian() })
+                parameters.append(contentsOf: rotor)
+            }
+            return RotorQuantRotationParameters(
+                variant: .clifford,
+                blockSize: blockSize,
+                paddedDimension: groups * blockSize,
+                parameters: parameters
+            )
+        }
+    }
+
+    private static func normalized(_ values: [Float]) -> [Float] {
+        let norm = sqrt(max(values.reduce(Float(0)) { $0 + $1 * $1 }, Float(1e-12)))
+        return values.map { $0 / norm }
+    }
+}
+
+private final class RotorQuantMSEQuantizer {
+    let dimension: Int
+    let bits: Int
+    let variant: RotorQuantVariant
+    let blockSize: Int
+    let paddedDimension: Int
+    let storageDimension: Int
+    let centroids: MLXArray
+    let boundariesArray: MLXArray
+    let rotationParameters: MLXArray
+
+    init(dimension: Int, bits: Int, variant requestedVariant: RotorQuantVariant, seed: UInt64) {
+        precondition(dimension > 0, "RotorQuant requires a positive head dimension")
+        precondition((1 ... 8).contains(bits), "RotorQuant supports 1-8 centroid bits.")
+        self.dimension = dimension
+        self.bits = bits
+
+        let rotations = RotorQuantRotationFactory.make(
+            dimension: dimension,
+            requestedVariant: requestedVariant,
+            seed: seed
+        )
+        self.variant = rotations.variant
+        self.blockSize = rotations.blockSize
+        self.paddedDimension =
+            rotations.variant == .clifford
+            ? ((dimension + rotations.blockSize - 1) / rotations.blockSize) * rotations.blockSize
+            : rotations.paddedDimension
+        self.storageDimension = self.paddedDimension
+
+        let codebook = QuantizationParameterStore.codebook(dimension: max(dimension, 3), bits: bits)
+        self.centroids = MLXArray(codebook.centroids).asType(.float32)
+        self.boundariesArray = MLXArray(Array(codebook.boundaries.dropFirst().dropLast())).asType(.float32)
+
+        let parameterWidth = rotations.variant == .planar ? 2 : 4
+        self.rotationParameters = MLXArray(
+            rotations.parameters,
+            [rotations.parameters.count / parameterWidth, parameterWidth]
+        ).asType(.float32)
+    }
+
+    func quantize(_ vectors: MLXArray) -> (indices: MLXArray, norms: MLXArray) {
+        let floatVectors = vectors.asType(.float32)
+        let norms = sqrt(sum(floatVectors * floatVectors, axis: -1, keepDims: true))
+        let safeNorms = maximum(norms, MLXArray(Float(1e-8)))
+        let rotated = rotate(floatVectors / safeNorms)
+        let indices = sum(
+            greater(
+                rotated.expandedDimensions(axis: -1),
+                boundariesArray
+            ).asType(.uint8),
+            axis: -1
+        ).asType(.uint8)
+        return (indices, norms.squeezed(axis: -1))
+    }
+
+    func dequantize(indices: MLXArray, norms: MLXArray, dtype: DType) -> MLXArray {
+        let shape = indices.shape
+        let flatCount = shape.reduce(1, *)
+        let flatIndices = indices.reshaped([flatCount])
+        let rotated = centroids[flatIndices].reshaped(shape)
+        let restoredUnit = inverseRotate(rotated)
+        let restored = restoredUnit * expandedDimensions(norms.asType(.float32), axis: -1)
+        return restored.asType(dtype)
+    }
+
+    private func padToBlockDimension(_ vectors: MLXArray) -> MLXArray {
+        guard paddedDimension > dimension else { return vectors }
+        let paddingShape = Array(vectors.shape.dropLast()) + [paddedDimension - dimension]
+        let padding = MLXArray.zeros(paddingShape, dtype: vectors.dtype)
+        return concatenated([vectors, padding], axis: -1)
+    }
+
+    private func extractOriginalDimension(_ vectors: MLXArray) -> MLXArray {
+        vectors[.ellipsis, ..<dimension]
+    }
+
+    private func rotate(_ vectors: MLXArray) -> MLXArray {
+        switch variant {
+        case .iso:
+            let padded = padToBlockDimension(vectors)
+            let grouped = padded.reshaped(Array(padded.shape.dropLast()) + [paddedDimension / 4, 4])
+            let rotated = quatMultiply(rotationParameters, grouped)
+            return rotated.reshaped(Array(vectors.shape.dropLast()) + [storageDimension])
+        case .planar:
+            let padded = padToBlockDimension(vectors)
+            let grouped = padded.reshaped(Array(padded.shape.dropLast()) + [paddedDimension / 2, 2])
+            let rotated = planarRotate(rotationParameters, grouped)
+            return rotated.reshaped(Array(vectors.shape.dropLast()) + [storageDimension])
+        case .clifford:
+            let padded = padToBlockDimension(vectors)
+            let grouped = padded.reshaped(Array(padded.shape.dropLast()) + [paddedDimension / 3, 3])
+            let multivectors = embedCliffordVectors(grouped)
+            let rotated = cliffordSandwich(rotationParameters, multivectors)
+            return extractCliffordVectors(rotated).reshaped(
+                Array(vectors.shape.dropLast()) + [storageDimension]
+            )
+        }
+    }
+
+    private func inverseRotate(_ rotated: MLXArray) -> MLXArray {
+        switch variant {
+        case .iso:
+            let grouped = rotated.reshaped(Array(rotated.shape.dropLast()) + [paddedDimension / 4, 4])
+            let restored = quatMultiply(quatConjugate(rotationParameters), grouped)
+                .reshaped(Array(rotated.shape.dropLast()) + [paddedDimension])
+            return extractOriginalDimension(restored)
+        case .planar:
+            let grouped = rotated.reshaped(Array(rotated.shape.dropLast()) + [paddedDimension / 2, 2])
+            let restored = planarInverseRotate(rotationParameters, grouped)
+                .reshaped(Array(rotated.shape.dropLast()) + [paddedDimension])
+            return extractOriginalDimension(restored)
+        case .clifford:
+            let grouped = rotated.reshaped(Array(rotated.shape.dropLast()) + [paddedDimension / 3, 3])
+            let multivectors = embedCliffordVectors(grouped)
+            let restored = cliffordSandwich(cliffordReverseRotorParameters(rotationParameters), multivectors)
+            let extracted = extractCliffordVectors(restored).reshaped(
+                Array(rotated.shape.dropLast()) + [paddedDimension]
+            )
+            return extractOriginalDimension(extracted)
+        }
+    }
+
+    private func planarRotate(_ parameters: MLXArray, _ vectors: MLXArray) -> MLXArray {
+        let cs = parameters.split(parts: 2, axis: -1)
+        let xy = vectors.split(parts: 2, axis: -1)
+        return concatenated([
+            cs[0] * xy[0] - cs[1] * xy[1],
+            cs[1] * xy[0] + cs[0] * xy[1],
+        ], axis: -1)
+    }
+
+    private func planarInverseRotate(_ parameters: MLXArray, _ vectors: MLXArray) -> MLXArray {
+        let cs = parameters.split(parts: 2, axis: -1)
+        let xy = vectors.split(parts: 2, axis: -1)
+        return concatenated([
+            cs[0] * xy[0] + cs[1] * xy[1],
+            -cs[1] * xy[0] + cs[0] * xy[1],
+        ], axis: -1)
+    }
+
+    private func quatConjugate(_ q: MLXArray) -> MLXArray {
+        let parts = q.split(parts: 4, axis: -1)
+        return concatenated([parts[0], -parts[1], -parts[2], -parts[3]], axis: -1)
+    }
+
+    private func quatMultiply(_ lhs: MLXArray, _ rhs: MLXArray) -> MLXArray {
+        let a = lhs.split(parts: 4, axis: -1)
+        let b = rhs.split(parts: 4, axis: -1)
+        let rw = a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3]
+        let rx = a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2]
+        let ry = a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1]
+        let rz = a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]
+        return concatenated([rw, rx, ry, rz], axis: -1)
+    }
+
+    private func embedCliffordVectors(_ vectors: MLXArray) -> MLXArray {
+        let parts = vectors.split(parts: 3, axis: -1)
+        let zero = MLXArray.zeros(parts[0].shape, dtype: vectors.dtype)
+        return concatenated([
+            zero, parts[0], parts[1], parts[2], zero, zero, zero, zero,
+        ], axis: -1)
+    }
+
+    private func extractCliffordVectors(_ multivectors: MLXArray) -> MLXArray {
+        let parts = multivectors.split(parts: 8, axis: -1)
+        return concatenated([parts[1], parts[2], parts[3]], axis: -1)
+    }
+
+    private func cliffordReverseRotorParameters(_ parameters: MLXArray) -> MLXArray {
+        let parts = parameters.split(parts: 4, axis: -1)
+        return concatenated([parts[0], -parts[1], -parts[2], -parts[3]], axis: -1)
+    }
+
+    private func cliffordReverseMultivector(_ multivectors: MLXArray) -> MLXArray {
+        let parts = multivectors.split(parts: 8, axis: -1)
+        return concatenated([
+            parts[0], parts[1], parts[2], parts[3],
+            -parts[4], -parts[5], -parts[6], -parts[7],
+        ], axis: -1)
+    }
+
+    private func cliffordSandwich(_ rotorParameters: MLXArray, _ multivectors: MLXArray) -> MLXArray {
+        let zero = MLXArray.zeros([rotorParameters.dim(0), 1], dtype: rotorParameters.dtype)
+        let rotorParts = rotorParameters.split(parts: 4, axis: -1)
+        let rotor = concatenated([
+            rotorParts[0], zero, zero, zero,
+            rotorParts[1], rotorParts[2], rotorParts[3], zero,
+        ], axis: -1)
+        return geometricProduct(geometricProduct(rotor, multivectors), cliffordReverseMultivector(rotor))
+    }
+
+    private func geometricProduct(_ lhs: MLXArray, _ rhs: MLXArray) -> MLXArray {
+        let a = lhs.split(parts: 8, axis: -1)
+        let b = rhs.split(parts: 8, axis: -1)
+        let r0 = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+            - a[4] * b[4] - a[5] * b[5] - a[6] * b[6] - a[7] * b[7]
+        let r1 = a[0] * b[1] + a[1] * b[0] - a[2] * b[4] + a[4] * b[2]
+            - a[3] * b[5] + a[5] * b[3] - a[6] * b[7] - a[7] * b[6]
+        let r2 = a[0] * b[2] + a[2] * b[0] + a[1] * b[4] - a[4] * b[1]
+            - a[3] * b[6] + a[6] * b[3] + a[5] * b[7] + a[7] * b[5]
+        let r3 = a[0] * b[3] + a[3] * b[0] + a[1] * b[5] - a[5] * b[1]
+            + a[2] * b[6] - a[6] * b[2] - a[4] * b[7] - a[7] * b[4]
+        let r12 = a[0] * b[4] + a[4] * b[0] + a[1] * b[2] - a[2] * b[1]
+            - a[5] * b[6] + a[6] * b[5] + a[3] * b[7] + a[7] * b[3]
+        let r13 = a[0] * b[5] + a[5] * b[0] + a[1] * b[3] - a[3] * b[1]
+            + a[4] * b[6] - a[6] * b[4] - a[2] * b[7] - a[7] * b[2]
+        let r23 = a[0] * b[6] + a[6] * b[0] + a[2] * b[3] - a[3] * b[2]
+            - a[4] * b[5] + a[5] * b[4] + a[1] * b[7] + a[7] * b[1]
+        let r123 = a[0] * b[7] + a[7] * b[0] + a[1] * b[6] - a[6] * b[1]
+            - a[2] * b[5] - a[5] * b[2] + a[3] * b[4] + a[4] * b[3]
+        return concatenated([r0, r1, r2, r3, r12, r13, r23, r123], axis: -1)
+    }
+}
+
+private func makeRotorQuantIsoDecodeAttentionKernel() -> MLXFast.MLXFastKernel {
+    let header = """
+        uint unpack_rotor_index(const device uint8_t* row, uint value_index, uint bit_width) {
+            uint bit_offset = value_index * bit_width;
+            uint byte_offset = bit_offset >> 3;
+            uint shift = bit_offset & 7;
+            uint word = row[byte_offset];
+            if (shift + bit_width > 8) {
+                word |= uint(row[byte_offset + 1]) << 8;
+            }
+            uint mask = (1u << bit_width) - 1u;
+            return (word >> shift) & mask;
+        }
+
+        float4 rotor_quat_multiply(float4 a, float4 b) {
+            return float4(
+                a.x * b.x - a.y * b.y - a.z * b.z - a.w * b.w,
+                a.x * b.y + a.y * b.x + a.z * b.w - a.w * b.z,
+                a.x * b.z - a.y * b.w + a.z * b.x + a.w * b.y,
+                a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x
+            );
+        }
+
+        float4 rotor_load_quantized_iso_group(
+            const device uint8_t* row,
+            const device float* norms,
+            const device float* centroids,
+            uint token,
+            uint group,
+            uint packed_width,
+            uint bit_width
+        ) {
+            const device uint8_t* packed = row + token * packed_width;
+            uint base_index = group << 2;
+            return float4(
+                centroids[unpack_rotor_index(packed, base_index, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 1, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 2, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 3, bit_width)]
+            ) * norms[token];
+        }
+
+        float4 rotor_load_quantized_iso_group(
+            const device uint8_t* row,
+            const device float* norms,
+            const constant float* centroids,
+            uint token,
+            uint group,
+            uint packed_width,
+            uint bit_width
+        ) {
+            const device uint8_t* packed = row + token * packed_width;
+            uint base_index = group << 2;
+            return float4(
+                centroids[unpack_rotor_index(packed, base_index, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 1, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 2, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 3, bit_width)]
+            ) * norms[token];
+        }
+
+        float4 rotor_rotate_iso_group(
+            float4 value,
+            const device float* rotations,
+            uint group
+        ) {
+            float4 q = float4(
+                rotations[group * 4],
+                rotations[group * 4 + 1],
+                rotations[group * 4 + 2],
+                rotations[group * 4 + 3]
+            );
+            return rotor_quat_multiply(q, value);
+        }
+
+        float4 rotor_inverse_rotate_iso_group(
+            float4 rotated,
+            const device float* rotations,
+            uint group
+        ) {
+            float4 q = float4(
+                rotations[group * 4],
+                -rotations[group * 4 + 1],
+                -rotations[group * 4 + 2],
+                -rotations[group * 4 + 3]
+            );
+            return rotor_quat_multiply(q, rotated);
+        }
+        """
+
+    let source = """
+        uint lane = thread_position_in_grid.x;
+        uint kv_head_linear = thread_position_in_grid.y;
+        uint batch = kv_head_linear / KV_HEADS;
+        uint kv_head = kv_head_linear - batch * KV_HEADS;
+
+        const device uint8_t* key_rows = key_indices + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY * KEY_PACKED_WIDTH);
+        const device float* key_norm_rows = key_norms + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY);
+        const device uint8_t* value_rows = value_indices + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY * VALUE_PACKED_WIDTH);
+        const device float* value_norm_rows = value_norms + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY);
+        const device T* exact_key_rows = exact_keys + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
+        const device T* exact_value_rows = exact_values + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
+        uint compressed_count = uint(compressed_count_scalar);
+        uint exact_count = uint(exact_count_scalar);
+
+        constexpr uint GROUPS_PER_LANE = D / 128;
+        constexpr uint WORK_ITEMS = HEAD_REPEATS * GROUPS_PER_LANE;
+        float4 q_rot[WORK_ITEMS];
+        float4 accum_rot[WORK_ITEMS];
+        float max_score[HEAD_REPEATS];
+        float sum_exp[HEAD_REPEATS];
+        uint groups[GROUPS_PER_LANE];
+
+        for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+            max_score[repeat] = -INFINITY;
+            sum_exp[repeat] = 0.0f;
+        }
+
+        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+            uint group = lane + i * 32;
+            uint base = group << 2;
+            groups[i] = group;
+            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                uint query_head = kv_head * HEAD_REPEATS + repeat;
+                const device T* query_row = queries + ((batch * QUERY_HEADS + query_head) * D);
+                float4 query_group = float4(
+                    static_cast<float>(query_row[base]),
+                    static_cast<float>(query_row[base + 1]),
+                    static_cast<float>(query_row[base + 2]),
+                    static_cast<float>(query_row[base + 3])
+                );
+                uint index = repeat * GROUPS_PER_LANE + i;
+                q_rot[index] = rotor_rotate_iso_group(query_group, key_rotations, group);
+                accum_rot[index] = float4(0.0f);
+            }
+        }
+
+        for (uint token = 0; token < compressed_count; ++token) {
+            float partial_score[HEAD_REPEATS];
+            float4 value_groups[GROUPS_PER_LANE];
+            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                partial_score[repeat] = 0.0f;
+            }
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint group = groups[i];
+                float4 key_group = rotor_load_quantized_iso_group(
+                    key_rows,
+                    key_norm_rows,
+                    key_centroids,
+                    token,
+                    group,
+                    KEY_PACKED_WIDTH,
+                    KEY_BITS
+                );
+                value_groups[i] = rotor_load_quantized_iso_group(
+                    value_rows,
+                    value_norm_rows,
+                    value_centroids,
+                    token,
+                    group,
+                    VALUE_PACKED_WIDTH,
+                    VALUE_BITS
+                );
+                for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                    partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
+                }
+            }
+
+            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                float score = simd_sum(partial_score[repeat]) * scale;
+                float next_max = max(max_score[repeat], score);
+                float old_weight = fast::exp(max_score[repeat] - next_max);
+                float new_weight = fast::exp(score - next_max);
+
+                for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                    uint index = repeat * GROUPS_PER_LANE + i;
+                    accum_rot[index] = accum_rot[index] * old_weight + value_groups[i] * new_weight;
+                }
+                sum_exp[repeat] = sum_exp[repeat] * old_weight + new_weight;
+                max_score[repeat] = next_max;
+            }
+        }
+
+        for (uint token = 0; token < exact_count; ++token) {
+            const device T* key_row = exact_key_rows + token * D;
+            float partial_score[HEAD_REPEATS];
+            float4 value_groups[GROUPS_PER_LANE];
+            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                partial_score[repeat] = 0.0f;
+            }
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint group = groups[i];
+                uint base = group << 2;
+                const device T* key_group_row = key_row + base;
+                const device T* value_group_row = exact_value_rows + token * D + base;
+                float4 key_group = rotor_rotate_iso_group(
+                    float4(
+                        static_cast<float>(key_group_row[0]),
+                        static_cast<float>(key_group_row[1]),
+                        static_cast<float>(key_group_row[2]),
+                        static_cast<float>(key_group_row[3])
+                    ),
+                    key_rotations,
+                    group
+                );
+                value_groups[i] = rotor_rotate_iso_group(
+                    float4(
+                        static_cast<float>(value_group_row[0]),
+                        static_cast<float>(value_group_row[1]),
+                        static_cast<float>(value_group_row[2]),
+                        static_cast<float>(value_group_row[3])
+                    ),
+                    value_rotations,
+                    group
+                );
+                for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                    partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
+                }
+            }
+
+            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+                float score = simd_sum(partial_score[repeat]) * scale;
+                float next_max = max(max_score[repeat], score);
+                float old_weight = fast::exp(max_score[repeat] - next_max);
+                float new_weight = fast::exp(score - next_max);
+
+                for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                    uint index = repeat * GROUPS_PER_LANE + i;
+                    accum_rot[index] = accum_rot[index] * old_weight + value_groups[i] * new_weight;
+                }
+                sum_exp[repeat] = sum_exp[repeat] * old_weight + new_weight;
+                max_score[repeat] = next_max;
+            }
+        }
+
+        for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
+            uint query_head = kv_head * HEAD_REPEATS + repeat;
+            device T* out_row = output + ((batch * QUERY_HEADS + query_head) * D);
+            float inv_sum = 1.0f / max(sum_exp[repeat], 1e-20f);
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint group = groups[i];
+                uint index = repeat * GROUPS_PER_LANE + i;
+                float4 restored = rotor_inverse_rotate_iso_group(accum_rot[index] * inv_sum, value_rotations, group);
+                uint base = group << 2;
+                out_row[base] = static_cast<T>(restored.x);
+                out_row[base + 1] = static_cast<T>(restored.y);
+                out_row[base + 2] = static_cast<T>(restored.z);
+                out_row[base + 3] = static_cast<T>(restored.w);
+            }
+        }
+        """
+
+    return MLXFast.metalKernel(
+        name: "rotorquant_iso_decode_attention",
+        inputNames: [
+            "queries",
+            "key_indices",
+            "key_norms",
+            "value_indices",
+            "value_norms",
+            "exact_keys",
+            "exact_values",
+            "key_centroids",
+            "value_centroids",
+            "key_rotations",
+            "value_rotations",
+            "compressed_count_scalar",
+            "exact_count_scalar",
+            "scale",
+        ],
+        outputNames: ["output"],
+        source: source,
+        header: header
+    )
+}
+
+private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
+    let header = """
+        uint unpack_rotor_index(const device uint8_t* row, uint value_index, uint bit_width) {
+            uint bit_offset = value_index * bit_width;
+            uint byte_offset = bit_offset >> 3;
+            uint shift = bit_offset & 7;
+            uint word = row[byte_offset];
+            if (shift + bit_width > 8) {
+                word |= uint(row[byte_offset + 1]) << 8;
+            }
+            uint mask = (1u << bit_width) - 1u;
+            return (word >> shift) & mask;
+        }
+
+        float4 rotor_quat_multiply(float4 a, float4 b) {
+            return float4(
+                a.x * b.x - a.y * b.y - a.z * b.z - a.w * b.w,
+                a.x * b.y + a.y * b.x + a.z * b.w - a.w * b.z,
+                a.x * b.z - a.y * b.w + a.z * b.x + a.w * b.y,
+                a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x
+            );
+        }
+
+        float4 rotor_load_quantized_iso_group(
+            const device uint8_t* row,
+            const device float* norms,
+            const device float* centroids,
+            uint token,
+            uint group,
+            uint packed_width,
+            uint bit_width
+        ) {
+            const device uint8_t* packed = row + token * packed_width;
+            uint base_index = group << 2;
+            return float4(
+                centroids[unpack_rotor_index(packed, base_index, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 1, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 2, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 3, bit_width)]
+            ) * norms[token];
+        }
+
+        float4 rotor_load_quantized_iso_group(
+            const device uint8_t* row,
+            const device float* norms,
+            const constant float* centroids,
+            uint token,
+            uint group,
+            uint packed_width,
+            uint bit_width
+        ) {
+            const device uint8_t* packed = row + token * packed_width;
+            uint base_index = group << 2;
+            return float4(
+                centroids[unpack_rotor_index(packed, base_index, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 1, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 2, bit_width)],
+                centroids[unpack_rotor_index(packed, base_index + 3, bit_width)]
+            ) * norms[token];
+        }
+
+        float4 rotor_rotate_iso_group(
+            float4 value,
+            const device float* rotations,
+            uint group
+        ) {
+            float4 q = float4(
+                rotations[group * 4],
+                rotations[group * 4 + 1],
+                rotations[group * 4 + 2],
+                rotations[group * 4 + 3]
+            );
+            return rotor_quat_multiply(q, value);
+        }
+        """
+
+    let source = """
+        uint lane = thread_position_in_grid.x;
+        uint linear = thread_position_in_grid.y;
+        uint block = linear % BLOCK_COUNT;
+        uint query_linear = linear / BLOCK_COUNT;
+        uint batch = query_linear / QUERY_HEADS;
+        uint query_head = query_linear - batch * QUERY_HEADS;
+        uint kv_head = query_head / HEAD_REPEATS;
+        uint token_start = block * BLOCK_TOKENS;
+        uint compressed_count = uint(compressed_count_scalar);
+        uint token_end = min(token_start + uint(BLOCK_TOKENS), compressed_count);
+
+        const device T* query_row = queries + ((batch * QUERY_HEADS + query_head) * D);
+        const device uint8_t* key_rows = key_indices + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY * KEY_PACKED_WIDTH);
+        const device float* key_norm_rows = key_norms + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY);
+        const device uint8_t* value_rows = value_indices + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY * VALUE_PACKED_WIDTH);
+        const device float* value_norm_rows = value_norms + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY);
+        device float* partial_row = partial_values + (((batch * QUERY_HEADS + query_head) * BLOCK_COUNT + block) * D);
+        device float* partial_max_row = partial_max + ((batch * QUERY_HEADS + query_head) * BLOCK_COUNT + block);
+        device float* partial_sum_row = partial_sum + ((batch * QUERY_HEADS + query_head) * BLOCK_COUNT + block);
+
+        constexpr uint GROUPS_PER_LANE = D / 128;
+        float4 q_rot[GROUPS_PER_LANE];
+        float4 accum_rot[GROUPS_PER_LANE];
+        uint groups[GROUPS_PER_LANE];
+        float max_score = -INFINITY;
+        float sum_exp = 0.0f;
+
+        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+            uint group = lane + i * 32;
+            uint base = group << 2;
+            groups[i] = group;
+            q_rot[i] = rotor_rotate_iso_group(
+                float4(
+                    static_cast<float>(query_row[base]),
+                    static_cast<float>(query_row[base + 1]),
+                    static_cast<float>(query_row[base + 2]),
+                    static_cast<float>(query_row[base + 3])
+                ),
+                key_rotations,
+                group
+            );
+            accum_rot[i] = float4(0.0f);
+        }
+
+        for (uint token = token_start; token < token_end; ++token) {
+            float partial_score = 0.0f;
+            float4 value_groups[GROUPS_PER_LANE];
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint group = groups[i];
+                float4 key_group = rotor_load_quantized_iso_group(
+                    key_rows,
+                    key_norm_rows,
+                    key_centroids,
+                    token,
+                    group,
+                    KEY_PACKED_WIDTH,
+                    KEY_BITS
+                );
+                value_groups[i] = rotor_load_quantized_iso_group(
+                    value_rows,
+                    value_norm_rows,
+                    value_centroids,
+                    token,
+                    group,
+                    VALUE_PACKED_WIDTH,
+                    VALUE_BITS
+                );
+                partial_score += dot(q_rot[i], key_group);
+            }
+
+            float score = simd_sum(partial_score) * scale;
+            float next_max = max(max_score, score);
+            float old_weight = fast::exp(max_score - next_max);
+            float new_weight = fast::exp(score - next_max);
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                accum_rot[i] = accum_rot[i] * old_weight + value_groups[i] * new_weight;
+            }
+            sum_exp = sum_exp * old_weight + new_weight;
+            max_score = next_max;
+        }
+
+        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+            uint base = groups[i] << 2;
+            partial_row[base] = accum_rot[i].x;
+            partial_row[base + 1] = accum_rot[i].y;
+            partial_row[base + 2] = accum_rot[i].z;
+            partial_row[base + 3] = accum_rot[i].w;
+        }
+        *partial_max_row = max_score;
+        *partial_sum_row = sum_exp;
+        """
+
+    return MLXFast.metalKernel(
+        name: "rotorquant_iso_compressed_blocks",
+        inputNames: [
+            "queries",
+            "key_indices",
+            "key_norms",
+            "value_indices",
+            "value_norms",
+            "key_centroids",
+            "value_centroids",
+            "key_rotations",
+            "compressed_count_scalar",
+            "scale",
+        ],
+        outputNames: ["partial_values", "partial_max", "partial_sum"],
+        source: source,
+        header: header
+    )
+}
+
+private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
+    let header = """
+        float4 rotor_quat_multiply(float4 a, float4 b) {
+            return float4(
+                a.x * b.x - a.y * b.y - a.z * b.z - a.w * b.w,
+                a.x * b.y + a.y * b.x + a.z * b.w - a.w * b.z,
+                a.x * b.z - a.y * b.w + a.z * b.x + a.w * b.y,
+                a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x
+            );
+        }
+
+        float4 rotor_rotate_iso_group(
+            float4 value,
+            const device float* rotations,
+            uint group
+        ) {
+            float4 q = float4(
+                rotations[group * 4],
+                rotations[group * 4 + 1],
+                rotations[group * 4 + 2],
+                rotations[group * 4 + 3]
+            );
+            return rotor_quat_multiply(q, value);
+        }
+
+        float4 rotor_inverse_rotate_iso_group(
+            float4 rotated,
+            const device float* rotations,
+            uint group
+        ) {
+            float4 q = float4(
+                rotations[group * 4],
+                -rotations[group * 4 + 1],
+                -rotations[group * 4 + 2],
+                -rotations[group * 4 + 3]
+            );
+            return rotor_quat_multiply(q, rotated);
+        }
+        """
+
+    let source = """
+        uint lane = thread_position_in_grid.x;
+        uint query_linear = thread_position_in_grid.y;
+        uint batch = query_linear / QUERY_HEADS;
+        uint query_head = query_linear - batch * QUERY_HEADS;
+        uint kv_head = query_head / HEAD_REPEATS;
+        uint exact_count = uint(exact_count_scalar);
+
+        const device T* query_row = queries + ((batch * QUERY_HEADS + query_head) * D);
+        const device T* exact_key_rows = exact_keys + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
+        const device T* exact_value_rows = exact_values + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
+        device T* out_row = output + ((batch * QUERY_HEADS + query_head) * D);
+
+        constexpr uint GROUPS_PER_LANE = D / 128;
+        float4 q_rot[GROUPS_PER_LANE];
+        float4 accum_rot[GROUPS_PER_LANE];
+        uint groups[GROUPS_PER_LANE];
+        float max_score = -INFINITY;
+        float sum_exp = 0.0f;
+
+        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+            uint group = lane + i * 32;
+            uint base = group << 2;
+            groups[i] = group;
+            q_rot[i] = rotor_rotate_iso_group(
+                float4(
+                    static_cast<float>(query_row[base]),
+                    static_cast<float>(query_row[base + 1]),
+                    static_cast<float>(query_row[base + 2]),
+                    static_cast<float>(query_row[base + 3])
+                ),
+                key_rotations,
+                group
+            );
+            accum_rot[i] = float4(0.0f);
+        }
+
+        for (uint block = 0; block < BLOCK_COUNT; ++block) {
+            uint stats_index = (batch * QUERY_HEADS + query_head) * BLOCK_COUNT + block;
+            float block_sum = partial_sum[stats_index];
+            if (block_sum <= 0.0f) {
+                continue;
+            }
+            float block_max = partial_max[stats_index];
+            float next_max = max(max_score, block_max);
+            float old_weight = fast::exp(max_score - next_max);
+            float new_weight = fast::exp(block_max - next_max);
+            const device float* partial_row = partial_values + (stats_index * D);
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint base = groups[i] << 2;
+                float4 block_value = float4(
+                    partial_row[base],
+                    partial_row[base + 1],
+                    partial_row[base + 2],
+                    partial_row[base + 3]
+                );
+                accum_rot[i] = accum_rot[i] * old_weight + block_value * new_weight;
+            }
+            sum_exp = sum_exp * old_weight + block_sum * new_weight;
+            max_score = next_max;
+        }
+
+        for (uint token = 0; token < exact_count; ++token) {
+            const device T* key_row = exact_key_rows + token * D;
+            float partial_score = 0.0f;
+            float4 value_groups[GROUPS_PER_LANE];
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                uint group = groups[i];
+                uint base = group << 2;
+                const device T* key_group_row = key_row + base;
+                const device T* value_group_row = exact_value_rows + token * D + base;
+                float4 key_group = rotor_rotate_iso_group(
+                    float4(
+                        static_cast<float>(key_group_row[0]),
+                        static_cast<float>(key_group_row[1]),
+                        static_cast<float>(key_group_row[2]),
+                        static_cast<float>(key_group_row[3])
+                    ),
+                    key_rotations,
+                    group
+                );
+                value_groups[i] = rotor_rotate_iso_group(
+                    float4(
+                        static_cast<float>(value_group_row[0]),
+                        static_cast<float>(value_group_row[1]),
+                        static_cast<float>(value_group_row[2]),
+                        static_cast<float>(value_group_row[3])
+                    ),
+                    value_rotations,
+                    group
+                );
+                partial_score += dot(q_rot[i], key_group);
+            }
+
+            float score = simd_sum(partial_score) * scale;
+            float next_max = max(max_score, score);
+            float old_weight = fast::exp(max_score - next_max);
+            float new_weight = fast::exp(score - next_max);
+
+            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+                accum_rot[i] = accum_rot[i] * old_weight + value_groups[i] * new_weight;
+            }
+            sum_exp = sum_exp * old_weight + new_weight;
+            max_score = next_max;
+        }
+
+        float inv_sum = 1.0f / max(sum_exp, 1e-20f);
+        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
+            uint group = groups[i];
+            uint base = group << 2;
+            float4 restored = rotor_inverse_rotate_iso_group(accum_rot[i] * inv_sum, value_rotations, group);
+            out_row[base] = static_cast<T>(restored.x);
+            out_row[base + 1] = static_cast<T>(restored.y);
+            out_row[base + 2] = static_cast<T>(restored.z);
+            out_row[base + 3] = static_cast<T>(restored.w);
+        }
+        """
+
+    return MLXFast.metalKernel(
+        name: "rotorquant_iso_block_reduce",
+        inputNames: [
+            "partial_values",
+            "partial_max",
+            "partial_sum",
+            "queries",
+            "exact_keys",
+            "exact_values",
+            "key_rotations",
+            "value_rotations",
+            "exact_count_scalar",
+            "scale",
+        ],
+        outputNames: ["output"],
+        source: source,
+        header: header
+    )
+}
+
+private final class RotorQuantDecodeAttentionKernelManager: Sendable {
+    static let shared = RotorQuantDecodeAttentionKernelManager()
+
+    let isoDecodeAttentionKernel: MLXFast.MLXFastKernel
+    let isoCompressedBlockKernel: MLXFast.MLXFastKernel
+    let isoBlockReduceKernel: MLXFast.MLXFastKernel
+
+    private init() {
+        isoDecodeAttentionKernel = makeRotorQuantIsoDecodeAttentionKernel()
+        isoCompressedBlockKernel = makeRotorQuantIsoCompressedBlockKernel()
+        isoBlockReduceKernel = makeRotorQuantIsoBlockReduceKernel()
+    }
+}
+
+public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
+    private var keyIndices: MLXArray?
+    private var keyNorms: MLXArray?
     private var valueIndices: MLXArray?
     private var valueNorms: MLXArray?
     private var exactKeys: MLXArray?
     private var exactValues: MLXArray?
-    private var compressedCount: Int = 0
-    private var compressedCapacity: Int = 0
-    private var exactCount: Int = 0
+    private var compressedCount = 0
+    private var compressedCapacity = 0
+    private var exactCount = 0
+    private var exactCapacity = 0
     private var step: Int
-    public private(set) var configuration: TurboQuantConfiguration
-    private var keyQuantizer: TurboQuantMSEQuantizer?
-    private var valueQuantizer: TurboQuantMSEQuantizer?
-    private var residualSketch: TurboQuantResidualSketch?
+    public private(set) var configuration: RotorQuantConfiguration
+    private var keyQuantizer: RotorQuantMSEQuantizer?
+    private var valueQuantizer: RotorQuantMSEQuantizer?
     private var keyDimension: Int?
     private var valueDimension: Int?
     private var originalDType: DType = .float16
 
-    public var bits: Int { configuration.keyTotalBits }
+    public var keyBits: Int { configuration.keyBits }
     public var valueBits: Int { configuration.valueBits }
-    public var seed: UInt64 { configuration.seed }
-    private var keyBits: Int { max(1, configuration.keyTotalBits - 1) }
-    private var keyPackedWidth: Int {
-        guard let keyDimension else { return 0 }
-        return TurboQuantBitPacker.packedByteCount(valueCount: keyDimension, bitWidth: keyBits)
-    }
-    private var residualPackedWidth: Int {
-        let residualDimension =
-            residualSketch?.sketchDimension
-            ?? configuration.qjlProjectionDimension
-            ?? keyDimension
-            ?? 0
-        return TurboQuantBitPacker.packedByteCount(valueCount: residualDimension, bitWidth: 1)
-    }
-    private var valuePackedWidth: Int {
-        guard let valueDimension else { return 0 }
-        return TurboQuantBitPacker.packedByteCount(valueCount: valueDimension, bitWidth: configuration.valueBits)
-    }
+    public var effectiveVariant: RotorQuantVariant { keyQuantizer?.variant ?? configuration.variant }
     private var attentionBlockTokens: Int { max(configuration.attentionBlockTokens, 1) }
     private var exactBufferSize: Int {
         get { configuration.exactBufferSize }
         set { configuration.exactBufferSize = newValue }
     }
+    private var keyPackedWidth: Int {
+        guard let keyQuantizer else { return 0 }
+        return PackedCentroidIndices.packedByteCount(
+            valueCount: keyQuantizer.storageDimension,
+            bitWidth: configuration.keyBits
+        )
+    }
+    private var valuePackedWidth: Int {
+        guard let valueQuantizer else { return 0 }
+        return PackedCentroidIndices.packedByteCount(
+            valueCount: valueQuantizer.storageDimension,
+            bitWidth: configuration.valueBits
+        )
+    }
 
-    public init(configuration: TurboQuantConfiguration, step: Int = 256) {
-        precondition((2 ... 4).contains(configuration.keyTotalBits), "TurboQuant supports 2-4 total key bits.")
-        precondition((1 ... 4).contains(configuration.valueBits), "TurboQuant supports 1-4 value bits.")
+    public init(configuration: RotorQuantConfiguration = RotorQuantConfiguration(), step: Int = 256) {
+        precondition((1 ... 8).contains(configuration.keyBits), "RotorQuant supports 1-8 key bits.")
+        precondition((1 ... 8).contains(configuration.valueBits), "RotorQuant supports 1-8 value bits.")
         self.configuration = configuration
         self.step = step
         super.init()
     }
 
-    public convenience init(
-        bits: Int = 3,
-        seed: UInt64 = 42,
-        step: Int = 256,
-        exactBufferSize: Int = 128,
-        valueBits: Int = 2,
-        attentionBlockTokens: Int = 256,
-        qjlProjectionDimension: Int? = nil
-    ) {
-        self.init(
-            configuration: TurboQuantConfiguration(
-                keyTotalBits: bits,
-                valueBits: valueBits,
-                seed: seed,
-                exactBufferSize: exactBufferSize,
-                attentionBlockTokens: attentionBlockTokens,
-                qjlProjectionDimension: qjlProjectionDimension
-            ),
-            step: step
-        )
-    }
-
     public override func innerState() -> [MLXArray] {
-        [
-            keyBaseIndices, keyBaseNorms, keyResidualSigns, keyResidualNorms,
-            valueIndices, valueNorms, exactKeys, exactValues,
-        ].compactMap { $0 }
+        [keyIndices, keyNorms, valueIndices, valueNorms, exactKeys, exactValues].compactMap { $0 }
     }
 
     public override func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
@@ -980,229 +1983,237 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         mask: MLXFast.ScaledDotProductAttentionMaskMode
     ) -> MLXArray {
         ingest(keys: keys, values: values)
-
-        guard let keyQuantizer,
-              let valueQuantizer,
-              let residualSketch
-        else {
-            fatalError("TurboQuantKVCache is not initialized")
+        if let fused = fusedIsoDecodeAttention(queries: queries, scale: scale, mask: mask) {
+            return fused
         }
-
-        let total = offset
-        let (batch, queryHeads, queryLength, queryDimension) = (
-            queries.dim(0), queries.dim(1), queries.dim(2), queries.dim(3)
+        let (cachedKeys, cachedValues) = currentFallbackState()
+        return MLXFast.scaledDotProductAttention(
+            queries: queries,
+            keys: cachedKeys,
+            values: cachedValues,
+            scale: scale,
+            mask: mask
         )
-        let kvHeads =
-            keyBaseIndices?.dim(1)
-            ?? exactKeys?.dim(1)
-            ?? keys.dim(1)
-        let repeats = queryHeads / kvHeads
-        let maskedValue = MLXArray(-Float.greatestFiniteMagnitude)
-        let scaleArray = MLXArray(scale).asType(originalDType)
-        var scaledQueries = queries.asType(originalDType) * scaleArray
-        if repeats > 1 {
-            scaledQueries = scaledQueries.reshaped([batch, kvHeads, repeats, queryLength, queryDimension])
+    }
+
+    private func fusedIsoDecodeAttention(
+        queries: MLXArray,
+        scale: Float,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray? {
+        switch mask {
+        case .none, .causal:
+            break
+        case .array, .arrays:
+            return nil
+        }
+        guard compressedCount > 0,
+              queries.shape.count == 4,
+              queries.dim(2) == 1,
+              let keyQuantizer,
+              let valueQuantizer,
+              keyQuantizer.variant == .iso,
+              valueQuantizer.variant == .iso,
+              keyQuantizer.dimension == valueQuantizer.dimension,
+              keyQuantizer.dimension == queries.dim(3),
+              [128, 256].contains(keyQuantizer.dimension),
+              queries.dim(1) % max(1, keyIndices?.dim(1) ?? 1) == 0,
+              let keyIndices,
+              let keyNorms,
+              let valueIndices,
+              let valueNorms,
+              let exactKeys,
+              let exactValues
+        else {
+            return nil
         }
 
-        let queryStart = total - queryLength
-        let causalQueryIndices: MLXArray? =
-            if case .causal = mask {
-                expandedDimensions(MLXArray(queryStart ..< total), axis: -1)
-            } else {
-                nil
-            }
-
-        func blockMaskSlice(
-            start: Int,
-            end: Int
-        ) -> (bool: MLXArray?, additive: MLXArray?) {
-            switch mask {
-            case .causal:
-                let kIndices = expandedDimensions(MLXArray(start ..< end), axis: -2)
-                return (greaterEqual(causalQueryIndices!, kIndices), nil)
-            case .array(let maskArray):
-                let slicedMask = maskArray[.ellipsis, start..<end]
-                if slicedMask.dtype == .bool {
-                    return (slicedMask, nil)
-                } else {
-                    return (nil, slicedMask)
-                }
-            case .arrays(let maskArrays):
-                if let maskArray = maskArrays.first {
-                    let slicedMask = maskArray[.ellipsis, start..<end]
-                    if slicedMask.dtype == .bool {
-                        return (slicedMask, nil)
-                    } else {
-                        return (nil, slicedMask)
-                    }
-                }
-                return (nil, nil)
-            case .none:
-                return (nil, nil)
-            }
+        let batch = queries.dim(0)
+        let queryHeads = queries.dim(1)
+        let kvHeads = keyIndices.dim(1)
+        guard kvHeads > 0,
+              queryHeads % kvHeads == 0,
+              (1 ... 4).contains(queryHeads / kvHeads),
+              keyIndices.dim(0) == batch,
+              valueIndices.dim(0) == batch,
+              exactKeys.dim(0) == batch,
+              exactValues.dim(0) == batch,
+              exactKeys.dim(1) == kvHeads,
+              exactValues.dim(1) == kvHeads
+        else {
+            return nil
         }
 
-        let scoreStateShape = Array(scaledQueries.shape.dropLast()) + [1]
-        let outputStateShape = Array(scaledQueries.shape.dropLast()) + [valueDimension!]
-        var runningMax = MLXArray.zeros(scoreStateShape, dtype: .float32) + maskedValue
-        var runningNormalizer = MLXArray.zeros(scoreStateShape, dtype: .float32)
-        var runningOutput = MLXArray.zeros(outputStateShape, dtype: .float32)
-
-        func mergeBlock(_ blockScores: MLXArray, preparedValues: MLXArray) {
-            let blockMax = max(blockScores, axis: -1, keepDims: true)
-            let combinedMax = maximum(runningMax, blockMax)
-            let previousScale = exp(runningMax - combinedMax)
-            let blockWeights = exp(blockScores - combinedMax)
-            let combinedNormalizer =
-                runningNormalizer * previousScale
-                + sum(blockWeights, axis: -1, keepDims: true)
-            let combinedOutput =
-                runningOutput * previousScale
-                + matmul(blockWeights.asType(originalDType), preparedValues).asType(.float32)
-
-            runningMax = combinedMax
-            runningNormalizer = combinedNormalizer
-            runningOutput = combinedOutput
+        let blockTokens = max(16, attentionBlockTokens)
+        let blockCount = (compressedCount + blockTokens - 1) / blockTokens
+        if blockCount > 1 {
+            return blockParallelIsoDecodeAttention(
+                queries: queries,
+                scale: scale,
+                batch: batch,
+                queryHeads: queryHeads,
+                kvHeads: kvHeads,
+                headRepeats: queryHeads / kvHeads,
+                blockTokens: blockTokens,
+                blockCount: blockCount,
+                keyIndices: keyIndices,
+                keyNorms: keyNorms,
+                valueIndices: valueIndices,
+                valueNorms: valueNorms,
+                exactKeys: exactKeys,
+                exactValues: exactValues,
+                keyQuantizer: keyQuantizer,
+                valueQuantizer: valueQuantizer
+            )
         }
 
-        if compressedCount > 0 {
-            guard let keyBaseIndices,
-                  let keyBaseNorms,
-                  let keyResidualSigns,
-                  let keyResidualNorms,
-                  let valueIndices,
-                  let valueNorms
-            else {
-                fatalError("TurboQuantKVCache compressed state is missing")
-            }
+        return RotorQuantDecodeAttentionKernelManager.shared.isoDecodeAttentionKernel(
+            [
+                queries,
+                keyIndices,
+                keyNorms,
+                valueIndices,
+                valueNorms,
+                exactKeys,
+                exactValues,
+                keyQuantizer.centroids,
+                valueQuantizer.centroids,
+                keyQuantizer.rotationParameters,
+                valueQuantizer.rotationParameters,
+                Int32(compressedCount),
+                Int32(exactCount),
+                scale,
+            ],
+            template: [
+                ("T", queries.dtype),
+                ("D", keyQuantizer.dimension),
+                ("QUERY_HEADS", queryHeads),
+                ("KV_HEADS", kvHeads),
+                ("HEAD_REPEATS", queryHeads / kvHeads),
+                ("KEY_CAPACITY", keyIndices.dim(2)),
+                ("VALUE_CAPACITY", valueIndices.dim(2)),
+                ("EXACT_CAPACITY", exactKeys.dim(2)),
+                ("KEY_PACKED_WIDTH", keyIndices.dim(3)),
+                ("VALUE_PACKED_WIDTH", valueIndices.dim(3)),
+                ("KEY_BITS", configuration.keyBits),
+                ("VALUE_BITS", configuration.valueBits),
+            ],
+            grid: (32, batch * kvHeads, 1),
+            threadGroup: (32, 1, 1),
+            outputShapes: [[batch, queryHeads, 1, keyQuantizer.dimension]],
+            outputDTypes: [queries.dtype]
+        )[0]
+    }
 
-            let projectedQueries = matmul(scaledQueries.asType(.float32), residualSketch.projection)
-            for start in stride(from: 0, to: compressedCount, by: attentionBlockTokens) {
-                let end = min(start + attentionBlockTokens, compressedCount)
-                let unpackedKeyIndices = TurboQuantBitPacker.unpack(
-                    keyBaseIndices[.ellipsis, start..<end, 0...],
-                    bitWidth: keyBits,
-                    valueCount: keyDimension!
-                )
-                let approxKeys = keyQuantizer.dequantize(
-                    indices: unpackedKeyIndices,
-                    norms: keyBaseNorms[.ellipsis, start..<end],
-                    dtype: originalDType
-                )
-                let residualSigns = TurboQuantBitPacker.unpack(
-                    keyResidualSigns[.ellipsis, start..<end, 0...],
-                    bitWidth: 1,
-                    valueCount: residualSketch.sketchDimension
-                )
-                let residualNorms = keyResidualNorms[.ellipsis, start..<end]
-                let unpackedValueIndices = TurboQuantBitPacker.unpack(
-                    valueIndices[.ellipsis, start..<end, 0...],
-                    bitWidth: configuration.valueBits,
-                    valueCount: valueDimension!
-                )
-                let approxValues = valueQuantizer.dequantize(
-                    indices: unpackedValueIndices,
-                    norms: valueNorms[.ellipsis, start..<end],
-                    dtype: originalDType
-                )
+    private func blockParallelIsoDecodeAttention(
+        queries: MLXArray,
+        scale: Float,
+        batch: Int,
+        queryHeads: Int,
+        kvHeads: Int,
+        headRepeats: Int,
+        blockTokens: Int,
+        blockCount: Int,
+        keyIndices: MLXArray,
+        keyNorms: MLXArray,
+        valueIndices: MLXArray,
+        valueNorms: MLXArray,
+        exactKeys: MLXArray,
+        exactValues: MLXArray,
+        keyQuantizer: RotorQuantMSEQuantizer,
+        valueQuantizer: RotorQuantMSEQuantizer
+    ) -> MLXArray {
+        let manager = RotorQuantDecodeAttentionKernelManager.shared
+        let partials = manager.isoCompressedBlockKernel(
+            [
+                queries,
+                keyIndices,
+                keyNorms,
+                valueIndices,
+                valueNorms,
+                keyQuantizer.centroids,
+                valueQuantizer.centroids,
+                keyQuantizer.rotationParameters,
+                Int32(compressedCount),
+                scale,
+            ],
+            template: [
+                ("T", queries.dtype),
+                ("D", keyQuantizer.dimension),
+                ("QUERY_HEADS", queryHeads),
+                ("KV_HEADS", kvHeads),
+                ("HEAD_REPEATS", headRepeats),
+                ("BLOCK_TOKENS", blockTokens),
+                ("BLOCK_COUNT", blockCount),
+                ("KEY_CAPACITY", keyIndices.dim(2)),
+                ("VALUE_CAPACITY", valueIndices.dim(2)),
+                ("KEY_PACKED_WIDTH", keyIndices.dim(3)),
+                ("VALUE_PACKED_WIDTH", valueIndices.dim(3)),
+                ("KEY_BITS", configuration.keyBits),
+                ("VALUE_BITS", configuration.valueBits),
+            ],
+            grid: (32, batch * queryHeads * blockCount, 1),
+            threadGroup: (32, 1, 1),
+            outputShapes: [
+                [batch, queryHeads, blockCount, keyQuantizer.dimension],
+                [batch, queryHeads, blockCount],
+                [batch, queryHeads, blockCount],
+            ],
+            outputDTypes: [.float32, .float32, .float32]
+        )
 
-                var preparedKeys = approxKeys
-                var preparedResidualSigns = residualSigns
-                var preparedResidualNorms = residualNorms
-                var preparedValues = approxValues
-
-                if repeats > 1 {
-                    preparedKeys = expandedDimensions(preparedKeys, axis: -3)
-                    preparedResidualSigns = expandedDimensions(preparedResidualSigns, axis: -3)
-                    preparedResidualNorms = expandedDimensions(preparedResidualNorms, axis: -2)
-                    preparedValues = expandedDimensions(preparedValues, axis: -3)
-                }
-
-                var blockScores = turboQuantScoreBlock(
-                    scaledQueries: scaledQueries,
-                    projectedQueries: projectedQueries,
-                    preparedKeys: preparedKeys,
-                    residualSigns: preparedResidualSigns,
-                    residualNorms: preparedResidualNorms,
-                    residualProjection: residualSketch.projection
-                )
-                let maskSlice = blockMaskSlice(start: start, end: end)
-                if let boolMask = maskSlice.bool {
-                    blockScores = MLX.where(boolMask, blockScores, maskedValue)
-                } else if let additiveMask = maskSlice.additive {
-                    blockScores = blockScores + additiveMask
-                }
-                mergeBlock(blockScores, preparedValues: preparedValues)
-            }
-        }
-
-        if let exactKeys, let exactValues, exactCount > 0 {
-            var preparedKeys = exactKeys[.ellipsis, ..<exactCount, 0...].asType(originalDType)
-            var preparedValues = exactValues[.ellipsis, ..<exactCount, 0...].asType(originalDType)
-
-            if repeats > 1 {
-                preparedKeys = expandedDimensions(preparedKeys, axis: -3)
-                preparedValues = expandedDimensions(preparedValues, axis: -3)
-            }
-
-            var exactScores = matmul(scaledQueries, preparedKeys.swappedAxes(-1, -2)).asType(.float32)
-            let maskSlice = blockMaskSlice(start: compressedCount, end: compressedCount + exactCount)
-            if let boolMask = maskSlice.bool {
-                exactScores = MLX.where(boolMask, exactScores, maskedValue)
-            } else if let additiveMask = maskSlice.additive {
-                exactScores = exactScores + additiveMask
-            }
-            mergeBlock(exactScores, preparedValues: preparedValues)
-        }
-
-        if compressedCount + exactCount == 0 {
-            fatalError("TurboQuantKVCache attention produced no blocks")
-        }
-
-        var output = runningOutput / maximum(runningNormalizer, MLXArray(Float(1e-8)))
-        if repeats > 1 {
-            output = output.reshaped([batch, queryHeads, queryLength, output.dim(-1)])
-        }
-
-        return output.asType(originalDType)
+        return manager.isoBlockReduceKernel(
+            [
+                partials[0],
+                partials[1],
+                partials[2],
+                queries,
+                exactKeys,
+                exactValues,
+                keyQuantizer.rotationParameters,
+                valueQuantizer.rotationParameters,
+                Int32(exactCount),
+                scale,
+            ],
+            template: [
+                ("T", queries.dtype),
+                ("D", keyQuantizer.dimension),
+                ("QUERY_HEADS", queryHeads),
+                ("KV_HEADS", kvHeads),
+                ("HEAD_REPEATS", headRepeats),
+                ("BLOCK_COUNT", blockCount),
+                ("EXACT_CAPACITY", exactKeys.dim(2)),
+            ],
+            grid: (32, batch * queryHeads, 1),
+            threadGroup: (32, 1, 1),
+            outputShapes: [[batch, queryHeads, 1, keyQuantizer.dimension]],
+            outputDTypes: [queries.dtype]
+        )[0]
     }
 
     public override var state: [MLXArray] {
         get {
             var arrays: [MLXArray] = []
-
             if compressedCount > 0 {
-                guard let keyBaseIndices,
-                      let keyBaseNorms,
-                      let keyResidualSigns,
-                      let keyResidualNorms,
-                      let valueIndices,
-                      let valueNorms
-                else {
-                    fatalError("TurboQuantKVCache compressed state is missing")
+                guard let keyIndices, let keyNorms, let valueIndices, let valueNorms else {
+                    preconditionFailure("RotorQuant compressed state is incomplete")
                 }
                 arrays.append(contentsOf: [
-                    keyBaseIndices[.ellipsis, ..<compressedCount, 0...],
-                    keyBaseNorms[.ellipsis, ..<compressedCount],
-                    keyResidualSigns[.ellipsis, ..<compressedCount, 0...],
-                    keyResidualNorms[.ellipsis, ..<compressedCount],
+                    keyIndices[.ellipsis, ..<compressedCount, 0...],
+                    keyNorms[.ellipsis, ..<compressedCount],
                     valueIndices[.ellipsis, ..<compressedCount, 0...],
                     valueNorms[.ellipsis, ..<compressedCount],
                 ])
             }
-
             if let exactKeys, let exactValues, exactCount > 0 {
                 arrays.append(exactKeys[.ellipsis, ..<exactCount, 0...])
                 arrays.append(exactValues[.ellipsis, ..<exactCount, 0...])
             }
-
             return arrays
         }
         set {
-            keyBaseIndices = nil
-            keyBaseNorms = nil
-            keyResidualSigns = nil
-            keyResidualNorms = nil
+            keyIndices = nil
+            keyNorms = nil
             valueIndices = nil
             valueNorms = nil
             exactKeys = nil
@@ -1210,13 +2221,14 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             compressedCount = 0
             compressedCapacity = 0
             exactCount = 0
+            exactCapacity = 0
 
             switch newValue.count {
             case 0:
                 break
             case 2:
                 exactCount = newValue[0].dim(2)
-                exactBufferSize = max(exactBufferSize, exactCount)
+                ensureQuantizers(keyDimension: newValue[0].dim(3), valueDimension: newValue[1].dim(3))
                 ensureExactStorage(
                     batch: newValue[0].dim(0),
                     kvHeads: newValue[0].dim(1),
@@ -1226,37 +2238,33 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 )
                 exactKeys?[.ellipsis, ..<exactCount, 0...] = newValue[0]
                 exactValues?[.ellipsis, ..<exactCount, 0...] = newValue[1]
+            case 4:
+                keyIndices = newValue[0]
+                keyNorms = newValue[1]
+                valueIndices = newValue[2]
+                valueNorms = newValue[3]
+                compressedCount = newValue[0].dim(2)
+                compressedCapacity = keyIndices?.dim(2) ?? 0
             case 6:
-                keyBaseIndices = newValue[0]
-                keyBaseNorms = newValue[1]
-                keyResidualSigns = newValue[2]
-                keyResidualNorms = newValue[3]
-                valueIndices = newValue[4]
-                valueNorms = newValue[5]
+                keyIndices = newValue[0]
+                keyNorms = newValue[1]
+                valueIndices = newValue[2]
+                valueNorms = newValue[3]
                 compressedCount = newValue[0].dim(2)
-                compressedCapacity = keyBaseIndices?.dim(2) ?? 0
-            case 8:
-                keyBaseIndices = newValue[0]
-                keyBaseNorms = newValue[1]
-                keyResidualSigns = newValue[2]
-                keyResidualNorms = newValue[3]
-                valueIndices = newValue[4]
-                valueNorms = newValue[5]
-                compressedCount = newValue[0].dim(2)
-                compressedCapacity = keyBaseIndices?.dim(2) ?? 0
-                exactCount = newValue[6].dim(2)
-                exactBufferSize = max(exactBufferSize, exactCount)
+                compressedCapacity = keyIndices?.dim(2) ?? 0
+                exactCount = newValue[4].dim(2)
+                ensureQuantizers(keyDimension: newValue[4].dim(3), valueDimension: newValue[5].dim(3))
                 ensureExactStorage(
-                    batch: newValue[6].dim(0),
-                    kvHeads: newValue[6].dim(1),
-                    keyDimension: newValue[6].dim(3),
-                    valueDimension: newValue[7].dim(3),
-                    dtype: newValue[6].dtype
+                    batch: newValue[4].dim(0),
+                    kvHeads: newValue[4].dim(1),
+                    keyDimension: newValue[4].dim(3),
+                    valueDimension: newValue[5].dim(3),
+                    dtype: newValue[4].dtype
                 )
-                exactKeys?[.ellipsis, ..<exactCount, 0...] = newValue[6]
-                exactValues?[.ellipsis, ..<exactCount, 0...] = newValue[7]
+                exactKeys?[.ellipsis, ..<exactCount, 0...] = newValue[4]
+                exactValues?[.ellipsis, ..<exactCount, 0...] = newValue[5]
             default:
-                fatalError("TurboQuantKVCache state must have 0, 2, 6, or 8 arrays")
+                preconditionFailure("RotorQuantKVCache state must have 0, 2, 4, or 6 arrays")
             }
             offset = compressedCount + exactCount
         }
@@ -1267,11 +2275,12 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             [
                 String(step),
                 String(offset),
-                String(configuration.keyTotalBits),
+                String(configuration.keyBits),
                 String(configuration.valueBits),
                 String(configuration.seed),
                 String(configuration.attentionBlockTokens),
-                String(configuration.qjlProjectionDimension ?? 0),
+                configuration.variant.rawValue,
+                effectiveVariant.rawValue,
                 String(keyDimension ?? 0),
                 String(valueDimension ?? 0),
                 Self.dtypeName(originalDType),
@@ -1281,45 +2290,23 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             ]
         }
         set {
-            guard [7, 10, 13].contains(newValue.count) else {
-                fatalError("TurboQuantKVCache metaState must have 7, 10, or 13 values")
+            guard newValue.count == 14 else {
+                preconditionFailure("RotorQuantKVCache metaState must have exactly 14 values")
             }
             step = Int(newValue[0]) ?? step
             offset = Int(newValue[1]) ?? 0
-            if newValue.count == 13 {
-                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
-                configuration.valueBits = Int(newValue[3]) ?? configuration.valueBits
-                configuration.seed = UInt64(newValue[4]) ?? configuration.seed
-                configuration.attentionBlockTokens =
-                    Int(newValue[5]) ?? configuration.attentionBlockTokens
-                let qjlDimension = Int(newValue[6]) ?? 0
-                configuration.qjlProjectionDimension = qjlDimension > 0 ? qjlDimension : nil
-                keyDimension = (Int(newValue[7]) ?? 0) > 0 ? Int(newValue[7]) : nil
-                valueDimension = (Int(newValue[8]) ?? 0) > 0 ? Int(newValue[8]) : nil
-                originalDType = Self.dtype(from: newValue[9])
-                compressedCount = Int(newValue[10]) ?? 0
-                exactCount = Int(newValue[11]) ?? 0
-                exactBufferSize = Int(newValue[12]) ?? exactBufferSize
-                offset = compressedCount + exactCount
-            } else if newValue.count == 10 {
-                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
-                configuration.seed = UInt64(newValue[3]) ?? configuration.seed
-                keyDimension = (Int(newValue[4]) ?? 0) > 0 ? Int(newValue[4]) : nil
-                valueDimension = (Int(newValue[5]) ?? 0) > 0 ? Int(newValue[5]) : nil
-                originalDType = Self.dtype(from: newValue[6])
-                compressedCount = Int(newValue[7]) ?? 0
-                exactCount = Int(newValue[8]) ?? 0
-                exactBufferSize = Int(newValue[9]) ?? exactBufferSize
-                offset = compressedCount + exactCount
-            } else {
-                configuration.keyTotalBits = Int(newValue[2]) ?? configuration.keyTotalBits
-                configuration.seed = UInt64(newValue[3]) ?? configuration.seed
-                keyDimension = (Int(newValue[4]) ?? 0) > 0 ? Int(newValue[4]) : nil
-                valueDimension = (Int(newValue[5]) ?? 0) > 0 ? Int(newValue[5]) : nil
-                originalDType = Self.dtype(from: newValue[6])
-                compressedCount = offset
-                exactCount = 0
-            }
+            configuration.keyBits = Int(newValue[2]) ?? configuration.keyBits
+            configuration.valueBits = Int(newValue[3]) ?? configuration.valueBits
+            configuration.seed = UInt64(newValue[4]) ?? configuration.seed
+            configuration.attentionBlockTokens = Int(newValue[5]) ?? configuration.attentionBlockTokens
+            configuration.variant = RotorQuantVariant(rawValue: newValue[6]) ?? configuration.variant
+            keyDimension = (Int(newValue[8]) ?? 0) > 0 ? Int(newValue[8]) : nil
+            valueDimension = (Int(newValue[9]) ?? 0) > 0 ? Int(newValue[9]) : nil
+            originalDType = Self.dtype(from: newValue[10])
+            compressedCount = Int(newValue[11]) ?? 0
+            exactCount = Int(newValue[12]) ?? 0
+            exactBufferSize = Int(newValue[13]) ?? exactBufferSize
+            offset = compressedCount + exactCount
             if let keyDimension, let valueDimension {
                 ensureQuantizers(keyDimension: keyDimension, valueDimension: valueDimension)
             }
@@ -1331,24 +2318,20 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
     @discardableResult
     public override func trim(_ n: Int) -> Int {
         guard n > 0 else { return 0 }
-
         var remaining = n
         let trimmedCompressed = min(compressedCount, remaining)
         if trimmedCompressed > 0 {
-            keyBaseIndices = keyBaseIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
-            keyBaseNorms = keyBaseNorms?[.ellipsis, trimmedCompressed..<compressedCount]
-            keyResidualSigns = keyResidualSigns?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
-            keyResidualNorms = keyResidualNorms?[.ellipsis, trimmedCompressed..<compressedCount]
+            keyIndices = keyIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
+            keyNorms = keyNorms?[.ellipsis, trimmedCompressed..<compressedCount]
             valueIndices = valueIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
             valueNorms = valueNorms?[.ellipsis, trimmedCompressed..<compressedCount]
             compressedCount -= trimmedCompressed
-            compressedCapacity = keyBaseIndices?.dim(2) ?? 0
+            compressedCapacity = keyIndices?.dim(2) ?? 0
             remaining -= trimmedCompressed
         }
 
-        var trimmedExact = 0
         if remaining > 0, let exactKeys, let exactValues, exactCount > 0 {
-            trimmedExact = min(remaining, exactCount)
+            let trimmedExact = min(remaining, exactCount)
             let retainedExactCount = exactCount - trimmedExact
             if retainedExactCount > 0 {
                 self.exactKeys?[.ellipsis, ..<retainedExactCount, 0...] =
@@ -1357,10 +2340,12 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                     exactValues[.ellipsis, trimmedExact..<exactCount, 0...]
             }
             self.exactCount = retainedExactCount
+            offset = compressedCount + self.exactCount
+            return trimmedCompressed + trimmedExact
         }
 
         offset = compressedCount + exactCount
-        return trimmedCompressed + trimmedExact
+        return trimmedCompressed
     }
 
     private func ingest(keys: MLXArray, values: MLXArray) {
@@ -1374,101 +2359,93 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             dtype: keys.dtype
         )
 
+        let tokenCount = keys.dim(2)
+        if tokenCount > 1 {
+            appendExact(keys: keys, values: values)
+            offset = compressedCount + exactCount
+            return
+        }
+
         if exactBufferSize == 0 {
-            if let exactKeys, let exactValues, exactCount > 0 {
-                appendCompressedChunked(
-                    keys: exactKeys[.ellipsis, ..<exactCount, 0...],
-                    values: exactValues[.ellipsis, ..<exactCount, 0...]
-                )
-                self.exactCount = 0
-            }
+            flushExactToCompressed()
             appendCompressedChunked(keys: keys, values: values)
             offset = compressedCount
             return
         }
 
-        let tokenCount = keys.dim(2)
         if exactCount + tokenCount <= exactBufferSize {
-            exactKeys?[.ellipsis, exactCount..<(exactCount + tokenCount), 0...] = keys
-            exactValues?[.ellipsis, exactCount..<(exactCount + tokenCount), 0...] = values
-            exactCount += tokenCount
+            appendExact(keys: keys, values: values)
         } else {
-            let flushCount = exactCount + tokenCount - exactBufferSize
-            let existingFlushCount = min(flushCount, exactCount)
-            let newFlushCount = flushCount - existingFlushCount
-
-            if existingFlushCount > 0, let exactKeys, let exactValues {
-                appendCompressedChunked(
-                    keys: exactKeys[.ellipsis, ..<existingFlushCount, 0...],
-                    values: exactValues[.ellipsis, ..<existingFlushCount, 0...]
-                )
-            }
-
-            if newFlushCount > 0 {
-                appendCompressedChunked(
-                    keys: keys[.ellipsis, ..<newFlushCount, 0...],
-                    values: values[.ellipsis, ..<newFlushCount, 0...]
-                )
-            }
-
-            let retainedExactCount = exactCount - existingFlushCount
-            if retainedExactCount > 0, let exactKeys, let exactValues {
-                self.exactKeys?[.ellipsis, ..<retainedExactCount, 0...] =
-                    exactKeys[.ellipsis, existingFlushCount..<exactCount, 0...]
-                self.exactValues?[.ellipsis, ..<retainedExactCount, 0...] =
-                    exactValues[.ellipsis, existingFlushCount..<exactCount, 0...]
-            }
-
-            let retainedNewCount = tokenCount - newFlushCount
-            if retainedNewCount > 0 {
-                exactKeys?[.ellipsis, retainedExactCount..<(retainedExactCount + retainedNewCount), 0...] =
-                    keys[.ellipsis, newFlushCount..<tokenCount, 0...]
-                exactValues?[.ellipsis, retainedExactCount..<(retainedExactCount + retainedNewCount), 0...] =
-                    values[.ellipsis, newFlushCount..<tokenCount, 0...]
-            }
-
-            exactCount = retainedExactCount + retainedNewCount
+            flushOldestExact(tokenCount: exactCount + tokenCount - exactBufferSize)
+            appendExact(keys: keys, values: values)
         }
-
         offset = compressedCount + exactCount
+    }
+
+    private func appendExact(keys: MLXArray, values: MLXArray) {
+        growExactStorageIfNeeded(
+            batch: keys.dim(0),
+            kvHeads: keys.dim(1),
+            keyDimension: keys.dim(3),
+            valueDimension: values.dim(3),
+            dtype: keys.dtype,
+            additionalTokens: keys.dim(2)
+        )
+        exactKeys?[.ellipsis, exactCount..<(exactCount + keys.dim(2)), 0...] = keys
+        exactValues?[.ellipsis, exactCount..<(exactCount + values.dim(2)), 0...] = values
+        exactCount += keys.dim(2)
+    }
+
+    private func flushExactToCompressed() {
+        guard let exactKeys, let exactValues, exactCount > 0 else { return }
+        appendCompressedChunked(
+            keys: exactKeys[.ellipsis, ..<exactCount, 0...],
+            values: exactValues[.ellipsis, ..<exactCount, 0...]
+        )
+        self.exactCount = 0
+    }
+
+    private func flushOldestExact(tokenCount: Int) {
+        guard tokenCount > 0, let exactKeys, let exactValues, exactCount > 0 else { return }
+        let flushCount = min(tokenCount, exactCount)
+        appendCompressedChunked(
+            keys: exactKeys[.ellipsis, ..<flushCount, 0...],
+            values: exactValues[.ellipsis, ..<flushCount, 0...]
+        )
+        let retained = exactCount - flushCount
+        if retained > 0 {
+            self.exactKeys?[.ellipsis, ..<retained, 0...] =
+                exactKeys[.ellipsis, flushCount..<exactCount, 0...]
+            self.exactValues?[.ellipsis, ..<retained, 0...] =
+                exactValues[.ellipsis, flushCount..<exactCount, 0...]
+        }
+        self.exactCount = retained
     }
 
     private func appendCompressed(keys: MLXArray, values: MLXArray) {
         guard keys.dim(2) > 0 else { return }
-
         let previous = compressedCount
         ensureStorage(batch: keys.dim(0), kvHeads: keys.dim(1), tokenCount: keys.dim(2))
 
-        let quantizedKeys = keyQuantizer!.quantizeWithReconstruction(keys)
-        let keyResidual = keys.asType(.float32) - quantizedKeys.reconstructed
-        let residualQuantization = residualSketch!.quantize(keyResidual)
+        let quantizedKeys = keyQuantizer!.quantize(keys)
         let quantizedValues = valueQuantizer!.quantize(values)
-        let packedKeyIndices = TurboQuantBitPacker.pack(quantizedKeys.indices, bitWidth: keyBits)
-        let packedResidualSigns = TurboQuantBitPacker.pack(residualQuantization.signs, bitWidth: 1)
-        let packedValueIndices = TurboQuantBitPacker.pack(
-            quantizedValues.indices,
-            bitWidth: configuration.valueBits
-        )
+        let packedKeyIndices = PackedCentroidIndices.pack(quantizedKeys.indices, bitWidth: configuration.keyBits)
+        let packedValueIndices = PackedCentroidIndices.pack(quantizedValues.indices, bitWidth: configuration.valueBits)
 
         compressedCount += keys.dim(2)
-
-        keyBaseIndices?[.ellipsis, previous ..< compressedCount, 0...] = packedKeyIndices
-        keyBaseNorms?[.ellipsis, previous ..< compressedCount] = quantizedKeys.norms
-        keyResidualSigns?[.ellipsis, previous ..< compressedCount, 0...] = packedResidualSigns
-        keyResidualNorms?[.ellipsis, previous ..< compressedCount] = residualQuantization.norms
-        valueIndices?[.ellipsis, previous ..< compressedCount, 0...] = packedValueIndices
-        valueNorms?[.ellipsis, previous ..< compressedCount] = quantizedValues.norms
+        keyIndices?[.ellipsis, previous..<compressedCount, 0...] = packedKeyIndices
+        keyNorms?[.ellipsis, previous..<compressedCount] = quantizedKeys.norms
+        valueIndices?[.ellipsis, previous..<compressedCount, 0...] = packedValueIndices
+        valueNorms?[.ellipsis, previous..<compressedCount] = quantizedValues.norms
     }
 
     private func appendCompressedChunked(keys: MLXArray, values: MLXArray) {
         guard keys.dim(2) > 0 else { return }
-
         let chunkTokens = max(16, min(64, step / 4))
         if keys.dim(2) <= chunkTokens {
             appendCompressed(keys: keys, values: values)
             return
         }
-
         for start in stride(from: 0, to: keys.dim(2), by: chunkTokens) {
             let end = min(start + chunkTokens, keys.dim(2))
             appendCompressed(
@@ -1480,81 +2457,51 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
 
     private func ensureStorage(batch: Int, kvHeads: Int, tokenCount: Int) {
         let requiredCapacity = compressedCount + tokenCount
-        let needsAllocation = keyBaseIndices == nil || requiredCapacity > compressedCapacity
-
-        guard needsAllocation else { return }
+        guard keyIndices == nil || requiredCapacity > compressedCapacity else { return }
 
         let baselineCapacity = max(compressedCapacity, step)
         let growthTarget = max(baselineCapacity * 2, requiredCapacity)
         let newCapacity = ((growthTarget + step - 1) / step) * step
 
-        let newKeyIndexStorage = MLXArray.zeros([batch, kvHeads, newCapacity, keyPackedWidth], dtype: .uint8)
-        let newKeyNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
-        let newKeyResidualSignStorage = MLXArray.zeros(
-            [batch, kvHeads, newCapacity, residualPackedWidth],
-            dtype: .uint8
-        )
-        let newKeyResidualNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
-        let newValueIndexStorage = MLXArray.zeros([batch, kvHeads, newCapacity, valuePackedWidth], dtype: .uint8)
-        let newValueNormStorage = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
+        let newKeyIndices = MLXArray.zeros([batch, kvHeads, newCapacity, keyPackedWidth], dtype: .uint8)
+        let newKeyNorms = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
+        let newValueIndices = MLXArray.zeros([batch, kvHeads, newCapacity, valuePackedWidth], dtype: .uint8)
+        let newValueNorms = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
 
-        if let currentKeyBaseIndices = self.keyBaseIndices,
-           let currentKeyBaseNorms = self.keyBaseNorms,
-           let currentKeyResidualSigns = self.keyResidualSigns,
-           let currentKeyResidualNorms = self.keyResidualNorms,
-           let currentValueIndices = self.valueIndices,
-           let currentValueNorms = self.valueNorms,
-           compressedCount > 0
-        {
-            newKeyIndexStorage[.ellipsis, ..<compressedCount, 0...] =
-                currentKeyBaseIndices[.ellipsis, ..<compressedCount, 0...]
-            newKeyNormStorage[.ellipsis, ..<compressedCount] =
-                currentKeyBaseNorms[.ellipsis, ..<compressedCount]
-            newKeyResidualSignStorage[.ellipsis, ..<compressedCount, 0...] =
-                currentKeyResidualSigns[.ellipsis, ..<compressedCount, 0...]
-            newKeyResidualNormStorage[.ellipsis, ..<compressedCount] =
-                currentKeyResidualNorms[.ellipsis, ..<compressedCount]
-            newValueIndexStorage[.ellipsis, ..<compressedCount, 0...] =
-                currentValueIndices[.ellipsis, ..<compressedCount, 0...]
-            newValueNormStorage[.ellipsis, ..<compressedCount] =
-                currentValueNorms[.ellipsis, ..<compressedCount]
-
-            self.keyBaseIndices = newKeyIndexStorage
-            self.keyBaseNorms = newKeyNormStorage
-            self.keyResidualSigns = newKeyResidualSignStorage
-            self.keyResidualNorms = newKeyResidualNormStorage
-            self.valueIndices = newValueIndexStorage
-            self.valueNorms = newValueNormStorage
-        } else {
-            self.keyBaseIndices = newKeyIndexStorage
-            self.keyBaseNorms = newKeyNormStorage
-            self.keyResidualSigns = newKeyResidualSignStorage
-            self.keyResidualNorms = newKeyResidualNormStorage
-            self.valueIndices = newValueIndexStorage
-            self.valueNorms = newValueNormStorage
+        if let keyIndices, let keyNorms, let valueIndices, let valueNorms, compressedCount > 0 {
+            newKeyIndices[.ellipsis, ..<compressedCount, 0...] =
+                keyIndices[.ellipsis, ..<compressedCount, 0...]
+            newKeyNorms[.ellipsis, ..<compressedCount] =
+                keyNorms[.ellipsis, ..<compressedCount]
+            newValueIndices[.ellipsis, ..<compressedCount, 0...] =
+                valueIndices[.ellipsis, ..<compressedCount, 0...]
+            newValueNorms[.ellipsis, ..<compressedCount] =
+                valueNorms[.ellipsis, ..<compressedCount]
         }
+
+        self.keyIndices = newKeyIndices
+        self.keyNorms = newKeyNorms
+        self.valueIndices = newValueIndices
+        self.valueNorms = newValueNorms
         compressedCapacity = newCapacity
     }
 
     private func ensureQuantizers(keyDimension: Int, valueDimension: Int) {
-        if self.keyDimension != keyDimension || keyQuantizer == nil || residualSketch == nil {
+        if self.keyDimension != keyDimension || keyQuantizer == nil {
             self.keyDimension = keyDimension
-            self.keyQuantizer = TurboQuantMSEQuantizer(
+            self.keyQuantizer = RotorQuantMSEQuantizer(
                 dimension: keyDimension,
-                bits: keyBits,
+                bits: configuration.keyBits,
+                variant: configuration.variant,
                 seed: configuration.seed
-            )
-            self.residualSketch = TurboQuantResidualSketch(
-                dimension: keyDimension,
-                sketchDimension: configuration.qjlProjectionDimension ?? keyDimension,
-                seed: configuration.seed &+ 0x9E37_79B9_7F4A_7C15
             )
         }
         if self.valueDimension != valueDimension || valueQuantizer == nil {
             self.valueDimension = valueDimension
-            self.valueQuantizer = TurboQuantMSEQuantizer(
+            self.valueQuantizer = RotorQuantMSEQuantizer(
                 dimension: valueDimension,
                 bits: configuration.valueBits,
+                variant: configuration.variant,
                 seed: configuration.seed &+ 1
             )
         }
@@ -1567,15 +2514,9 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         valueDimension: Int,
         dtype: DType
     ) {
-        guard exactBufferSize > 0 else {
-            exactKeys = nil
-            exactValues = nil
-            exactCount = 0
-            return
-        }
-
-        let desiredKeyShape = [batch, kvHeads, exactBufferSize, keyDimension]
-        let desiredValueShape = [batch, kvHeads, exactBufferSize, valueDimension]
+        let capacity = max(exactBufferSize, exactCapacity, exactCount, 1)
+        let desiredKeyShape = [batch, kvHeads, capacity, keyDimension]
+        let desiredValueShape = [batch, kvHeads, capacity, valueDimension]
         let needsAllocation =
             exactKeys == nil
             || exactValues == nil
@@ -1583,86 +2524,97 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             || exactValues?.shape != desiredValueShape
             || exactKeys?.dtype != dtype
             || exactValues?.dtype != dtype
-
         guard needsAllocation else { return }
 
         let newExactKeys = MLXArray.zeros(desiredKeyShape, dtype: dtype)
         let newExactValues = MLXArray.zeros(desiredValueShape, dtype: dtype)
-
         if let exactKeys, let exactValues, exactCount > 0 {
-            let retainedCount = min(exactCount, exactBufferSize, exactKeys.dim(2))
-            newExactKeys[.ellipsis, ..<retainedCount, 0...] =
-                exactKeys[.ellipsis, ..<retainedCount, 0...].asType(dtype)
-            newExactValues[.ellipsis, ..<retainedCount, 0...] =
-                exactValues[.ellipsis, ..<retainedCount, 0...].asType(dtype)
-            self.exactCount = retainedCount
+            let retained = min(exactCount, capacity, exactKeys.dim(2))
+            newExactKeys[.ellipsis, ..<retained, 0...] =
+                castIfNeeded(exactKeys[.ellipsis, ..<retained, 0...], to: dtype)
+            newExactValues[.ellipsis, ..<retained, 0...] =
+                castIfNeeded(exactValues[.ellipsis, ..<retained, 0...], to: dtype)
+            self.exactCount = retained
         }
-
         self.exactKeys = newExactKeys
         self.exactValues = newExactValues
+        self.exactCapacity = capacity
+    }
+
+    private func growExactStorageIfNeeded(
+        batch: Int,
+        kvHeads: Int,
+        keyDimension: Int,
+        valueDimension: Int,
+        dtype: DType,
+        additionalTokens: Int
+    ) {
+        let required = exactCount + additionalTokens
+        if exactKeys == nil || required > (exactKeys?.dim(2) ?? 0) {
+            exactCapacity = max(exactCapacity, required)
+        }
+        ensureExactStorage(
+            batch: batch,
+            kvHeads: kvHeads,
+            keyDimension: keyDimension,
+            valueDimension: valueDimension,
+            dtype: dtype
+        )
     }
 
     private func currentFallbackState() -> (MLXArray, MLXArray) {
-        guard let keyQuantizer, let valueQuantizer else {
-            fatalError("TurboQuantKVCache is not initialized")
-        }
-
         var allKeys: [MLXArray] = []
         var allValues: [MLXArray] = []
 
         if compressedCount > 0 {
-            guard let keyBaseIndices,
-                  let keyBaseNorms,
+            guard let keyQuantizer,
+                  let valueQuantizer,
+                  let keyIndices,
+                  let keyNorms,
                   let valueIndices,
                   let valueNorms
             else {
-                fatalError("TurboQuantKVCache compressed state is missing")
+                preconditionFailure("RotorQuant compressed state is incomplete")
             }
-            let currentKeyIndices = TurboQuantBitPacker.unpack(
-                keyBaseIndices[.ellipsis, ..<compressedCount, 0...],
-                bitWidth: keyBits,
-                valueCount: keyDimension!
+            let unpackedKeyIndices = PackedCentroidIndices.unpack(
+                keyIndices[.ellipsis, ..<compressedCount, 0...],
+                bitWidth: configuration.keyBits,
+                valueCount: keyQuantizer.storageDimension
             )
-            let currentKeyNorms = keyBaseNorms[.ellipsis, ..<compressedCount]
-            let currentValueIndices = TurboQuantBitPacker.unpack(
+            let unpackedValueIndices = PackedCentroidIndices.unpack(
                 valueIndices[.ellipsis, ..<compressedCount, 0...],
                 bitWidth: configuration.valueBits,
-                valueCount: valueDimension!
+                valueCount: valueQuantizer.storageDimension
             )
-            let currentValueNorms = valueNorms[.ellipsis, ..<compressedCount]
             allKeys.append(
                 keyQuantizer.dequantize(
-                    indices: currentKeyIndices,
-                    norms: currentKeyNorms,
+                    indices: unpackedKeyIndices,
+                    norms: keyNorms[.ellipsis, ..<compressedCount],
                     dtype: originalDType
                 )
             )
             allValues.append(
                 valueQuantizer.dequantize(
-                    indices: currentValueIndices,
-                    norms: currentValueNorms,
+                    indices: unpackedValueIndices,
+                    norms: valueNorms[.ellipsis, ..<compressedCount],
                     dtype: originalDType
                 )
             )
         }
 
         if let exactKeys, let exactValues, exactCount > 0 {
-            allKeys.append(exactKeys[.ellipsis, ..<exactCount, 0...].asType(originalDType))
-            allValues.append(exactValues[.ellipsis, ..<exactCount, 0...].asType(originalDType))
+            allKeys.append(castIfNeeded(exactKeys[.ellipsis, ..<exactCount, 0...], to: originalDType))
+            allValues.append(castIfNeeded(exactValues[.ellipsis, ..<exactCount, 0...], to: originalDType))
         }
 
         guard let firstKeys = allKeys.first, let firstValues = allValues.first else {
-            fatalError("TurboQuantKVCache is empty")
+            preconditionFailure("RotorQuantKVCache is empty")
         }
 
         if allKeys.count == 1 {
             return (firstKeys, firstValues)
         }
-
-        return (
-            concatenated(allKeys, axis: 2),
-            concatenated(allValues, axis: 2)
-        )
+        return (concatenated(allKeys, axis: 2), concatenated(allValues, axis: 2))
     }
 
     private static func dtypeName(_ dtype: DType) -> String {
@@ -1689,18 +2641,16 @@ public final class TurboQuantKVCache: BaseKVCache, AttentionCapableKVCache {
 }
 
 extension KVCacheSimple {
-    public func toTurboQuantized(
-        configuration: TurboQuantConfiguration = TurboQuantConfiguration()
-    ) -> TurboQuantKVCache {
-        let turboQuantCache = TurboQuantKVCache(configuration: configuration)
-
+    public func toRotorQuantized(
+        configuration: RotorQuantConfiguration = RotorQuantConfiguration()
+    ) -> RotorQuantKVCache {
+        let rotorQuantCache = RotorQuantKVCache(configuration: configuration)
         if let keys = self.keys, let values = self.values {
             let currentKeys = keys[.ellipsis, ..<offset, 0...]
             let currentValues = values[.ellipsis, ..<offset, 0...]
-            _ = turboQuantCache.update(keys: currentKeys, values: currentValues)
+            _ = rotorQuantCache.update(keys: currentKeys, values: currentValues)
         }
-
-        return turboQuantCache
+        return rotorQuantCache
     }
 }
 
@@ -2458,8 +3408,8 @@ public func savePromptCache(
             return "RotatingKVCache"
         case is QuantizedKVCache:
             return "QuantizedKVCache"
-        case is TurboQuantKVCache:
-            return "TurboQuantKVCache"
+        case is RotorQuantKVCache:
+            return "RotorQuantKVCache"
         case is MambaCache:
             return "MambaCache"  // Must precede ArraysCache because of inheritance
         case is ArraysCache:
@@ -2560,8 +3510,16 @@ public func loadPromptCache(
             cache = RotatingKVCache(maxSize: maxSize)  // Create with parsed maxSize
         case "QuantizedKVCache":
             cache = QuantizedKVCache()
+        case "RotorQuantKVCache":
+            cache = RotorQuantKVCache()
         case "TurboQuantKVCache":
-            cache = TurboQuantKVCache()
+            caches.append(
+                try migrateLegacyCompressedPromptCache(
+                    state: cacheData[i],
+                    metaState: i < cacheInfo.count ? cacheInfo[i] : []
+                )
+            )
+            continue
         case "ChunkedKVCache":
             cache = ChunkedKVCache()
         case "MambaCache":
@@ -2712,7 +3670,7 @@ public func makePromptCacheWithLayerCount(
 
 /// Create a per-layer cache instance for the given generation parameters.
 ///
-/// TurboQuant must start at cache construction time to reduce the peak
+/// RotorQuant must start at cache construction time to reduce the peak
 /// memory footprint during prompt prefill. If we wait to swap in a compressed
 /// cache after a generation step, the large temporary KV allocation has
 /// already happened and long-context crashes occur at the same boundary.
@@ -2724,8 +3682,8 @@ public func makeLayerKVCache(
         return RotatingKVCache(maxSize: maxKVSize, keep: 4)
     }
 
-    if case .turboQuant(let configuration)? = parameters?.resolvedCacheCompression {
-        return TurboQuantKVCache(configuration: configuration.configurationForLayer(layerIndex))
+    if case .rotorQuant(let configuration)? = parameters?.resolvedCacheCompression {
+        return RotorQuantKVCache(configuration: configuration.configurationForLayer(layerIndex))
     }
 
     return KVCacheSimple()
@@ -2865,19 +3823,21 @@ public func maybeQuantizeKVCache(
 ) {
     guard let kvBits = kvBits,
         !cache.isEmpty,
-        !(cache[0] is QuantizedKVCache),
-        cache[0].offset > quantizedKVStart
+        cache.contains(where: { item in
+            guard item is KVCacheSimple, !(item is QuantizedKVCache) else { return false }
+            return item.offset > quantizedKVStart
+        })
     else {
         return
     }
 
     for i in 0 ..< cache.count {
         // Handle cache types that support quantization
-        if let simpleCache = cache[i] as? KVCacheSimple {
+        if let simpleCache = cache[i] as? KVCacheSimple,
+           simpleCache.offset > quantizedKVStart {
             cache[i] = simpleCache.toQuantized(groupSize: kvGroupSize, bits: kvBits)
         }
-        // TODO: RotatingKVCache.toQuantized() is not implemented yet, like in Python.
-        // When implemented, add: else if let rotatingCache = cache[i] as? RotatingKVCache { ... }
+        // RotatingKVCache quantization is intentionally not supported here, matching Python.
         // MambaCache and CacheList don't use traditional KV quantization
     }
 }
@@ -2896,8 +3856,8 @@ public func maybeApplyKVCacheCompression(
             kvGroupSize: groupSize,
             quantizedKVStart: startStep
         )
-    case .turboQuant:
-        // Paper-faithful TurboQuant is a cache-construction-time strategy.
+    case .rotorQuant:
+        // RotorQuant is a cache-construction-time strategy.
         // Delayed conversion after prefill is intentionally unsupported.
         break
     }

@@ -332,7 +332,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesQuantizedPersistentCacheOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: false,
+            preferRotorQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -351,7 +351,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationKeepsToolTurnsUnboundedWhenQuantizationIsOffOnHighMemoryDevices() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: false,
-            preferTurboQuant: false,
+            preferRotorQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -370,7 +370,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithTools() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: false,
+            preferRotorQuant: false,
             hasTools: true,
             hasMedia: false,
             memoryConstrained: false,
@@ -389,7 +389,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationUsesBoundedRotatingCacheOnLowMemoryDevicesWithMedia() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: false,
+            preferRotorQuant: false,
             hasTools: false,
             hasMedia: true,
             memoryConstrained: false,
@@ -407,7 +407,7 @@ struct On_Device_LLM_ChatTests {
     @Test func generationConfigurationClampsLowMemoryMaxKVSizeToConfiguredContextWindow() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: false,
+            preferRotorQuant: false,
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -629,17 +629,21 @@ struct On_Device_LLM_ChatTests {
     }
 
     @Test func settingsSheetDescribesAdaptiveKVCacheBehavior() {
-        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("Enabled by default"))
-        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("3-bit keys"))
-        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("2-bit values"))
-        #expect(SettingsSheet.mlxTurboQuantInfoMessage.contains("less than 12 GB"))
-        #expect(SettingsSheet.mlxTurboQuantAccessibilityHint.contains("full-attention layers"))
+        #expect(SettingsSheet.mlxRotorQuantInfoMessage.contains("Enabled by default"))
+        #expect(SettingsSheet.mlxRotorQuantInfoMessage.contains("IsoQuant"))
+        #expect(SettingsSheet.mlxRotorQuantInfoMessage.contains("3-bit keys"))
+        #expect(SettingsSheet.mlxRotorQuantInfoMessage.contains("2-bit values"))
+        #expect(SettingsSheet.mlxRotorQuantInfoMessage.contains("less than 12 GB"))
+        #expect(SettingsSheet.mlxRotorQuantAccessibilityHint.contains("full-attention layers"))
+        #expect(SettingsSheet.mlxRotorQuantExperimentalTitle.contains("Experimental"))
+        #expect(SettingsSheet.mlxRotorQuantExperimentalMessage.contains("very early"))
+        #expect(SettingsSheet.mlxRotorQuantExperimentalMessage.contains("beta"))
     }
 
-    @Test func generationConfigurationUsesStructuredTurboQuantWhenPreferred() {
+    @Test func generationConfigurationUsesStructuredRotorQuantWhenPreferred() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: true,
+            preferRotorQuant: true,
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -648,21 +652,22 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 32768
         )
 
-        guard case .turboQuant(let turboConfiguration) = configuration.cacheCompression else {
-            Issue.record("Expected TurboQuant cache compression")
+        guard case .rotorQuant(let rotorConfiguration) = configuration.cacheCompression else {
+            Issue.record("Expected RotorQuant cache compression")
             return
         }
 
-        #expect(turboConfiguration.keyTotalBits == 3)
-        #expect(turboConfiguration.valueBits == 2)
-        #expect(turboConfiguration.exactBufferSize == 128)
-        #expect(turboConfiguration.attentionBlockTokens == 256)
+        #expect(rotorConfiguration.variant == .iso)
+        #expect(rotorConfiguration.keyBits == 3)
+        #expect(rotorConfiguration.valueBits == 2)
+        #expect(rotorConfiguration.exactBufferSize == 128)
+        #expect(rotorConfiguration.attentionBlockTokens == 128)
     }
 
-    @Test func generationConfigurationUsesMediaTunedTurboQuantProfile() {
+    @Test func generationConfigurationUsesMediaTunedRotorQuantProfile() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: true,
-            preferTurboQuant: true,
+            preferRotorQuant: true,
             hasTools: false,
             hasMedia: true,
             memoryConstrained: false,
@@ -671,19 +676,20 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 32768
         )
 
-        guard case .turboQuant(let turboConfiguration) = configuration.cacheCompression else {
-            Issue.record("Expected TurboQuant cache compression")
+        guard case .rotorQuant(let rotorConfiguration) = configuration.cacheCompression else {
+            Issue.record("Expected RotorQuant cache compression")
             return
         }
 
-        #expect(turboConfiguration.keyTotalBits == 3)
-        #expect(turboConfiguration.valueBits == 2)
-        #expect(turboConfiguration.exactBufferSize == 32)
-        #expect(turboConfiguration.attentionBlockTokens == 64)
+        #expect(rotorConfiguration.variant == .iso)
+        #expect(rotorConfiguration.keyBits == 3)
+        #expect(rotorConfiguration.valueBits == 2)
+        #expect(rotorConfiguration.exactBufferSize == 32)
+        #expect(rotorConfiguration.attentionBlockTokens == 64)
     }
 
     @Test func userDefaultsKVQuantizationDefaultsToEnabledWhenUnset() {
-        let key = AppSettingsKeys.mlxEnableTurboQuant
+        let key = AppSettingsKeys.mlxEnableRotorQuant
         let defaults = UserDefaults.standard
         let hadExistingValue = defaults.object(forKey: key) != nil
         let previousValue = defaults.bool(forKey: key)
@@ -697,16 +703,16 @@ struct On_Device_LLM_ChatTests {
             }
         }
 
-        #expect(defaults.mlxEnableTurboQuant)
+        #expect(defaults.mlxEnableRotorQuant)
     }
 
     @Test func resetSettingsRestoresKVQuantizationDefault() {
         var draft = AppSettingsDraft.defaults()
-        draft.mlxEnableTurboQuant = false
+        draft.mlxEnableRotorQuant = false
 
         draft.resetToDefaults()
 
-        #expect(draft.mlxEnableTurboQuant)
+        #expect(draft.mlxEnableRotorQuant)
     }
 
     @Test func resetSettingsRestoresDeveloperModeDefault() {

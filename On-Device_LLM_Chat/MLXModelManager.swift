@@ -255,13 +255,13 @@ final class MLXModelManager: ObservableObject {
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
     nonisolated private static let kvQuantizationBits = 8
     nonisolated private static let kvQuantizationGroupSize = 64
-    nonisolated private static let turboQuantKeyTotalBits = 3
-    nonisolated private static let turboQuantValueBits = 2
-    nonisolated private static let turboQuantSeed: UInt64 = 42
-    nonisolated private static let turboQuantExactBufferSize = 128
-    nonisolated private static let turboQuantAttentionBlockTokens = 256
-    nonisolated private static let turboQuantMediaExactBufferSize = 32
-    nonisolated private static let turboQuantMediaAttentionBlockTokens = 64
+    nonisolated private static let rotorQuantKeyBits = 3
+    nonisolated private static let rotorQuantValueBits = 2
+    nonisolated private static let rotorQuantSeed: UInt64 = 42
+    nonisolated private static let rotorQuantExactBufferSize = 128
+    nonisolated private static let rotorQuantAttentionBlockTokens = 128
+    nonisolated private static let rotorQuantMediaExactBufferSize = 32
+    nonisolated private static let rotorQuantMediaAttentionBlockTokens = 64
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
@@ -352,7 +352,7 @@ final class MLXModelManager: ObservableObject {
     enum CacheCompressionMode: Equatable, Sendable {
         case none
         case legacyQuantized(KVQuantizationConfiguration)
-        case turboQuant(TurboQuantConfiguration)
+        case rotorQuant(RotorQuantConfiguration)
 
         nonisolated var diagnosticLabel: String {
             switch self {
@@ -360,8 +360,8 @@ final class MLXModelManager: ObservableObject {
                 return "none"
             case .legacyQuantized:
                 return "legacy-quantized"
-            case .turboQuant(let configuration):
-                return "turboquant(k\(configuration.keyTotalBits),v\(configuration.valueBits),exact\(configuration.exactBufferSize),block\(configuration.attentionBlockTokens))"
+            case .rotorQuant(let configuration):
+                return "rotorquant(\(configuration.variant.rawValue),k\(configuration.keyBits),v\(configuration.valueBits),exact\(configuration.exactBufferSize),block\(configuration.attentionBlockTokens))"
             }
         }
 
@@ -384,7 +384,7 @@ final class MLXModelManager: ObservableObject {
                         startStep: startStep
                     )
                 )
-            case .turboQuant:
+            case .rotorQuant:
                 return self
             }
         }
@@ -399,8 +399,8 @@ final class MLXModelManager: ObservableObject {
                     groupSize: configuration.groupSize,
                     startStep: configuration.startStep
                 )
-            case .turboQuant(let configuration):
-                return .turboQuant(configuration)
+            case .rotorQuant(let configuration):
+                return .rotorQuant(configuration)
             }
         }
     }
@@ -863,21 +863,21 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
-    private func supportsTurboQuant(for model: MLXModelInfo?) -> Bool {
-        guard let model else { return true }
-        return model.id.hasPrefix("qwen3.5-")
+    private func supportsRotorQuant(for model: MLXModelInfo?) -> Bool {
+        _ = model
+        return true
     }
 
-    private func shouldPreferTurboQuant(for model: MLXModelInfo?) -> Bool {
-        UserDefaults.standard.mlxEnableTurboQuant && supportsTurboQuant(for: model)
+    private func shouldPreferRotorQuant(for model: MLXModelInfo?) -> Bool {
+        UserDefaults.standard.mlxEnableRotorQuant && supportsRotorQuant(for: model)
     }
 
     private func defaultGenerationConfigurationForCurrentDevice(
         model: MLXModelInfo? = nil
     ) -> GenerationConfiguration {
         Self.generationConfiguration(
-            isEnabled: UserDefaults.standard.mlxEnableTurboQuant,
-            preferTurboQuant: shouldPreferTurboQuant(for: model),
+            isEnabled: UserDefaults.standard.mlxEnableRotorQuant,
+            preferRotorQuant: shouldPreferRotorQuant(for: model),
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -1565,10 +1565,10 @@ final class MLXModelManager: ObservableObject {
         let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
         let configuredContextWindow = configuredContextWindowLimit(for: currentModel)
-        let turboQuantRequested = UserDefaults.standard.mlxEnableTurboQuant
+        let rotorQuantRequested = UserDefaults.standard.mlxEnableRotorQuant
         let generationConfiguration = Self.generationConfiguration(
-            isEnabled: turboQuantRequested,
-            preferTurboQuant: shouldPreferTurboQuant(for: currentModel),
+            isEnabled: rotorQuantRequested,
+            preferRotorQuant: shouldPreferRotorQuant(for: currentModel),
             hasTools: !tools.isEmpty,
             hasMedia: includesMedia,
             memoryConstrained: memoryConstrained,
@@ -1582,10 +1582,10 @@ final class MLXModelManager: ObservableObject {
         logger.notice(
             "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) cache_compression=\(generationConfiguration.cacheCompression.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
         )
-        if turboQuantRequested,
+        if rotorQuantRequested,
            generationConfiguration.cachePolicy.usesDynamicKVQuantization,
            generationConfiguration.cacheCompression.usesLegacyQuantization {
-            logger.notice("MLX TurboQuant fell back to legacy KV quantization for model=\(currentModel.id, privacy: .public)")
+            logger.notice("MLX RotorQuant fell back to legacy KV quantization for model=\(currentModel.id, privacy: .public)")
         }
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
@@ -1770,7 +1770,7 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func generationConfiguration(
         isEnabled: Bool,
-        preferTurboQuant: Bool,
+        preferRotorQuant: Bool,
         hasTools: Bool,
         hasMedia: Bool,
         memoryConstrained: Bool,
@@ -1801,7 +1801,7 @@ final class MLXModelManager: ObservableObject {
             cachePolicy: clampedCachePolicy,
             cacheCompression: cacheCompressionMode(
                 cachePolicy: clampedCachePolicy,
-                preferTurboQuant: preferTurboQuant,
+                preferRotorQuant: preferRotorQuant,
                 hasMedia: hasMedia
             )
         )
@@ -1825,7 +1825,7 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func effectiveMaxKVSize(
         isEnabled: Bool,
-        preferTurboQuant: Bool,
+        preferRotorQuant: Bool,
         hasTools: Bool,
         hasMedia: Bool,
         prefersBoundedCache: Bool,
@@ -1864,24 +1864,25 @@ final class MLXModelManager: ObservableObject {
 
     nonisolated internal static func cacheCompressionMode(
         cachePolicy: MLXCachePolicy,
-        preferTurboQuant: Bool,
+        preferRotorQuant: Bool,
         hasMedia: Bool = false
     ) -> CacheCompressionMode {
         guard cachePolicy.usesDynamicKVQuantization else {
             return .none
         }
 
-        if preferTurboQuant {
-            let exactBufferSize = hasMedia ? turboQuantMediaExactBufferSize : turboQuantExactBufferSize
+        if preferRotorQuant {
+            let exactBufferSize = hasMedia ? rotorQuantMediaExactBufferSize : rotorQuantExactBufferSize
             let attentionBlockTokens =
-                hasMedia ? turboQuantMediaAttentionBlockTokens : turboQuantAttentionBlockTokens
-            return .turboQuant(
-                TurboQuantConfiguration(
-                    keyTotalBits: turboQuantKeyTotalBits,
-                    valueBits: turboQuantValueBits,
-                    seed: turboQuantSeed,
+                hasMedia ? rotorQuantMediaAttentionBlockTokens : rotorQuantAttentionBlockTokens
+            return .rotorQuant(
+                RotorQuantConfiguration(
+                    keyBits: rotorQuantKeyBits,
+                    valueBits: rotorQuantValueBits,
+                    seed: rotorQuantSeed,
                     exactBufferSize: exactBufferSize,
-                    attentionBlockTokens: attentionBlockTokens
+                    attentionBlockTokens: attentionBlockTokens,
+                    variant: .iso
                 )
             )
         }
