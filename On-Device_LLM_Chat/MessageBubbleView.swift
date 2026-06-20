@@ -127,7 +127,7 @@ struct MessageCellView: View {
         }
 
         let invocationSources = (message.searchInvocations ?? [])
-            .map(\.results)
+            .map(\.userVisibleResults)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
@@ -227,7 +227,9 @@ struct MessageCellView: View {
         let candidateText = message.isReasoningMode
             ? (message.finalAnswer ?? message.displayText)
             : message.displayText
-        let extracted = candidateText.extractSourcesBlocks().sources?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extracted = candidateText.extractSourcesBlocks().sources.map {
+            SearchInvocation.userVisibleResults(from: $0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return (extracted?.isEmpty == false) ? extracted : nil
     }
 
@@ -744,13 +746,13 @@ struct MessageContextMenuView: View {
 
     var body: some View {
         Button {
-            deferMenuSafe { onCopy(message.displayText) }
+            deferMenuSafe { onCopy(message.userVisibleText) }
         } label: {
             Label(String(localized: "Copy"), systemImage: "doc.on.doc")
         }
 
         Button {
-            deferMenuSafe { onShare(message.displayText) }
+            deferMenuSafe { onShare(message.userVisibleText) }
         } label: {
             Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
         }
@@ -787,7 +789,7 @@ struct MessageSwipeActionsView: View {
             Task { @MainActor in
                 await Task.yield()
                 try? await Task.sleep(nanoseconds: 120_000_000)
-                onCopy(message.displayText)
+                onCopy(message.userVisibleText)
             }
         } label: {
             Label(String(localized: "Copy"), systemImage: "doc.on.doc")
@@ -799,7 +801,7 @@ struct MessageSwipeActionsView: View {
             Task { @MainActor in
                 await Task.yield()
                 try? await Task.sleep(nanoseconds: 120_000_000)
-                onShare(message.displayText)
+                onShare(message.userVisibleText)
             }
         } label: {
             Label(String(localized: "Share"), systemImage: "square.and.arrow.up")

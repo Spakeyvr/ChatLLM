@@ -162,6 +162,41 @@ func testRotorQuantDeferredQuantizationKeepsPrefillExactThenCompressesOnDecode()
 }
 
 @Test
+func testRotorQuantDeferredQuantizationBatchesTinyDecodeFlushes() {
+    let cache = RotorQuantKVCache(
+        configuration: RotorQuantConfiguration(
+            keyBits: 3,
+            valueBits: 2,
+            seed: 42,
+            exactBufferSize: 16,
+            attentionBlockTokens: 64,
+            variant: .iso
+        )
+    )
+    let prefillKeys = patternedArray(shape: [1, 1, 16, 128])
+    let prefillValues = patternedArray(shape: [1, 1, 16, 128])
+    let decodeKeys = patternedArray(shape: [1, 1, 1, 128], scale: 0.02)
+    let decodeValues = patternedArray(shape: [1, 1, 1, 128], scale: 0.02)
+
+    _ = cache.update(keys: prefillKeys, values: prefillValues)
+    _ = cache.update(keys: decodeKeys, values: decodeValues)
+    #expect(cache.state.count == 2)
+    #expect(cache.metaState[11] == "0")
+    #expect(cache.metaState[12] == "17")
+
+    _ = cache.update(keys: decodeKeys, values: decodeValues)
+    #expect(cache.state.count == 2)
+    #expect(cache.metaState[11] == "0")
+    #expect(cache.metaState[12] == "18")
+
+    _ = cache.update(keys: decodeKeys, values: decodeValues)
+    #expect(cache.state.count == 6)
+    #expect(cache.metaState[11] == "3")
+    #expect(cache.metaState[12] == "16")
+    #expect(cache.offset == 19)
+}
+
+@Test
 func testRotorQuantAttentionPathSupportsGQAHeadDimension256() {
     let cache = RotorQuantKVCache(
         configuration: RotorQuantConfiguration(
@@ -270,6 +305,59 @@ func testRotorQuantFusedIsoDecodeMatchesFallbackWithExactTail() {
 }
 
 @Test
+func testRotorQuantReloadHonorsMetaStateBeforeFusedDecode() {
+    let configuration = RotorQuantConfiguration(
+        keyBits: 3,
+        valueBits: 2,
+        seed: 99,
+        exactBufferSize: 2,
+        attentionBlockTokens: 64,
+        variant: .iso
+    )
+    let sourceCache = RotorQuantKVCache(configuration: configuration)
+    let fusedCache = RotorQuantKVCache()
+    let fallbackCache = RotorQuantKVCache()
+    let prefillKeys = patternedArray(shape: [1, 2, 4, 256], scale: 0.011)
+    let prefillValues = patternedArray(shape: [1, 2, 4, 256], scale: 0.014)
+    let seedKeys = patternedArray(shape: [1, 2, 1, 256], scale: 0.015)
+    let seedValues = patternedArray(shape: [1, 2, 1, 256], scale: 0.016)
+    let queries = patternedArray(shape: [1, 4, 1, 256], scale: 0.013)
+    let decodeKeys = patternedArray(shape: [1, 2, 1, 256], scale: 0.017)
+    let decodeValues = patternedArray(shape: [1, 2, 1, 256], scale: 0.019)
+
+    _ = sourceCache.update(keys: prefillKeys, values: prefillValues)
+    _ = sourceCache.update(keys: seedKeys, values: seedValues)
+    let savedState = sourceCache.state
+    let savedMetaState = sourceCache.metaState
+
+    #expect(savedState.count == 6)
+    fusedCache.state = savedState
+    fusedCache.metaState = savedMetaState
+    fallbackCache.state = savedState
+    fallbackCache.metaState = savedMetaState
+
+    let fused = attentionWithCacheUpdate(
+        queries: queries,
+        keys: decodeKeys,
+        values: decodeValues,
+        cache: fusedCache,
+        scale: 1.0 / sqrt(256.0),
+        mask: .none
+    )
+    let fallback = attentionWithCacheUpdate(
+        queries: queries,
+        keys: decodeKeys,
+        values: decodeValues,
+        cache: fallbackCache,
+        scale: 1.0 / sqrt(256.0),
+        mask: .array(MLXArray.zeros([1, 4, 1, 6], dtype: .float16))
+    )
+
+    #expect(fused.shape == [1, 4, 1, 256])
+    #expect(maxAbsoluteDifference(fused, fallback) < 0.002)
+}
+
+@Test
 func testRotorQuantBlockParallelIsoDecodeMatchesFallbackWithExactTail() {
     let configuration = RotorQuantConfiguration(
         keyBits: 3,
@@ -281,8 +369,8 @@ func testRotorQuantBlockParallelIsoDecodeMatchesFallbackWithExactTail() {
     )
     let fusedCache = RotorQuantKVCache(configuration: configuration)
     let fallbackCache = RotorQuantKVCache(configuration: configuration)
-    let prefillKeys = patternedArray(shape: [1, 2, 7, 256], scale: 0.011)
-    let prefillValues = patternedArray(shape: [1, 2, 7, 256], scale: 0.014)
+    let prefillKeys = patternedArray(shape: [1, 2, 39, 256], scale: 0.011)
+    let prefillValues = patternedArray(shape: [1, 2, 39, 256], scale: 0.014)
     let queries = patternedArray(shape: [1, 4, 1, 256], scale: 0.013)
     let decodeKeys = patternedArray(shape: [1, 2, 1, 256], scale: 0.017)
     let decodeValues = patternedArray(shape: [1, 2, 1, 256], scale: 0.019)
@@ -304,7 +392,7 @@ func testRotorQuantBlockParallelIsoDecodeMatchesFallbackWithExactTail() {
         values: decodeValues,
         cache: fallbackCache,
         scale: 1.0 / sqrt(256.0),
-        mask: .array(MLXArray.zeros([1, 4, 1, 8], dtype: .float16))
+        mask: .array(MLXArray.zeros([1, 4, 1, 40], dtype: .float16))
     )
 
     #expect(fused.shape == [1, 4, 1, 256])
@@ -312,7 +400,7 @@ func testRotorQuantBlockParallelIsoDecodeMatchesFallbackWithExactTail() {
 }
 
 @Test
-func testQwen35HybridCacheOnlyCompressesFullAttentionLayers() throws {
+func testRotorQuantQwen35HybridCacheOnlyCompressesFullAttentionLayers() throws {
     let json = """
         {
           "model_type": "qwen3_5",
@@ -334,7 +422,8 @@ func testQwen35HybridCacheOnlyCompressesFullAttentionLayers() throws {
         """.data(using: .utf8)!
     let config = try JSONDecoder().decode(Qwen35TextConfiguration.self, from: json)
     let model = Qwen35TextModel(config)
-    let cache = model.newCache(
+    let denseCache = model.newCache(parameters: GenerateParameters())
+    let rotorCache = model.newCache(
         parameters: GenerateParameters(
             cacheCompression: .rotorQuant(
                 RotorQuantConfiguration(
@@ -349,12 +438,24 @@ func testQwen35HybridCacheOnlyCompressesFullAttentionLayers() throws {
         )
     )
 
-    let rotorCount = cache.filter { $0 is RotorQuantKVCache }.count
-    let mambaCount = cache.filter { $0 is MambaCache }.count
+    let rotorCount = rotorCache.filter { $0 is RotorQuantKVCache }.count
+    let mambaCount = rotorCache.filter { $0 is MambaCache }.count
 
-    #expect(cache.count == 8)
+    #expect(denseCache.count == 8)
+    #expect(rotorCache.count == 8)
     #expect(rotorCount == 2)
     #expect(mambaCount == 6)
+    for layerIndex in 0 ..< 8 {
+        if (layerIndex + 1) % 4 == 0 {
+            #expect(denseCache[layerIndex] is KVCacheSimple)
+            #expect(rotorCache[layerIndex] is RotorQuantKVCache)
+        } else {
+            #expect(denseCache[layerIndex] is MambaCache)
+            #expect(rotorCache[layerIndex] is MambaCache)
+            #expect(denseCache[layerIndex].state.count == rotorCache[layerIndex].state.count)
+            #expect(denseCache[layerIndex].metaState == rotorCache[layerIndex].metaState)
+        }
+    }
 }
 
 @Test
@@ -442,4 +543,73 @@ func testLegacyTurboQuantPromptCacheMigratesToSimpleCache() throws {
     #expect(migrated.state.count == 2)
     #expect(migrated.state[0].shape == [1, 1, 2, 128])
     #expect(migrated.state[1].shape == [1, 1, 2, 128])
+}
+
+@Test
+func testMalformedRotorQuantPromptCacheThrowsInsteadOfCrashing() throws {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("safetensors")
+    let malformedState = MLXArray.zeros([1, 1, 1], dtype: .float32)
+    let malformedMetaState = [
+        "256", "1", "3", "2", "42", "128", "iso",
+        "iso", "256", "256", "float16", "0", "1",
+    ]
+    var metadata: [String: String] = ["2.0": "RotorQuantKVCache"]
+    for (index, value) in malformedMetaState.enumerated() {
+        metadata["0.0.\(index)"] = value
+    }
+
+    try save(arrays: ["0.0": malformedState], metadata: metadata, url: url)
+
+    #expect(throws: KVCacheError.self) {
+        _ = try loadPromptCache(url: url)
+    }
+}
+
+@Test
+func testMalformedRotorQuantPromptCacheMetadataThrowsInsteadOfCrashing() throws {
+    let invalidBitsURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("safetensors")
+    let invalidCountURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("safetensors")
+    let exactKeys = MLXArray.zeros([1, 1, 1, 128], dtype: .float16)
+    let exactValues = MLXArray.zeros([1, 1, 1, 128], dtype: .float16)
+    let validMetaState = [
+        "256", "1", "3", "2", "42", "128", "iso",
+        "iso", "128", "128", "float16", "0", "1", "128",
+    ]
+
+    func saveRotorCache(url: URL, metaState: [String]) throws {
+        var metadata: [String: String] = ["2.0": "RotorQuantKVCache"]
+        for (index, value) in metaState.enumerated() {
+            metadata["0.0.\(index)"] = value
+        }
+        try save(
+            arrays: [
+                "0.0": exactKeys,
+                "0.1": exactValues,
+            ],
+            metadata: metadata,
+            url: url
+        )
+    }
+
+    var invalidBitsMetaState = validMetaState
+    invalidBitsMetaState[2] = "9"
+    try saveRotorCache(url: invalidBitsURL, metaState: invalidBitsMetaState)
+
+    var invalidCountMetaState = validMetaState
+    invalidCountMetaState[1] = "2"
+    invalidCountMetaState[12] = "2"
+    try saveRotorCache(url: invalidCountURL, metaState: invalidCountMetaState)
+
+    #expect(throws: KVCacheError.self) {
+        _ = try loadPromptCache(url: invalidBitsURL)
+    }
+    #expect(throws: KVCacheError.self) {
+        _ = try loadPromptCache(url: invalidCountURL)
+    }
 }

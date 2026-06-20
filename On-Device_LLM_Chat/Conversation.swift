@@ -50,7 +50,7 @@ final class Conversation {
         messages
             .filter { $0.role != .system }
             .sortedByOrder
-            .map(\.displayText)
+            .map(\.userVisibleText)
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
     }

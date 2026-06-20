@@ -160,21 +160,32 @@ private struct RichMarkdownWebView: View {
     let fallbackTone: RichMarkdownView.TextTone
 
     @State private var height: CGFloat = 1
+    @State private var hasMeasuredHeight = false
     @State private var failedToLoad = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         Group {
             if failedToLoad {
                 NativeMarkdownText(text: text, fontSize: fontSize, textTone: fallbackTone)
             } else {
-                RichMarkdownWebViewRepresentable(
-                    text: text,
-                    fontSize: fontSize,
-                    palette: palette,
-                    dynamicHeight: $height,
-                    failedToLoad: $failedToLoad
-                )
-                .frame(height: max(height, 1))
+                ZStack(alignment: .topLeading) {
+                    if !hasMeasuredHeight {
+                        NativeMarkdownText(text: text, fontSize: fontSize, textTone: fallbackTone)
+                    }
+
+                    RichMarkdownWebViewRepresentable(
+                        text: text,
+                        fontSize: fontSize,
+                        palette: palette,
+                        dynamicHeight: $height,
+                        hasMeasuredHeight: $hasMeasuredHeight,
+                        failedToLoad: $failedToLoad,
+                        openURL: openURL
+                    )
+                    .frame(height: max(height, 1))
+                    .opacity(hasMeasuredHeight ? 1 : 0)
+                }
             }
         }
     }
@@ -185,10 +196,17 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     let fontSize: Double
     let palette: RichTextPalette
     @Binding var dynamicHeight: CGFloat
+    @Binding var hasMeasuredHeight: Bool
     @Binding var failedToLoad: Bool
+    let openURL: OpenURLAction
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(dynamicHeight: $dynamicHeight, failedToLoad: $failedToLoad)
+        Coordinator(
+            dynamicHeight: $dynamicHeight,
+            hasMeasuredHeight: $hasMeasuredHeight,
+            failedToLoad: $failedToLoad,
+            openURL: openURL
+        )
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -211,19 +229,20 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let html = Self.makeHTML(text: text, fontSize: fontSize, palette: palette)
-        let payloadHash = html.hashValue
-
-        guard context.coordinator.lastPayloadHash != payloadHash else { return }
-        context.coordinator.lastPayloadHash = payloadHash
-        context.coordinator.setFailedToLoad(false)
-
-        guard let baseURL = Bundle.main.resourceURL else {
+        guard let html = Self.makeHTML(text: text, fontSize: fontSize, palette: palette) else {
             context.coordinator.setFailedToLoad(true)
             return
         }
 
-        webView.loadHTMLString(html, baseURL: baseURL)
+        let payloadHash = html.hashValue
+
+        guard context.coordinator.lastPayloadHash != payloadHash else { return }
+        context.coordinator.lastPayloadHash = payloadHash
+        context.coordinator.setHasMeasuredHeight(false)
+        context.coordinator.setDynamicHeight(1)
+        context.coordinator.setFailedToLoad(false)
+
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -231,8 +250,15 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         webView.navigationDelegate = nil
     }
 
-    private static func makeHTML(text: String, fontSize: Double, palette: RichTextPalette) -> String {
+    private static func makeHTML(text: String, fontSize: Double, palette: RichTextPalette) -> String? {
         let encodedText = text.jsLiteral
+        guard let markdownItJS = bundledTextResource(named: "markdown-it.min", extension: "js") else {
+            return nil
+        }
+
+        let katexCSS = bundledTextResource(named: "katex.min", extension: "css") ?? ""
+        let katexJS = bundledTextResource(named: "katex.min", extension: "js") ?? ""
+        let katexAutoRenderJS = bundledTextResource(named: "katex-auto-render.min", extension: "js") ?? ""
 
         return """
         <!doctype html>
@@ -240,7 +266,9 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-          <link rel="stylesheet" href="katex.min.css">
+          <style>
+          \(katexCSS.escapedInlineStyle)
+          </style>
           <style>
             :root {
               color-scheme: light dark;
@@ -355,9 +383,15 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         </head>
         <body>
           <div id="content"></div>
-          <script src="markdown-it.min.js"></script>
-          <script src="katex.min.js"></script>
-          <script src="katex-auto-render.min.js"></script>
+          <script>
+          \(markdownItJS.escapedInlineScript)
+          </script>
+          <script>
+          \(katexJS.escapedInlineScript)
+          </script>
+          <script>
+          \(katexAutoRenderJS.escapedInlineScript)
+          </script>
           <script>
             const source = \(encodedText);
             const root = document.getElementById('content');
@@ -410,16 +444,40 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         """
     }
 
+    private static func bundledTextResource(named name: String, extension fileExtension: String) -> String? {
+        let candidateURLs = [
+            Bundle.main.url(forResource: name, withExtension: fileExtension),
+            Bundle.main.url(forResource: name, withExtension: fileExtension, subdirectory: "RenderingAssets")
+        ]
+
+        for url in candidateURLs.compactMap({ $0 }) {
+            if let contents = try? String(contentsOf: url, encoding: .utf8) {
+                return contents
+            }
+        }
+
+        return nil
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let heightHandlerName = "richTextHeight"
 
         @Binding var dynamicHeight: CGFloat
+        @Binding var hasMeasuredHeight: Bool
         @Binding var failedToLoad: Bool
         var lastPayloadHash: Int?
+        private let openURL: OpenURLAction
 
-        init(dynamicHeight: Binding<CGFloat>, failedToLoad: Binding<Bool>) {
+        init(
+            dynamicHeight: Binding<CGFloat>,
+            hasMeasuredHeight: Binding<Bool>,
+            failedToLoad: Binding<Bool>,
+            openURL: OpenURLAction
+        ) {
             self._dynamicHeight = dynamicHeight
+            self._hasMeasuredHeight = hasMeasuredHeight
             self._failedToLoad = failedToLoad
+            self.openURL = openURL
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -433,10 +491,25 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
             }
 
             guard nextHeight.isFinite, nextHeight > 0 else { return }
-            if abs(dynamicHeight - nextHeight) > 1 {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                self.hasMeasuredHeight = true
+                if abs(self.dynamicHeight - nextHeight) > 1 {
                     self.dynamicHeight = nextHeight
                 }
+            }
+        }
+
+        func setDynamicHeight(_ nextValue: CGFloat) {
+            guard dynamicHeight != nextValue else { return }
+            DispatchQueue.main.async {
+                self.dynamicHeight = nextValue
+            }
+        }
+
+        func setHasMeasuredHeight(_ nextValue: Bool) {
+            guard hasMeasuredHeight != nextValue else { return }
+            DispatchQueue.main.async {
+                self.hasMeasuredHeight = nextValue
             }
         }
 
@@ -476,17 +549,25 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
             }
 
             if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                UIApplication.shared.open(url)
+                openURL(url)
                 decisionHandler(.cancel)
                 return
             }
 
-            decisionHandler(.allow)
+            decisionHandler(.cancel)
         }
     }
 }
 
 private extension String {
+    var escapedInlineScript: String {
+        replacingOccurrences(of: "</script", with: "<\\/script")
+    }
+
+    var escapedInlineStyle: String {
+        replacingOccurrences(of: "</style", with: "<\\/style")
+    }
+
     var jsLiteral: String {
         let encoder = JSONEncoder()
         guard

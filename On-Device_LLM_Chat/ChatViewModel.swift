@@ -18,6 +18,72 @@ import os.log
 // Resolve ambiguities between MLXLMCommon and SwiftData/FoundationModels
 typealias ModelContext = SwiftData.ModelContext
 
+nonisolated private final class TimeoutRace<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+    private var continuation: CheckedContinuation<T, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    func start(
+        duration: Duration,
+        operation: @escaping @Sendable () async throws -> T,
+        continuation: CheckedContinuation<T, Error>
+    ) {
+        lock.withLock {
+            self.continuation = continuation
+        }
+
+        let operationTask = Task {
+            do {
+                let value = try await operation()
+                resume(with: .success(value))
+            } catch {
+                resume(with: .failure(error))
+            }
+        }
+
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(for: duration)
+                resume(with: .failure(ChatViewModel.GenerationTimeoutError(timeout: duration)))
+            } catch {
+                // Cancellation means the operation completed or the caller cancelled.
+            }
+        }
+
+        let shouldCancelStartedTasks = lock.withLock { () -> Bool in
+            guard !didResume else { return true }
+            self.operationTask = operationTask
+            self.timeoutTask = timeoutTask
+            return false
+        }
+        if shouldCancelStartedTasks {
+            operationTask.cancel()
+            timeoutTask.cancel()
+        }
+    }
+
+    func cancel() {
+        resume(with: .failure(CancellationError()))
+    }
+
+    private func resume(with result: Result<T, Error>) {
+        let continuation = lock.withLock { () -> CheckedContinuation<T, Error>? in
+            guard !didResume else { return nil }
+            didResume = true
+            let continuation = self.continuation
+            self.continuation = nil
+            operationTask?.cancel()
+            timeoutTask?.cancel()
+            return continuation
+        }
+        if let continuation {
+            continuation.resume(with: result)
+        }
+    }
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
 
@@ -48,9 +114,12 @@ final class ChatViewModel: ObservableObject {
     // Track the active streaming task so we can cancel it
     internal var currentStreamTask: Task<Void, Never>?
     private var lastStreamOutcome: StreamOutcome = .succeeded
+    private var activeGenerationID: UUID?
+    private let canPromoteDraft: Bool
+    private var didPromoteDraft = false
 
     // Serializes concurrent Foundation Models sessions via continuation queue.
-    private let fmGate = FoundationModelsGate()
+    private static let fmGate = FoundationModelsGate()
 
     // MARK: - Timeouts
     // Give the first token longer (model load/warm-up), then enforce a tighter per-chunk timeout.
@@ -71,15 +140,27 @@ final class ChatViewModel: ObservableObject {
     /// preventing "accumulator already completed" errors.
     func withFoundationModelsLock<T>(
         timeout: Duration = .seconds(15),
-        operation: @escaping () async throws -> T
+        operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        await fmGate.acquire()
+        await Self.fmGate.acquire()
+
+        let operationTask = Task<T, Error> {
+            do {
+                let value = try await operation()
+                await Self.fmGate.release()
+                return value
+            } catch {
+                await Self.fmGate.release()
+                throw error
+            }
+        }
+
         do {
-            let result = try await withTimeout(timeout, operation: operation)
-            await fmGate.release()
-            return result
+            return try await withTimeout(timeout) {
+                try await operationTask.value
+            }
         } catch {
-            await fmGate.release()
+            operationTask.cancel()
             throw error
         }
     }
@@ -89,6 +170,7 @@ final class ChatViewModel: ObservableObject {
         self.generator = generator
         self.context = context
         self.conversation = conversation
+        self.canPromoteDraft = conversation.modelContext == nil
 
         loadTavilyAPIKey()
 
@@ -151,8 +233,9 @@ final class ChatViewModel: ObservableObject {
     /// Inserts the conversation into the model context if it hasn't been persisted yet.
     /// Called before every save so draft conversations are transparently promoted on first message send.
     private func insertIntoContextIfNeeded() {
-        guard conversation.modelContext == nil else { return }
+        guard canPromoteDraft, !didPromoteDraft, conversation.modelContext == nil else { return }
         context.insert(conversation)
+        didPromoteDraft = true
     }
 
     internal func immediateSave() {
@@ -285,8 +368,16 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Public controls
 
     func cancelGeneration() {
-        // Only cancel the task; let the streaming task perform the unified cleanup.
+        activeGenerationID = nil
+        isGenerating = false
+        streamingMessageID = nil
         currentStreamTask?.cancel()
+    }
+
+    @discardableResult
+    func cancelGenerationAndWait() async -> Bool {
+        cancelGeneration()
+        return await waitForStreamToFinish()
     }
 
     // MARK: - Chat flow
@@ -295,13 +386,15 @@ final class ChatViewModel: ObservableObject {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        await waitForStreamToFinish()
+        guard await waitForStreamToFinish() else { return }
 
-        guard !isGenerating, !Task.isCancelled else { return }
+        guard !isGenerating, !Task.isCancelled,
+              let generationID = beginGenerationLifecycle() else { return }
+        defer { endGenerationLifecycle(generationID) }
 
         let shouldUseReasoning = await resolvedReasoningMode(for: trimmed, logContext: "")
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
         let turn = appendUserMessage(trimmed)
         let assistantMsg = appendAssistantPlaceholder(
@@ -310,7 +403,7 @@ final class ChatViewModel: ObservableObject {
             requiresWebSearch: forceSearch
         )
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
         let searchInstruction = forceSearch
             ? "You must call the webSearch tool before answering. Search for current information about this request first, then answer using the tool results."
@@ -319,9 +412,11 @@ final class ChatViewModel: ObservableObject {
             into: assistantMsg,
             basedOnHistoryUpTo: assistantMsg.order,
             additionalUserInstruction: searchInstruction,
-            disableWebSearch: disableToolCalls
+            disableWebSearch: disableToolCalls,
+            generationID: generationID
         )
 
+        guard isGenerationActive(generationID) else { return }
         await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: trimmed)
     }
 
@@ -373,29 +468,48 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Internals
 
-    internal func waitForStreamToFinish() async {
-        guard let task = currentStreamTask else { return }
+    internal func waitForStreamToFinish() async -> Bool {
+        guard let task = currentStreamTask else { return activeGenerationID == nil }
 
         do {
             try await withTimeout(.seconds(4)) {
                 await task.value
             }
+            return true
         } catch is GenerationTimeoutError {
             print("Warning: waitForStreamToFinish timed out; cancelling task")
             task.cancel()
             // Give cancellation a brief window to propagate before we force-reset.
-            _ = try? await withTimeout(.seconds(1)) {
+            if (try? await withTimeout(.seconds(1)) {
                 await task.value
+            }) != nil {
+                return true
             }
+            return false
         } catch {
             print("Warning: waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
+            return false
         }
+    }
 
-        // Ensure flags are down regardless of how the task exited.
-        if isGenerating || currentStreamTask != nil {
-            isGenerating = false
-            currentStreamTask = nil
-        }
+    @discardableResult
+    internal func beginGenerationLifecycle() -> UUID? {
+        guard activeGenerationID == nil else { return nil }
+        let id = UUID()
+        activeGenerationID = id
+        isGenerating = true
+        return id
+    }
+
+    internal func isGenerationActive(_ id: UUID) -> Bool {
+        activeGenerationID == id && !Task.isCancelled
+    }
+
+    internal func endGenerationLifecycle(_ id: UUID) {
+        guard activeGenerationID == id else { return }
+        activeGenerationID = nil
+        isGenerating = false
+        streamingMessageID = nil
     }
 
     func renumberMessagesByOrder() {
@@ -410,7 +524,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    private struct GenerationTimeoutError: LocalizedError {
+    fileprivate struct GenerationTimeoutError: LocalizedError {
         var timeout: Duration
         var errorDescription: String? {
             let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
@@ -440,21 +554,14 @@ final class ChatViewModel: ObservableObject {
         case cancelled
     }
 
-    func withTimeout<T>(_ duration: Duration, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
+    func withTimeout<T>(_ duration: Duration, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        let race = TimeoutRace<T>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                race.start(duration: duration, operation: operation, continuation: continuation)
             }
-            group.addTask {
-                try await Task.sleep(for: duration)
-                throw GenerationTimeoutError(timeout: duration)
-            }
-            let value = try await group.next()
-            guard let value = value else {
-                throw GenerationTimeoutError(timeout: duration)
-            }
-            group.cancelAll()
-            return value
+        } onCancel: {
+            race.cancel()
         }
     }
 
@@ -503,9 +610,21 @@ final class ChatViewModel: ObservableObject {
         var outcome: StreamOutcome = .succeeded
     }
 
-    private enum StreamEvent {
+    private enum StreamEvent: @unchecked Sendable {
         case text(String)
         case toolCall(MLXToolCall)
+    }
+
+    nonisolated private final class StreamEventIterator: @unchecked Sendable {
+        private var iterator: AsyncThrowingStream<StreamEvent, Error>.Iterator
+
+        init(stream: AsyncThrowingStream<StreamEvent, Error>) {
+            self.iterator = stream.makeAsyncIterator()
+        }
+
+        func next() async throws -> StreamEvent? {
+            try await iterator.next()
+        }
     }
 
     /// Detects if an error is related to context window/length limits
@@ -538,19 +657,31 @@ final class ChatViewModel: ObservableObject {
         basedOnHistoryUpTo order: Int,
         additionalUserInstruction: String? = nil,
         disableWebSearch: Bool = false,
-        allowNativeImages: Bool = true
+        allowNativeImages: Bool = true,
+        generationID: UUID? = nil
     ) async -> StreamOutcome {
         print("streamAssistant: Starting (order: \(order), messageID: \(assistantMessage.id))")
 
-        guard !Task.isCancelled else {
-            print("Warning: streamAssistant: Task cancelled before starting")
-            return .cancelled
+        let lifecycleID: UUID
+        let ownsLifecycle: Bool
+        if let generationID {
+            guard isGenerationActive(generationID) else { return .cancelled }
+            lifecycleID = generationID
+            ownsLifecycle = false
+        } else {
+            guard let newID = beginGenerationLifecycle() else { return .cancelled }
+            lifecycleID = newID
+            ownsLifecycle = true
+        }
+        defer {
+            if ownsLifecycle {
+                endGenerationLifecycle(lifecycleID)
+            }
         }
 
-        // isGenerating is managed exclusively here to avoid race conditions.
-        isGenerating = true
-        defer {
-            isGenerating = false
+        guard isGenerationActive(lifecycleID) else {
+            print("Warning: streamAssistant: Task cancelled before starting")
+            return .cancelled
         }
 
         streamingMessageID = assistantMessage.id
@@ -563,12 +694,13 @@ final class ChatViewModel: ObservableObject {
             return .failedBeforeOutput
         }
 
-        guard let preparation = await prepareStream(
+        guard isGenerationActive(lifecycleID), let preparation = await prepareStream(
             from: resetState,
             basedOnHistoryUpTo: order,
             additionalUserInstruction: additionalUserInstruction,
             disableWebSearch: disableWebSearch,
-            allowNativeImages: allowNativeImages
+            allowNativeImages: allowNativeImages,
+            generationID: lifecycleID
         ) else {
             streamingMessageID = nil
             return .failedBeforeOutput
@@ -576,7 +708,9 @@ final class ChatViewModel: ObservableObject {
 
         let task = Task { @MainActor [weak self] in
             guard let self = self else { return }
+            guard self.isGenerationActive(lifecycleID) else { return }
             let consumption = await self.performStreaming(preparation: preparation)
+            guard self.isGenerationActive(lifecycleID) || consumption.outcome == .cancelled else { return }
             let capturedInvocations = self.captureSearchInvocations(
                 from: preparation.webSearchBridge,
                 targetID: preparation.targetID
@@ -586,13 +720,15 @@ final class ChatViewModel: ObservableObject {
                 consumption: consumption,
                 capturedInvocations: capturedInvocations
             )
-            self.finishStreamingSession(with: outcome)
+            self.finishStreamingSession(with: outcome, generationID: lifecycleID)
         }
 
         lastStreamOutcome = .succeeded
         currentStreamTask = task
         await task.value
-        currentStreamTask = nil
+        if activeGenerationID == lifecycleID {
+            currentStreamTask = nil
+        }
         return lastStreamOutcome
     }
 
@@ -649,9 +785,12 @@ final class ChatViewModel: ObservableObject {
         basedOnHistoryUpTo order: Int,
         additionalUserInstruction: String?,
         disableWebSearch: Bool,
-        allowNativeImages: Bool
+        allowNativeImages: Bool,
+        generationID: UUID
     ) async -> StreamPreparation? {
         let promptBridge = ModelBackendBridge.shared
+        let selectedBackend = promptBridge.selectedBackend
+        let selectedModelID = promptBridge.selectedModelID
         let toolCallsDisabled = disableWebSearch || UserDefaults.standard.disableToolCalls
         let backendSupportsWebSearchTools = promptBridge.toolCallsAvailableForCurrentBackend
         let autonomousWebSearchAvailable = !toolCallsDisabled && searchService != nil && backendSupportsWebSearchTools
@@ -663,7 +802,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         logger.notice(
-            "streamAssistant tool setup: backend=\(promptBridge.selectedBackend.rawValue, privacy: .public) force_search=\(resetState.forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) backend_tool_support=\(backendSupportsWebSearchTools, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
+            "streamAssistant tool setup: backend=\(selectedBackend.rawValue, privacy: .public) force_search=\(resetState.forceSearchRequired, privacy: .public) tools_disabled=\(toolCallsDisabled, privacy: .public) backend_tool_support=\(backendSupportsWebSearchTools, privacy: .public) autonomous_search=\(autonomousWebSearchAvailable, privacy: .public) search_service=\(self.searchService != nil, privacy: .public) web_tool_available=\(webSearchAvailable, privacy: .public)"
         )
         logger.notice(
             "streamAssistant question: chars=\(resetState.latestUserQuestion.count, privacy: .public) search_query_present=\(resetState.target.searchQuery != nil, privacy: .public)"
@@ -701,7 +840,16 @@ final class ChatViewModel: ObservableObject {
         }
 
         let backendRequest: StreamBackendRequest
-        if promptBridge.selectedBackend == .mlx, let manager = promptBridge.modelManager {
+        guard isGenerationActive(generationID) else { return nil }
+
+        if selectedBackend == .mlx, let manager = promptBridge.modelManager {
+            if let selectedModelID, manager.currentModel?.id != selectedModelID && !manager.isLoading {
+                failStreamPreparation(
+                    target: resetState.target,
+                    message: "Selected MLX model is not loaded. Wait for it to load or choose another backend."
+                )
+                return nil
+            }
             do {
                 let messages = try await buildQwenMessages(
                     upToOrderExclusive: order,
@@ -711,6 +859,7 @@ final class ChatViewModel: ObservableObject {
                     toolsAvailable: webSearchAvailable,
                     forceWebSearch: resetState.forceSearchRequired
                 )
+                guard isGenerationActive(generationID) else { return nil }
                 backendRequest = .mlx(
                     manager: manager,
                     conversationID: conversation.id,
@@ -742,6 +891,8 @@ final class ChatViewModel: ObservableObject {
             backendRequest = .foundation(prompt: prompt, tools: foundationModelTools)
         }
 
+        guard isGenerationActive(generationID) else { return nil }
+
         conversation.lastUpdated = Date()
         immediateSave()
 
@@ -764,7 +915,7 @@ final class ChatViewModel: ObservableObject {
     ) {
         target.generationError = message
         if clearVisibleContent {
-            target.text = ""
+            target.text = "Generation failed: \(message)"
             target.finalAnswer = nil
             target.reasoning = nil
         }
@@ -817,7 +968,7 @@ final class ChatViewModel: ObservableObject {
 
         do {
             let stream = try await makeGenerationStream(from: preparation)
-            var iterator = stream.makeAsyncIterator()
+            let iterator = StreamEventIterator(stream: stream)
 
             while !Task.isCancelled {
                 let nextEvent: StreamEvent?
@@ -948,17 +1099,21 @@ final class ChatViewModel: ObservableObject {
             }
         case .foundation(let prompt, let tools):
             logger.notice("streamAssistant entering Foundation Models generation path")
-            let textStream = try await withTimeout(firstTokenTimeout) {
-                try await self.generator.streamResponse(to: prompt, tools: tools)
-            }
-            return AsyncThrowingStream { continuation in
-                Task {
+            return TaskBackedAsyncThrowingStream.make { continuation in
+                Task { @MainActor in
+                    await Self.fmGate.acquire()
                     do {
+                        let textStream = try await self.generator.streamResponse(to: prompt, tools: tools)
                         for try await chunk in textStream {
                             continuation.yield(.text(chunk))
                         }
+                        await Self.fmGate.release()
+                        continuation.finish()
+                    } catch is CancellationError {
+                        await Self.fmGate.release()
                         continuation.finish()
                     } catch {
+                        await Self.fmGate.release()
                         continuation.finish(throwing: error)
                     }
                 }
@@ -1047,7 +1202,9 @@ final class ChatViewModel: ObservableObject {
         )
         target.searchInvocations = storedInvocations
 
-        let combinedResults = storedInvocations.map { $0.results }.joined(separator: "\n\n")
+        let combinedResults = storedInvocations
+            .map { Self.escapeSourcesPayload($0.userVisibleResults) }
+            .joined(separator: "\n\n")
         let sourcesBlock = "<sources>\n\(combinedResults)\n</sources>\n\n"
         if target.isReasoningMode {
             let existing = target.finalAnswer ?? ""
@@ -1059,6 +1216,12 @@ final class ChatViewModel: ObservableObject {
         }
 
         return storedInvocations
+    }
+
+    private static func escapeSourcesPayload(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "<sources>", with: "&lt;sources&gt;", options: [.caseInsensitive])
+            .replacingOccurrences(of: "</sources>", with: "&lt;/sources&gt;", options: [.caseInsensitive])
     }
 
     private func finalizeStreaming(
@@ -1121,6 +1284,11 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
+        if let generationError = target.generationError,
+           !hasAnyVisibleContent {
+            target.text = "Generation failed: \(generationError)"
+        }
+
         if !target.text.isEmpty {
             target.text = stripSearchTags(target.text, preserveBoundaries: false)
         }
@@ -1140,7 +1308,8 @@ final class ChatViewModel: ObservableObject {
         return outcome
     }
 
-    private func finishStreamingSession(with outcome: StreamOutcome) {
+    private func finishStreamingSession(with outcome: StreamOutcome, generationID: UUID) {
+        guard activeGenerationID == generationID || outcome == .cancelled else { return }
         streamingMessageID = nil
         immediateSave()
         currentStreamTask = nil

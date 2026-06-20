@@ -58,7 +58,7 @@ extension ChatViewModel {
             }
         }
 
-        await waitForStreamToFinish()
+        guard await waitForStreamToFinish() else { return }
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             logger.warning("Regenerate failed: message not found")
@@ -141,7 +141,7 @@ extension ChatViewModel {
         isRegenerating = true
         defer { isRegenerating = false }
 
-        await waitForStreamToFinish()
+        guard await waitForStreamToFinish() else { return }
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             logger.warning("Regenerate with instruction failed: message not found")
@@ -196,7 +196,7 @@ extension ChatViewModel {
         isRegenerating = true
         defer { isRegenerating = false }
 
-        await waitForStreamToFinish()
+        guard await waitForStreamToFinish() else { return }
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             logger.warning("Edit and regenerate failed: message not found")
@@ -275,7 +275,7 @@ extension ChatViewModel {
     func deleteMessageAndMaybeTrim(_ message: Message) async {
         if isGenerating, let streamingID = streamingMessageID, streamingID == message.id {
             cancelGeneration()
-            await waitForStreamToFinish()
+            guard await waitForStreamToFinish() else { return }
         }
 
         context.delete(message)

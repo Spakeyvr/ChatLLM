@@ -127,13 +127,16 @@ class ModelBackendBridge: ObservableObject {
         activeConversation = conversation
         guard let conversation else { return }
 
+        let hasNonSystemMessages = conversation.messages.contains { $0.role != .system }
         let preferredBackend = conversation.preferredBackendRawValue.flatMap(Backend.init(rawValue:))
-            ?? Backend(rawValue: UserDefaults.standard.selectedLLMBackend)
+            ?? (hasNonSystemMessages ? .foundationModels : Backend(rawValue: UserDefaults.standard.selectedLLMBackend))
             ?? .foundationModels
-        let preferredModelID = conversation.preferredModelID ?? UserDefaults.standard.selectedCustomModelID
+        let preferredModelID = conversation.preferredModelID ?? (hasNonSystemMessages ? nil : UserDefaults.standard.selectedCustomModelID)
 
-        conversation.preferredBackendRawValue = preferredBackend.rawValue
-        if conversation.preferredModelID == nil {
+        if conversation.preferredBackendRawValue != preferredBackend.rawValue && !hasNonSystemMessages {
+            conversation.preferredBackendRawValue = preferredBackend.rawValue
+        }
+        if conversation.preferredModelID == nil && !hasNonSystemMessages {
             conversation.preferredModelID = preferredModelID
         }
 
@@ -189,12 +192,6 @@ class ModelBackendBridge: ObservableObject {
     }
 
     func switchToMLXModel(_ modelID: String, source: String = "unknown") {
-        selectedModelID = modelID
-        selectedBackend = .mlx
-        UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
-        UserDefaults.standard.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
-        persistSelectionToActiveConversation()
-
         guard let manager = modelManager,
               let model = manager.model(withID: modelID) else {
             modelManager?.unloadAllModels()
@@ -208,6 +205,12 @@ class ModelBackendBridge: ObservableObject {
                 "Model '\(model.displayName)' is not available. Download it before selecting MLX."
             return
         }
+
+        selectedModelID = modelID
+        selectedBackend = .mlx
+        UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
+        UserDefaults.standard.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
+        persistSelectionToActiveConversation()
 
         let isAlreadyLoaded = manager.currentModel?.id == modelID && !manager.isLoading
         let isAlreadyPending = manager.pendingModelToLoad?.id == modelID && manager.isLoading
@@ -367,9 +370,6 @@ extension UserDefaults {
         get {
             if object(forKey: AppSettingsKeys.mlxEnableRotorQuant) != nil {
                 return bool(forKey: AppSettingsKeys.mlxEnableRotorQuant)
-            }
-            if object(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization) != nil {
-                return bool(forKey: AppSettingsKeys.mlxEnableKVCacheQuantization)
             }
             return true
         }

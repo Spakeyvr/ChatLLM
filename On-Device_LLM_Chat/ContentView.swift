@@ -231,6 +231,23 @@ struct ContentView: View {
         )
     }
 
+    private func attachmentURLs(in conversations: [Conversation]) -> [URL] {
+        conversations
+            .flatMap(\.messages)
+            .flatMap(\.attachments)
+            .map(\.actualFileURL)
+    }
+
+    private func deleteAttachmentFiles(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        Task {
+            for url in urls {
+                try? await ImageStore.shared.delete(url: url)
+                await ImageStore.shared.deleteInferenceVariant(for: url)
+            }
+        }
+    }
+
     private func scheduleAttachmentStorageCleanup(excludingConversationIDs excludedConversationIDs: Set<UUID> = []) {
         attachmentCleanupTask?.cancel()
         attachmentCleanupTask = Task { @MainActor in
@@ -712,6 +729,7 @@ struct ContentView: View {
         
         guard !toDelete.isEmpty else { return }
         let excludedConversationIDs = Set(toDelete.map(\.id))
+        let attachmentURLsToDelete = attachmentURLs(in: toDelete)
         
         // CRITICAL FIX: Eagerly resolve all properties before deletion to avoid SwiftData fault errors
         // Force resolution of message properties that might be accessed during UI updates
@@ -754,6 +772,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
         } catch {
@@ -780,6 +799,7 @@ struct ContentView: View {
         // Ensure we're not trying to delete a conversation that's already been deleted
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
         let excludedConversationIDs: Set<UUID> = [conversationID]
+        let attachmentURLsToDelete = attachmentURLs(in: [conversation])
         
         AppHaptics.impact(.medium)
         
@@ -804,6 +824,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
         } catch {
@@ -831,6 +852,7 @@ struct ContentView: View {
         // Create a copy of the conversations array to avoid modification during iteration
         let conversationsToDelete = Array(conversations)
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
+        let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
         
         // Delete everything
         for convo in conversationsToDelete {
@@ -839,6 +861,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
         } catch {
@@ -863,6 +886,7 @@ struct ContentView: View {
         let conversationsToDelete = conversations.filter { $0.id != current.id }
         guard !conversationsToDelete.isEmpty else { return }
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
+        let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
         
         // Cancel operations in view model if it's for a conversation being deleted
         if let currentVM = currentViewModel,
@@ -877,6 +901,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
             // Ensure the kept conversation is selected after deletion
@@ -914,7 +939,14 @@ struct ContentView: View {
             for message in sortedMessages where message.role != .system {
                 let roleLabel = message.role == .user ? "User" : "Assistant"
                 exportText += "**\(roleLabel):**\n"
-                exportText += message.displayText + "\n\n"
+                let visibleText = message.userVisibleText
+                if !visibleText.isEmpty {
+                    exportText += visibleText + "\n"
+                }
+                for attachment in message.attachments where attachment.type == .image {
+                    exportText += "[Image attachment: \(attachment.fileName)]\n"
+                }
+                exportText += "\n"
             }
             
             exportText += String(repeating: "-", count: 60) + "\n\n"
@@ -951,6 +983,7 @@ struct ContentView: View {
         
         guard !conversationsToDelete.isEmpty else { return }
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
+        let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
         
         // Cancel operations for conversations being deleted
         for convo in conversationsToDelete {
@@ -976,6 +1009,7 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             print("Auto-deleted \(conversationsToDelete.count) conversations older than \(autoDeleteDays) days")
         } catch {

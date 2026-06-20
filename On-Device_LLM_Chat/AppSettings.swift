@@ -12,7 +12,6 @@ enum AppSettingsKeys {
     static let mlxMaxOutputTokens = "mlxMaxOutputTokens"
     static let mlxContextWindowTokens = "mlxContextWindowTokens"
     static let mlxEnableRotorQuant = "mlxEnableRotorQuant"
-    static let mlxEnableKVCacheQuantization = "mlxEnableKVCacheQuantization"
     static let mlxRepetitionPenalty = "mlxRepetitionPenalty"
     static let autoDeleteOldChats = "autoDeleteOldChats"
     static let autoDeleteDays = "autoDeleteDays"

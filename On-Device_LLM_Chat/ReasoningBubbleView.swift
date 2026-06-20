@@ -247,7 +247,7 @@ struct StepByStepReasoningSheet: View {
         .presentationDragIndicator(.visible)
         .sheet(item: $selectedInvocation) { invocation in
             SourcesSheetView(
-                sourcesText: invocation.results,
+                sourcesText: invocation.userVisibleResults,
                 title: String(localized: "Search Results"),
                 searchQuery: invocation.query
             )
@@ -346,7 +346,8 @@ struct SearchStepCard: View {
     let onTap: () -> Void
 
     private var resultSnippet: String {
-        let lines = invocation.results.components(separatedBy: "\n")
+        let visibleResults = invocation.userVisibleResults
+        let lines = visibleResults.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let count = lines.filter {
@@ -357,8 +358,8 @@ struct SearchStepCard: View {
         if count > 0 {
             return "\(count) result\(count == 1 ? "" : "s") found"
         }
-        let preview = invocation.results.prefix(60)
-        return preview.count < invocation.results.count ? "\(preview)…" : String(preview)
+        let preview = visibleResults.prefix(60)
+        return preview.count < visibleResults.count ? "\(preview)…" : String(preview)
     }
 
     var body: some View {

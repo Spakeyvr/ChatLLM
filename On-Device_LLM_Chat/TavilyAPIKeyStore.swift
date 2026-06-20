@@ -76,9 +76,10 @@ enum TavilyAPIKeyStore {
             return
         }
 
-        saveKeychainValue(trimmedKey, service: service, account: account)
-        userDefaults.removeObject(forKey: userDefaultsKey)
-        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        if saveKeychainValue(trimmedKey, service: service, account: account) {
+            userDefaults.removeObject(forKey: userDefaultsKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
     }
 
     static func clear(
@@ -116,33 +117,46 @@ enum TavilyAPIKeyStore {
         }
 
         if getKeychainValue(service: service, account: account) != legacyValue {
-            saveKeychainValue(legacyValue, service: service, account: account)
+            _ = saveKeychainValue(legacyValue, service: service, account: account)
         }
     }
 
-    private static func saveKeychainValue(_ value: String, service: String, account: String) {
+    @discardableResult
+    private static func saveKeychainValue(_ value: String, service: String, account: String) -> Bool {
         guard let valueData = value.data(using: .utf8) else {
             logger.error("Tavily key save failed: UTF-8 encoding returned nil")
-            return
+            return false
         }
 
-        let query: [String: Any] = [
+        let matchQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account
+        ]
+        let updateAttributes: [String: Any] = [
             kSecValueData as String: valueData,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
-        let deleteStatus = SecItemDelete(query as CFDictionary)
-        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
-            logger.error("Tavily key SecItemDelete failed: OSStatus \(deleteStatus)")
+        let updateStatus = SecItemUpdate(matchQuery as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return true
+        }
+        guard updateStatus == errSecItemNotFound else {
+            logger.error("Tavily key SecItemUpdate failed: OSStatus \(updateStatus)")
+            return false
         }
 
-        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        var addQuery = matchQuery
+        addQuery[kSecValueData as String] = valueData
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
         if addStatus != errSecSuccess {
             logger.error("Tavily key SecItemAdd failed: OSStatus \(addStatus)")
+            return false
         }
+        return true
     }
 
     private static func getKeychainValue(service: String, account: String) -> String? {

@@ -11,7 +11,6 @@ actor ModelDownloader {
 
     private static let hfApiBase     = "https://huggingface.co/api"
     private static let hfResolveBase = "https://huggingface.co"
-    private static let chunkSize     = 256 * 1024
     private static let minProgressInterval: Double = 0.01  // report at most every 1% change
     private static let disallowedRemotePathComponents: Set<String> = [".", ".."]
 
@@ -73,51 +72,33 @@ actor ModelDownloader {
             let parentDir = destURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-            let (asyncBytes, response) = try await URLSession.shared.bytes(from: fileURL)
+            let (downloadedURL, response) = try await URLSession.shared.download(from: fileURL)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                try? FileManager.default.removeItem(at: downloadedURL)
                 throw DownloadError.badResponse
             }
 
-            // Use Content-Length if HF API reported zero (common for LFS files).
-            let contentLength = (http.value(forHTTPHeaderField: "Content-Length")).flatMap(Int64.init) ?? 0
-            let effectiveTotal = totalExpected > 0 ? totalExpected
-                : (contentLength > 0 ? totalWritten + contentLength + files.dropFirst(filesCompleted + 1).reduce(0) { $0 + $1.size } : 0)
-
             try? FileManager.default.removeItem(at: tempURL)
-            FileManager.default.createFile(atPath: tempURL.path, contents: nil)
-            let handle = try FileHandle(forWritingTo: tempURL)
+            try FileManager.default.moveItem(at: downloadedURL, to: tempURL)
+            try Task.checkCancellation()
 
-            do {
-                var chunk = Data(capacity: Self.chunkSize)
-                for try await byte in asyncBytes {
-                    chunk.append(byte)
-                    if chunk.count >= Self.chunkSize {
-                        try Task.checkCancellation()
-                        handle.write(chunk)
-                        totalWritten += Int64(chunk.count)
-                        chunk.removeAll(keepingCapacity: true)
-                        let p = computeProgress(totalWritten: totalWritten, totalExpected: effectiveTotal,
-                                                filesCompleted: filesCompleted, fileCount: fileCount)
-                        if p - lastReportedProgress >= Self.minProgressInterval {
-                            lastReportedProgress = p
-                            onProgress(p)
-                        }
-                    }
-                }
-                if !chunk.isEmpty {
-                    handle.write(chunk)
-                    totalWritten += Int64(chunk.count)
-                }
-                try handle.close()
-            } catch {
-                try? handle.close()
-                try? FileManager.default.removeItem(at: tempURL)
-                throw error
-            }
+            let actualSize = (try? tempURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+                ?? file.size
 
             try? FileManager.default.removeItem(at: destURL)
             try FileManager.default.moveItem(at: tempURL, to: destURL)
+            totalWritten += actualSize
             filesCompleted += 1
+            let progress = computeProgress(
+                totalWritten: totalWritten,
+                totalExpected: totalExpected,
+                filesCompleted: filesCompleted,
+                fileCount: fileCount
+            )
+            if progress - lastReportedProgress >= Self.minProgressInterval {
+                lastReportedProgress = progress
+                onProgress(progress)
+            }
         }
 
         onProgress(1.0)

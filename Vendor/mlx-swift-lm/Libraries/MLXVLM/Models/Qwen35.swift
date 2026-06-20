@@ -519,13 +519,13 @@ enum Qwen35Language {
 
             if positionIds == nil {
                 let offset = cache?.offset ?? 0
-                kvSeqLen += offset + 1
+                kvSeqLen += offset
                 var base = MLXArray(stride(from: offset, to: offset + L, by: 1)).asType(.int32)
                 base = tiled(base[.newAxis, 0...], repetitions: [B, 1])
                 positionIds = base[.newAxis, 0..., 0...]
                 positionIds = tiled(positionIds!, repetitions: [3, 1, 1])
             } else if let cache {
-                kvSeqLen += cache.offset + 1
+                kvSeqLen += cache.offset
             }
 
             let (cosValues, sinValues) = rotaryEmbedding(x: values, positionIds: positionIds!)

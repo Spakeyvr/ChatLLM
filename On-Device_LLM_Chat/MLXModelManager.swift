@@ -17,15 +17,15 @@ import UIKit
 
 nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
     case persistentSimple
-    case persistentQuantizedSimple
+    case persistentRotorQuant
     case boundedRotating(maxKVSize: Int)
 
     var diagnosticLabel: String {
         switch self {
         case .persistentSimple:
             return "persistent-simple"
-        case .persistentQuantizedSimple:
-            return "persistent-quantized-simple"
+        case .persistentRotorQuant:
+            return "persistent-rotorquant"
         case .boundedRotating:
             return "bounded-rotating"
         }
@@ -33,16 +33,16 @@ nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
 
     var maxKVSize: Int? {
         switch self {
-        case .persistentSimple, .persistentQuantizedSimple:
+        case .persistentSimple, .persistentRotorQuant:
             return nil
         case .boundedRotating(let maxKVSize):
             return maxKVSize
         }
     }
 
-    var usesDynamicKVQuantization: Bool {
+    var usesRotorQuantCompression: Bool {
         switch self {
-        case .persistentQuantizedSimple:
+        case .persistentRotorQuant:
             return true
         case .persistentSimple, .boundedRotating:
             return false
@@ -54,7 +54,6 @@ nonisolated internal struct MLXKVBenchmarkMetadata: Sendable, Equatable {
     let cachePolicy: MLXCachePolicy
     let effectiveMaxKVSize: Int?
     let prefillStepSize: Int
-    let quantizedKVStart: Int?
 }
 
 nonisolated internal struct MLXPerformanceSample: Sendable {
@@ -250,11 +249,8 @@ final class MLXModelManager: ObservableObject {
         }
         return max(minimumAdaptivePrefillStepSize, min(tuned, bucket))
     }
-    nonisolated static let defaultQuantizedKVStartStep = 256
     nonisolated private static let memoryMaintenanceInterval: TimeInterval = 3
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
-    nonisolated private static let kvQuantizationBits = 8
-    nonisolated private static let kvQuantizationGroupSize = 64
     nonisolated private static let rotorQuantKeyBits = 3
     nonisolated private static let rotorQuantValueBits = 2
     nonisolated private static let rotorQuantSeed: UInt64 = 42
@@ -343,49 +339,16 @@ final class MLXModelManager: ObservableObject {
         let toolInvocationCount: Int
     }
 
-    struct KVQuantizationConfiguration: Equatable, Sendable {
-        let bits: Int
-        let groupSize: Int
-        let startStep: Int
-    }
-
     enum CacheCompressionMode: Equatable, Sendable {
         case none
-        case legacyQuantized(KVQuantizationConfiguration)
         case rotorQuant(RotorQuantConfiguration)
 
         nonisolated var diagnosticLabel: String {
             switch self {
             case .none:
                 return "none"
-            case .legacyQuantized:
-                return "legacy-quantized"
             case .rotorQuant(let configuration):
                 return "rotorquant(\(configuration.variant.rawValue),k\(configuration.keyBits),v\(configuration.valueBits),exact\(configuration.exactBufferSize),block\(configuration.attentionBlockTokens))"
-            }
-        }
-
-        nonisolated var usesLegacyQuantization: Bool {
-            if case .legacyQuantized = self {
-                return true
-            }
-            return false
-        }
-
-        nonisolated func applying(startStep: Int) -> Self {
-            switch self {
-            case .none:
-                return .none
-            case .legacyQuantized(let configuration):
-                return .legacyQuantized(
-                    KVQuantizationConfiguration(
-                        bits: configuration.bits,
-                        groupSize: configuration.groupSize,
-                        startStep: startStep
-                    )
-                )
-            case .rotorQuant:
-                return self
             }
         }
 
@@ -393,12 +356,6 @@ final class MLXModelManager: ObservableObject {
             switch self {
             case .none:
                 return nil
-            case .legacyQuantized(let configuration):
-                return .quantized(
-                    bits: configuration.bits,
-                    groupSize: configuration.groupSize,
-                    startStep: configuration.startStep
-                )
             case .rotorQuant(let configuration):
                 return .rotorQuant(configuration)
             }
@@ -414,20 +371,6 @@ final class MLXModelManager: ObservableObject {
             cachePolicy.maxKVSize
         }
 
-        var usesCompressedPersistentCache: Bool {
-            cachePolicy == .persistentQuantizedSimple && cacheCompression != .none
-        }
-
-        var kvQuantization: KVQuantizationConfiguration? {
-            if case .legacyQuantized(let configuration) = cacheCompression {
-                return configuration
-            }
-            return nil
-        }
-
-        var usesQuantizedToolCacheStrategy: Bool {
-            usesCompressedPersistentCache
-        }
     }
 
     private enum ToolTemplateSupport: Equatable {
@@ -716,36 +659,6 @@ final class MLXModelManager: ObservableObject {
         let measurement: MLXLMCommon.WiredMemoryMeasurement
     }
 
-    nonisolated private static func quantizedKVStartUserDefaultsKey(
-        for modelID: String,
-        deviceSupportProfile: MLXDeviceSupportProfile
-    ) -> String {
-        let deviceClass = deviceSupportProfile.isPhone ? "phone" : "other"
-        let bytesPerGiB: UInt64 = 1_073_741_824
-        let memoryTier = Int(deviceSupportProfile.physicalMemoryBytes / bytesPerGiB)
-        return "mlxQuantizedKVStart.\(modelID).\(deviceClass).\(memoryTier)"
-    }
-
-    nonisolated private static func persistedQuantizedKVStart(
-        for modelID: String,
-        deviceSupportProfile: MLXDeviceSupportProfile
-    ) -> Int? {
-        let key = quantizedKVStartUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
-        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
-        let storedValue = UserDefaults.standard.integer(forKey: key)
-        guard [128, 256, 512].contains(storedValue) else { return nil }
-        return storedValue
-    }
-
-    nonisolated private static func storePersistedQuantizedKVStart(
-        _ quantizedKVStart: Int,
-        for modelID: String,
-        deviceSupportProfile: MLXDeviceSupportProfile
-    ) {
-        let key = quantizedKVStartUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
-        UserDefaults.standard.set(quantizedKVStart, forKey: key)
-    }
-
     nonisolated internal static func selectFastestSafeCandidate(
         _ candidates: [TuningBenchmarkResult],
         wiredMemoryCap: Int?,
@@ -896,10 +809,9 @@ final class MLXModelManager: ObservableObject {
             return
         }
 
-        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice(model: model).cacheCompression.usesLegacyQuantization
         deferredTuningModelID = model.id
         logger.notice(
-            "MLX tuning deferred until after first successful generation: id=\(model.id, privacy: .public) prefill=\(initialPrefillStepSize, privacy: .public) kv_quantization=\(shouldTuneQuantizedKV, privacy: .public)"
+            "MLX tuning deferred until after first successful generation: id=\(model.id, privacy: .public) prefill=\(initialPrefillStepSize, privacy: .public)"
         )
     }
 
@@ -931,17 +843,11 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let persistedQuantizedKVStart = Self.persistedQuantizedKVStart(
-            for: model.id,
-            deviceSupportProfile: deviceSupportProfile
-        )
         let defaultGenerationConfiguration = defaultGenerationConfigurationForCurrentDevice(model: model)
         let prefillCandidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
-        let quantizedKVStartCandidates = persistedQuantizedKVStart.map { [$0] } ?? [128, 256, 512]
         let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
             deviceSupportProfile: deviceSupportProfile
         )
-        let shouldTuneQuantizedKV = defaultGenerationConfiguration.cacheCompression.usesLegacyQuantization
 
         tuningTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
@@ -1014,75 +920,22 @@ final class MLXModelManager: ObservableObject {
                 preferLargerCandidateOnTie: true
             )
 
-            var selectedQuantizedKVStart = persistedQuantizedKVStart ?? Self.defaultQuantizedKVStartStep
-            var selectedMeasurement = selectedPrefill.measurement
-
-            if shouldTuneQuantizedKV {
-                var quantizedResults: [TuningBenchmarkResult] = []
-                for candidate in quantizedKVStartCandidates {
-                    guard !Task.isCancelled else { return }
-                    let parameters = GenerateParameters(
-                        maxTokens: 16,
-                        maxKVSize: defaultGenerationConfiguration.maxKVSize,
-                        kvBits: Self.kvQuantizationBits,
-                        kvGroupSize: Self.kvQuantizationGroupSize,
-                        quantizedKVStart: candidate,
-                        prefillStepSize: selectedPrefill.candidate
-                    )
-                    do {
-                        let result = try await self.measureTuningCandidate(
-                            container: container,
-                            userInput: benchmarkInput,
-                            parameters: parameters,
-                            candidate: candidate
-                        )
-                        quantizedResults.append(result)
-                    } catch {
-                        let logger = Logger(
-                            subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
-                            category: "MLXModelManager"
-                        )
-                        logger.error(
-                            "MLX quantized KV start candidate failed: model=\(model.id, privacy: .public) start=\(candidate, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                        )
-                        await MainActor.run {
-                            self.aggressivelyFreeMemory(reason: "tuning.quantized.failure")
-                        }
-                    }
-                }
-
-                if let selectedQuantizedResult = quantizedResults.isEmpty
-                    ? nil
-                    : Self.selectFastestSafeCandidate(
-                        quantizedResults,
-                        wiredMemoryCap: wiredMemoryCap,
-                        preferLargerCandidateOnTie: false
-                    ) {
-                    selectedQuantizedKVStart = selectedQuantizedResult.candidate
-                    selectedMeasurement = selectedQuantizedResult.measurement
-                }
-            }
+            let selectedMeasurement = selectedPrefill.measurement
 
             Self.storePersistedPrefillStepSize(
                 selectedPrefill.candidate,
                 for: model.id,
                 deviceSupportProfile: self.deviceSupportProfile
             )
-            Self.storePersistedQuantizedKVStart(
-                selectedQuantizedKVStart,
-                for: model.id,
-                deviceSupportProfile: self.deviceSupportProfile
-            )
             await self.inferenceWorker.updateLoadedModelTuning(
                 modelID: model.id,
                 prefillStepSize: selectedPrefill.candidate,
-                quantizedKVStart: selectedQuantizedKVStart,
                 activeBytesEstimate: selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes,
                 measurement: selectedMeasurement
             )
             await MainActor.run {
                 self.logger.notice(
-                    "MLX tuning selected: model=\(model.id, privacy: .public) prefill=\(selectedPrefill.candidate, privacy: .public) quantized_kv_start=\(selectedQuantizedKVStart, privacy: .public) active_bytes=\(selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes, privacy: .public)"
+                    "MLX tuning selected: model=\(model.id, privacy: .public) prefill=\(selectedPrefill.candidate, privacy: .public) active_bytes=\(selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes, privacy: .public)"
                 )
                 self.aggressivelyFreeMemory(reason: "tuning.complete")
             }
@@ -1110,16 +963,8 @@ final class MLXModelManager: ObservableObject {
             for: model.id,
             deviceSupportProfile: deviceSupportProfile
         )
-        let persistedQuantizedKVStart = Self.persistedQuantizedKVStart(
-            for: model.id,
-            deviceSupportProfile: deviceSupportProfile
-        )
-        let shouldTuneQuantizedKV = defaultGenerationConfigurationForCurrentDevice(model: model)
-            .cacheCompression
-            .usesLegacyQuantization
         let needsPrefillTuning = persistedPrefill == nil
-        let needsQuantizedTuning = shouldTuneQuantizedKV && persistedQuantizedKVStart == nil
-        return needsPrefillTuning || needsQuantizedTuning
+        return needsPrefillTuning
     }
 
     private func handleApplicationInactivity(reason: String) {
@@ -1255,6 +1100,11 @@ final class MLXModelManager: ObservableObject {
                     "MLX container load start: id=\(model.id, privacy: .public) source=\(source, privacy: .public) path=\(modelURL.lastPathComponent, privacy: .public)"
                 )
                 let loaded = try await loadModelContainer(directory: modelURL)
+                try Task.checkCancellation()
+                guard self.activeLoadID == loadID else {
+                    self.logger.notice("MLX container load discarded before install: stale load id=\(model.id, privacy: .public)")
+                    return
+                }
                 await self.applyPreferredToolCallFormatIfNeeded(to: loaded, for: model)
                 let weightBytes = await Self.estimateWeightBytes(for: loaded)
                 let wiredMemoryPolicy = MLXLMCommon.WiredSumPolicy(cap: wiredMemoryCap)
@@ -1271,10 +1121,6 @@ final class MLXModelManager: ObservableObject {
                         weightBytes: weightBytes,
                         activeBytesEstimate: 0,
                         prefillStepSize: recommendedPrefillStepSize,
-                        quantizedKVStart: Self.persistedQuantizedKVStart(
-                            for: model.id,
-                            deviceSupportProfile: deviceSupportProfile
-                        ) ?? Self.defaultQuantizedKVStartStep,
                         measurement: nil
                     )
                 )
@@ -1369,17 +1215,19 @@ final class MLXModelManager: ObservableObject {
             return
         }
 
-        let targetDir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
+        let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
+        let targetDir = modelsDir.appendingPathComponent(model.localDirName, isDirectory: true)
+        let tempDir = modelsDir.appendingPathComponent(".\(model.localDirName).download-\(UUID().uuidString)", isDirectory: true)
 
         downloaderTask = Task { [weak self] in
             guard let self else { return }
             do {
-                if FileManager.default.fileExists(atPath: targetDir.path) {
-                    try FileManager.default.removeItem(at: targetDir)
-                }
+                try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
+                self.cleanupPartialDownloads(for: model, in: modelsDir)
+                try? FileManager.default.removeItem(at: tempDir)
                 try await self.downloader.download(
                     repoId: model.hfRepoId,
-                    to: targetDir,
+                    to: tempDir,
                     onProgress: { [weak self] progress in
                         Task { @MainActor [weak self] in
                             self?.downloadProgress = progress
@@ -1387,14 +1235,17 @@ final class MLXModelManager: ObservableObject {
                     }
                 )
                 guard !Task.isCancelled else { return }
+                try self.validateDownloadedModel(at: tempDir)
+                if FileManager.default.fileExists(atPath: targetDir.path) {
+                    try FileManager.default.removeItem(at: targetDir)
+                }
+                try FileManager.default.moveItem(at: tempDir, to: targetDir)
                 await MainActor.run {
                     self.downloadProgress = 1.0
                     self.isDownloading = false
                     self.activeDownloadModelID = nil
                     self.downloadErrorModelID = nil
                     self.refreshModelAvailability()
-                }
-                await MainActor.run {
                     self.startLoading(modelID: model.id, source: "download_complete")
                 }
                 print("Model downloaded: \(model.displayName)")
@@ -1406,7 +1257,7 @@ final class MLXModelManager: ObservableObject {
                     self.downloadError = nil
                     self.downloadErrorModelID = nil
                 }
-                self.cleanupPartialDownload(at: targetDir)
+                self.cleanupPartialDownload(at: tempDir)
             } catch {
                 await MainActor.run {
                     self.isDownloading = false
@@ -1414,7 +1265,7 @@ final class MLXModelManager: ObservableObject {
                     self.downloadError = error.localizedDescription
                     self.downloadErrorModelID = model.id
                 }
-                self.cleanupPartialDownload(at: targetDir)
+                self.cleanupPartialDownload(at: tempDir)
                 print("Error: Download error: \(error)")
             }
         }
@@ -1430,8 +1281,28 @@ final class MLXModelManager: ObservableObject {
         downloadError = nil
         downloadErrorModelID = nil
         if let model {
-            let targetDir = documentsDirectory.appendingPathComponent("Models/\(model.localDirName)")
-            cleanupPartialDownload(at: targetDir)
+            let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
+            cleanupPartialDownloads(for: model, in: modelsDir)
+        }
+    }
+
+    private func cleanupPartialDownloads(for model: MLXModelInfo, in modelsDir: URL) {
+        let tempPrefix = ".\(model.localDirName).download-"
+        let contents = (try? FileManager.default.contentsOfDirectory(at: modelsDir, includingPropertiesForKeys: nil)) ?? []
+        for dir in contents where dir.lastPathComponent.hasPrefix(tempPrefix) {
+            cleanupPartialDownload(at: dir)
+        }
+    }
+
+    private func validateDownloadedModel(at dir: URL) throws {
+        let fm = FileManager.default
+        let hasConfig = fm.fileExists(atPath: dir.appendingPathComponent("config.json").path)
+        let contents = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        let hasWeights = contents.contains { $0.hasSuffix(".safetensors") }
+        guard hasConfig, hasWeights else {
+            throw NSError(domain: "MLXModelDownload", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Downloaded model is incomplete. Missing config.json or safetensors weights."
+            ])
         }
     }
 
@@ -1582,11 +1453,6 @@ final class MLXModelManager: ObservableObject {
         logger.notice(
             "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) cache_compression=\(generationConfiguration.cacheCompression.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
         )
-        if rotorQuantRequested,
-           generationConfiguration.cachePolicy.usesDynamicKVQuantization,
-           generationConfiguration.cacheCompression.usesLegacyQuantization {
-            logger.notice("MLX RotorQuant fell back to legacy KV quantization for model=\(currentModel.id, privacy: .public)")
-        }
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
             !tools.isEmpty &&
@@ -1602,12 +1468,10 @@ final class MLXModelManager: ObservableObject {
             tuned: tunedPrefillStepSize,
             messages: messages
         )
-        let quantizedKVStart = await inferenceWorker.quantizedKVStart(for: currentModel.id)
-        let tunedCacheCompression = generationConfiguration.cacheCompression.applying(startStep: quantizedKVStart)
         let params = Self.makeGenerateParameters(
             maxTokens: generationConfiguration.maxTokens,
             maxKVSize: generationConfiguration.maxKVSize,
-            cacheCompression: tunedCacheCompression,
+            cacheCompression: generationConfiguration.cacheCompression,
             enableThinking: enableThinking,
             includesMedia: includesMedia,
             currentModelID: currentModel.id,
@@ -1786,7 +1650,7 @@ final class MLXModelManager: ObservableObject {
             configuredMaxOutputTokens
         }
         let cachePolicy = cachePolicy(
-            isEnabled: isEnabled,
+            isEnabled: isEnabled && preferRotorQuant,
             hasTools: hasTools,
             hasMedia: hasMedia,
             prefersBoundedCache: prefersBoundedCache,
@@ -1814,13 +1678,14 @@ final class MLXModelManager: ObservableObject {
         prefersBoundedCache: Bool,
         memoryConstrained: Bool
     ) -> MLXCachePolicy {
-        _ = hasTools
-        _ = hasMedia
         if memoryConstrained || prefersBoundedCache {
             return .boundedRotating(maxKVSize: memoryConstrainedMaxKVSize)
         }
+        guard !hasTools else {
+            return .persistentSimple
+        }
 
-        return isEnabled ? .persistentQuantizedSimple : .persistentSimple
+        return isEnabled ? .persistentRotorQuant : .persistentSimple
     }
 
     nonisolated internal static func effectiveMaxKVSize(
@@ -1845,7 +1710,7 @@ final class MLXModelManager: ObservableObject {
             return .boundedRotating(maxKVSize: maxKVSize)
         }
         if parameters.resolvedCacheCompression != nil {
-            return .persistentQuantizedSimple
+            return .persistentRotorQuant
         }
         return .persistentSimple
     }
@@ -1857,7 +1722,7 @@ final class MLXModelManager: ObservableObject {
         switch cachePolicy {
         case .boundedRotating(let maxKVSize):
             return .boundedRotating(maxKVSize: min(maxKVSize, configuredContextWindow))
-        case .persistentSimple, .persistentQuantizedSimple:
+        case .persistentSimple, .persistentRotorQuant:
             return cachePolicy
         }
     }
@@ -1867,7 +1732,7 @@ final class MLXModelManager: ObservableObject {
         preferRotorQuant: Bool,
         hasMedia: Bool = false
     ) -> CacheCompressionMode {
-        guard cachePolicy.usesDynamicKVQuantization else {
+        guard cachePolicy.usesRotorQuantCompression else {
             return .none
         }
 
@@ -1887,26 +1752,7 @@ final class MLXModelManager: ObservableObject {
             )
         }
 
-        return .legacyQuantized(
-            KVQuantizationConfiguration(
-                bits: kvQuantizationBits,
-                groupSize: kvQuantizationGroupSize,
-                startStep: defaultQuantizedKVStartStep
-            )
-        )
-    }
-
-    nonisolated internal static func kvQuantizationConfiguration(
-        cachePolicy: MLXCachePolicy
-    ) -> KVQuantizationConfiguration? {
-        if case .persistentQuantizedSimple = cachePolicy {
-            return KVQuantizationConfiguration(
-                bits: kvQuantizationBits,
-                groupSize: kvQuantizationGroupSize,
-                startStep: defaultQuantizedKVStartStep
-            )
-        }
-        return nil
+        return .none
     }
 
     nonisolated private static func makeGenerateParameters(
@@ -1919,12 +1765,6 @@ final class MLXModelManager: ObservableObject {
         prefillStepSize: Int,
         repetitionPenalty: Float?
     ) -> GenerateParameters {
-        let legacyKVQuantization: KVQuantizationConfiguration? = if case .legacyQuantized(let configuration) = cacheCompression {
-            configuration
-        } else {
-            nil
-        }
-
         let isQwen35Model = currentModelID.hasPrefix("qwen3.5-")
 
         if enableThinking && isQwen35Model {
@@ -1933,9 +1773,6 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: legacyKVQuantization?.bits,
-                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: qwen35ThinkingTemperature,
                 topP: 0.95,
@@ -1949,9 +1786,6 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: legacyKVQuantization?.bits,
-                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.6,
                 topP: 0.95,
@@ -1968,9 +1802,6 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: legacyKVQuantization?.bits,
-                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: qwen35NonThinkingTemperature,
                 topP: qwen35NonThinkingTopP,
@@ -1984,9 +1815,6 @@ final class MLXModelManager: ObservableObject {
             return GenerateParameters(
                 maxTokens: maxTokens,
                 maxKVSize: maxKVSize,
-                kvBits: legacyKVQuantization?.bits,
-                kvGroupSize: legacyKVQuantization?.groupSize ?? Self.kvQuantizationGroupSize,
-                quantizedKVStart: legacyKVQuantization?.startStep ?? Self.defaultQuantizedKVStartStep,
                 cacheCompression: cacheCompression.generateParametersCompression,
                 temperature: 0.7,
                 topP: 0.8,

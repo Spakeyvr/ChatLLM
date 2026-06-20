@@ -14,6 +14,7 @@ private struct BenchmarkOptions: Sendable {
     let rotorExactBufferSize: Int
     let rotorAttentionBlockTokens: Int
     let variant: RotorQuantVariant
+    let scenarioKeys: [String]
     let text: String
 
     static func fromEnvironment() -> BenchmarkOptions {
@@ -28,6 +29,10 @@ private struct BenchmarkOptions: Sendable {
         let rotorAttentionBlockTokens = Int(environment["ROTORQUANT_EVAL_BLOCK_TOKENS"] ?? "") ?? 128
         let variant = RotorQuantVariant(rawValue: environment["ROTORQUANT_EVAL_VARIANT"] ?? "")
             ?? .iso
+        let scenarioKeys = (environment["ROTORQUANT_EVAL_SCENARIOS"] ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
         let text = environment["ROTORQUANT_EVAL_TEXT"]
             ?? """
             Local language models trade memory, latency, and output quality when the context window grows. \
@@ -43,6 +48,7 @@ private struct BenchmarkOptions: Sendable {
             rotorExactBufferSize: max(0, rotorExactBufferSize),
             rotorAttentionBlockTokens: max(1, rotorAttentionBlockTokens),
             variant: variant,
+            scenarioKeys: scenarioKeys,
             text: text
         )
     }
@@ -53,6 +59,7 @@ private struct BenchmarkOptions: Sendable {
 }
 
 private struct Scenario: Sendable {
+    let key: String
     let name: String
     let compression: KVCacheCompressionMode?
 }
@@ -323,6 +330,26 @@ private func evaluateScenario(
     )
 }
 
+private func selectedScenarios(_ scenarios: [Scenario], options: BenchmarkOptions) throws -> [Scenario] {
+    guard !options.scenarioKeys.isEmpty else { return scenarios }
+    let selected = options.scenarioKeys.compactMap { key in
+        scenarios.first {
+            key == $0.key.lowercased() || key == $0.name.lowercased()
+        }
+    }
+    guard !selected.isEmpty else {
+        throw NSError(
+            domain: "RotorQuantEval",
+            code: 3,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "No scenarios matched ROTORQUANT_EVAL_SCENARIOS=\(options.scenarioKeys.joined(separator: ","))"
+            ]
+        )
+    }
+    return selected
+}
+
 @main
 struct RotorQuantEval {
     static func main() async throws {
@@ -335,6 +362,9 @@ struct RotorQuantEval {
         logLine("  Exact buffer:   \(options.rotorExactBufferSize)")
         logLine("  Block tokens:   \(options.rotorAttentionBlockTokens)")
         logLine("  Variant:        \(options.variant.rawValue)")
+        if !options.scenarioKeys.isEmpty {
+            logLine("  Scenarios:      \(options.scenarioKeys.joined(separator: ","))")
+        }
 
         let hub = HubApi()
         logLine("Loading model container...")
@@ -351,9 +381,14 @@ struct RotorQuantEval {
         let tokens = Array((repeatedTokens + encoded).prefix(options.pplTokens))
 
         let scenarios = [
-            Scenario(name: "dense", compression: nil),
-            Scenario(name: "legacy-mlx-quantized-kv-4bit", compression: .quantized(bits: 4, groupSize: 64, startStep: 0)),
+            Scenario(key: "dense", name: "dense", compression: nil),
             Scenario(
+                key: "legacy",
+                name: "legacy-mlx-quantized-kv-4bit",
+                compression: .quantized(bits: 4, groupSize: 64, startStep: 0)
+            ),
+            Scenario(
+                key: "rotor",
                 name: "rotorquant-\(options.variant.rawValue)-k3-v2",
                 compression: .rotorQuant(
                     RotorQuantConfiguration(
@@ -368,8 +403,9 @@ struct RotorQuantEval {
             ),
         ]
 
+        let scenariosToRun = try selectedScenarios(scenarios, options: options)
         var results: [ScenarioResult] = []
-        for scenario in scenarios {
+        for scenario in scenariosToRun {
             logLine()
             logLine("Running \(scenario.name)...")
             let result = try await evaluateScenario(
@@ -395,6 +431,8 @@ struct RotorQuantEval {
             let legacy = results.first(where: { $0.scenario.name == "legacy-mlx-quantized-kv-4bit" }),
             let rotor = results.first(where: { $0.scenario.name.hasPrefix("rotorquant-") })
         else {
+            logLine()
+            logLine("Deltas skipped because not all dense, legacy, and rotor scenarios were run.")
             return
         }
 

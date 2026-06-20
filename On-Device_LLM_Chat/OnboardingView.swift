@@ -156,7 +156,7 @@ struct OnboardingView: View {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityIdentifier("onboarding.tavily.key")
 
-            Label("Your key stays on-device and is stored in Keychain.", systemImage: "lock.shield")
+            Label("Your key is stored in Keychain and sent to Tavily only to authenticate web searches.", systemImage: "lock.shield")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

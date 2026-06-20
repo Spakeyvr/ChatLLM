@@ -70,7 +70,6 @@ nonisolated struct MLXLoadedModelState: @unchecked Sendable {
     var weightBytes: Int
     var activeBytesEstimate: Int
     var prefillStepSize: Int
-    var quantizedKVStart: Int
     var measurement: MLXLMCommon.WiredMemoryMeasurement?
 }
 
@@ -104,6 +103,7 @@ actor MLXInferenceWorker {
         let cacheConfiguration: SessionCacheConfiguration
         var visibleHistory: [MLXVisibleMessageSignature]
         var latestPerformance: MLXPerformanceSample?
+        var lastAccessed: Date
     }
 
     private actor ToolInvocationState {
@@ -122,6 +122,7 @@ actor MLXInferenceWorker {
     private let logger: Logger
     private var loadedModel: MLXLoadedModelState?
     private var sessions: [MLXSessionKey: SessionState] = [:]
+    private let maxPersistentSessions = 2
 
     init(subsystem: String, deviceSupportProfile: MLXDeviceSupportProfile) {
         self.logger = Logger(subsystem: subsystem, category: "MLXInferenceWorker")
@@ -136,13 +137,11 @@ actor MLXInferenceWorker {
     func updateLoadedModelTuning(
         modelID: String,
         prefillStepSize: Int,
-        quantizedKVStart: Int,
         activeBytesEstimate: Int,
         measurement: MLXLMCommon.WiredMemoryMeasurement?
     ) {
         guard var loadedModel, loadedModel.model.id == modelID else { return }
         loadedModel.prefillStepSize = prefillStepSize
-        loadedModel.quantizedKVStart = quantizedKVStart
         loadedModel.activeBytesEstimate = max(0, activeBytesEstimate)
         loadedModel.measurement = measurement
         self.loadedModel = loadedModel
@@ -153,13 +152,6 @@ actor MLXInferenceWorker {
             return MLXModelManager.defaultPrefillStepSize
         }
         return loadedModel.prefillStepSize
-    }
-
-    func quantizedKVStart(for modelID: String) -> Int {
-        guard let loadedModel, loadedModel.model.id == modelID else {
-            return MLXModelManager.defaultQuantizedKVStartStep
-        }
-        return loadedModel.quantizedKVStart
     }
 
     func clearLoadedModel() async {
@@ -214,10 +206,17 @@ actor MLXInferenceWorker {
             logger.notice(
                 "MLX using explicit message-history tool loop: conversation=\(request.conversationID.uuidString, privacy: .public)"
             )
-        } else if let existing = sessions[request.sessionKey],
+        } else if request.sessionKey.includesMedia {
+            reusableSession = nil
+            logger.notice(
+                "MLX not reusing persistent session for media turn: conversation=\(request.conversationID.uuidString, privacy: .public)"
+            )
+        } else if var existing = sessions[request.sessionKey],
                   existing.key == request.sessionKey,
                   existing.cacheConfiguration == requestedCacheConfiguration,
                   existing.visibleHistory == prefixSignatures {
+            existing.lastAccessed = Date()
+            sessions[request.sessionKey] = existing
             reusableSession = existing.session
             logger.notice("MLX reusing persistent chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
         } else {
@@ -269,8 +268,7 @@ actor MLXInferenceWorker {
         let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
             cachePolicy: effectiveCachePolicy,
             effectiveMaxKVSize: request.params.maxKVSize,
-            prefillStepSize: request.params.prefillStepSize,
-            quantizedKVStart: request.params.kvBits == nil ? nil : request.params.quantizedKVStart
+            prefillStepSize: request.params.prefillStepSize
         )
 
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
@@ -453,14 +451,16 @@ actor MLXInferenceWorker {
                 message: .assistant(assistantVisibleText)
             )
         )
-        if let reusableSession {
+        if let reusableSession, !request.sessionKey.includesMedia {
             sessions[request.sessionKey] = SessionState(
                 key: request.sessionKey,
                 session: reusableSession,
                 cacheConfiguration: requestedCacheConfiguration,
                 visibleHistory: visibleHistory,
-                latestPerformance: performanceSample
+                latestPerformance: performanceSample,
+                lastAccessed: finishedAt
             )
+            evictPersistentSessionsIfNeeded()
         }
 
         logger.notice(
@@ -482,5 +482,18 @@ actor MLXInferenceWorker {
             policy: loadedModel.wiredMemoryPolicy,
             kind: .active
         )
+    }
+
+    private func evictPersistentSessionsIfNeeded() {
+        guard sessions.count > maxPersistentSessions else { return }
+        let overflow = sessions.count - maxPersistentSessions
+        let keysToRemove = sessions
+            .sorted { $0.value.lastAccessed < $1.value.lastAccessed }
+            .prefix(overflow)
+            .map(\.key)
+        for key in keysToRemove {
+            sessions.removeValue(forKey: key)
+        }
+        logger.notice("MLX evicted \(keysToRemove.count, privacy: .public) persistent session(s) to cap KV memory")
     }
 }

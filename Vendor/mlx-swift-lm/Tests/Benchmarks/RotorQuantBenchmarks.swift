@@ -5,6 +5,8 @@ import MLXLLM
 import MLXLMCommon
 import Testing
 
+private let rotorQuantBenchmarksEnabled = ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] != nil
+
 @Suite(.serialized)
 struct RotorQuantBenchmarks {
     private let hub = HubApi()
@@ -98,6 +100,7 @@ struct RotorQuantBenchmarks {
         print("  Chunks emitted:    \(chunkCount)")
     }
 
+    @Test(.enabled(if: rotorQuantBenchmarksEnabled))
     func compareMemoryFootprintAgainstDenseAndLegacyQuantizedKV() async throws {
         let context = try await LLMModelFactory.shared.load(
             hub: hub,
@@ -149,6 +152,7 @@ struct RotorQuantBenchmarks {
         #expect(rotorMeasurement.kvBytes <= legacyMeasurement.kvBytes)
     }
 
+    @Test(.enabled(if: rotorQuantBenchmarksEnabled))
     func longContextDecodeSanityAndRegressionSnapshot() async throws {
         let container = try await LLMModelFactory.shared.loadContainer(
             hub: hub,

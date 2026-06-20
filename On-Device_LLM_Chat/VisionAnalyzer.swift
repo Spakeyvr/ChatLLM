@@ -409,7 +409,7 @@ struct AnalysisOptions: Sendable {
     // --- END NEW ---
     
     // OCR settings
-    var ocrLanguages: [String] = ["en-US"]
+    var ocrLanguages: [String] = []
     var useAccurateOCR: Bool = true
     var minimumTextConfidence: Float = 0.5
     
@@ -656,9 +656,12 @@ final class VisionAnalyzer: ObservableObject {
             request.recognitionLevel = options.useAccurateOCR ? .accurate : .fast
             request.usesLanguageCorrection = true
             request.minimumTextHeight = 0.0 // Detect all text sizes
+            request.automaticallyDetectsLanguage = true
             
             if !options.ocrLanguages.isEmpty {
                 request.recognitionLanguages = options.ocrLanguages
+            } else {
+                request.recognitionLanguages = Locale.preferredLanguages
             }
             
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])

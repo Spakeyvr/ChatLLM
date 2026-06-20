@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Devices with less than 12 GB of RAM may still switch turns to a bounded sliding-window cache to avoid crashes, and mixed-attention models keep recurrent layers outside KV compression.")
-    static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX chats. Low-memory runs may switch to a bounded sliding-window cache, while full-attention layers use RotorQuant compression.")
+    static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX text and image chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Tool and low-memory turns use safer uncompressed or bounded caches.")
+    static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX text and image chats. Tool and low-memory turns use safer cache modes.")
     static let mlxRotorQuantExperimentalTitle = String(localized: "RotorQuant Experimental")
     static let mlxRotorQuantExperimentalMessage = String(localized: "RotorQuant is very early and in beta. It can reduce KV-cache memory, but speed and stability are still being tuned.")
 

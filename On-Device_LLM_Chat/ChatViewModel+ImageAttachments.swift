@@ -37,22 +37,26 @@ extension ChatViewModel {
         let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
         
         // Ensure any previous stream is fully finished
-        await waitForStreamToFinish()
-        guard !isGenerating, !Task.isCancelled else { return }
+        guard await waitForStreamToFinish() else { return }
+        guard !isGenerating, !Task.isCancelled,
+              let generationID = beginGenerationLifecycle() else { return }
+        defer { endGenerationLifecycle(generationID) }
 
         if canUseNativeImageSupport {
             await sendWithNativeImage(
                 userPrompt: userPrompt,
                 image: image,
                 detections: detections,
-                analysisResult: analysisResult
+                analysisResult: analysisResult,
+                generationID: generationID
             )
         } else {
             await sendWithVisionFallback(
                 userPrompt: userPrompt,
                 image: image,
                 detections: detections,
-                analysisResult: analysisResult
+                analysisResult: analysisResult,
+                generationID: generationID
             )
         }
     }
@@ -61,36 +65,49 @@ extension ChatViewModel {
         userPrompt: String,
         image: UIImage,
         detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?
+        analysisResult: VisionAnalysisResult?,
+        generationID: UUID
     ) async {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: userPrompt,
             logContext: "native image query"
         )
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
         let turn = appendUserMessage(userPrompt)
         let userMsg = turn.message
-        let canonicalImageURL = await attachImage(
+        guard let canonicalImageURL = await attachImage(
             image,
             detections: detections,
             analysisResult: analysisResult,
             to: userMsg
-        )
+        ) else {
+            await sendWithVisionFallback(
+                userPrompt: userPrompt,
+                image: image,
+                detections: detections,
+                analysisResult: analysisResult,
+                generationID: generationID,
+                existingUserMessage: userMsg,
+                needsAutoNaming: turn.needsAutoNaming
+            )
+            return
+        }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
         let firstAttempt = await streamAssistant(
             into: assistantMsg,
             basedOnHistoryUpTo: assistantMsg.order,
             additionalUserInstruction: nil,
             disableWebSearch: true,
-            allowNativeImages: true
+            allowNativeImages: true,
+            generationID: generationID
         )
 
-        if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && !Task.isCancelled {
+        if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && isGenerationActive(generationID) {
             print("Warning: Native image generation failed before output; falling back to Vision analysis context")
 
             let cachedAttachmentAnalysis = userMsg.attachments
@@ -122,10 +139,12 @@ extension ChatViewModel {
                 basedOnHistoryUpTo: assistantMsg.order,
                 additionalUserInstruction: nil,
                 disableWebSearch: true,
-                allowNativeImages: false
+                allowNativeImages: false,
+                generationID: generationID
             )
         }
 
+        guard isGenerationActive(generationID) else { return }
         await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: userPrompt)
     }
 
@@ -133,7 +152,10 @@ extension ChatViewModel {
         userPrompt: String,
         image: UIImage,
         detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?
+        analysisResult: VisionAnalysisResult?,
+        generationID: UUID,
+        existingUserMessage: Message? = nil,
+        needsAutoNaming existingNeedsAutoNaming: Bool? = nil
     ) async {
         let enhancedText = buildVisionEnhancedText(
             userPrompt: userPrompt,
@@ -146,29 +168,40 @@ extension ChatViewModel {
             logContext: "image query"
         )
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
-        let turn = appendUserMessage(enhancedText)
-        let userMsg = turn.message
-        _ = await attachImage(
-            image,
-            detections: detections,
-            analysisResult: analysisResult,
-            to: userMsg
-        )
+        let userMsg: Message
+        let needsAutoNaming: Bool
+        if let existingUserMessage {
+            userMsg = existingUserMessage
+            userMsg.text = enhancedText
+            needsAutoNaming = existingNeedsAutoNaming ?? false
+        } else {
+            let turn = appendUserMessage(enhancedText)
+            userMsg = turn.message
+            needsAutoNaming = turn.needsAutoNaming
+            _ = await attachImage(
+                image,
+                detections: detections,
+                analysisResult: analysisResult,
+                to: userMsg
+            )
+        }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
 
-        guard !Task.isCancelled else { return }
+        guard isGenerationActive(generationID) else { return }
 
         _ = await streamAssistant(
             into: assistantMsg,
             basedOnHistoryUpTo: assistantMsg.order,
             additionalUserInstruction: nil,
             disableWebSearch: true,
-            allowNativeImages: false
+            allowNativeImages: false,
+            generationID: generationID
         )
 
-        await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: userPrompt)
+        guard isGenerationActive(generationID) else { return }
+        await finishAutoNamingIfNeeded(needsAutoNaming, userText: userPrompt)
     }
 
     private func attachImage(
@@ -337,13 +370,7 @@ extension ChatViewModel {
     /// Delete an attachment
     func deleteAttachment(_ attachment: MessageAttachment) async {
         let canonicalURL = attachment.actualFileURL
-        do {
-            try await ImageStore.shared.delete(url: canonicalURL)
-        } catch {
-            print("Failed to delete attachment file: \(error)")
-        }
-        await ImageStore.shared.deleteInferenceVariant(for: canonicalURL)
-        
+
         if let message = attachment.message {
             message.attachments.removeAll { $0.id == attachment.id }
         }
@@ -351,6 +378,12 @@ extension ChatViewModel {
         context.delete(attachment)
         conversation.lastUpdated = Date()
         immediateSave()
+        do {
+            try await ImageStore.shared.delete(url: canonicalURL)
+        } catch {
+            print("Failed to delete attachment file: \(error)")
+        }
+        await ImageStore.shared.deleteInferenceVariant(for: canonicalURL)
         invalidateMLXConversationSession(reason: "attachment_deleted")
     }
 }

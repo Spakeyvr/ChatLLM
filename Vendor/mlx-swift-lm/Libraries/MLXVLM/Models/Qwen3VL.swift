@@ -1035,14 +1035,14 @@ enum Qwen3VLLanguage {
 
             if positionIds == nil {
                 let offset = cache?.offset ?? 0
-                kvSequenceLength += offset + 1
+                kvSequenceLength += offset
                 var base = MLXArray(stride(from: offset, to: offset + length, by: 1)).asType(.int32)
                 base = tiled(base[.newAxis, 0...], repetitions: [batch, 1])
                 positionIds = base[.newAxis, 0..., 0...]
                 positionIds = tiled(positionIds!, repetitions: [3, 1, 1])
             } else {
                 if let cache {
-                    kvSequenceLength += cache.offset + 1
+                    kvSequenceLength += cache.offset
                 }
             }
 

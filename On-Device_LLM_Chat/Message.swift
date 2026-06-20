@@ -158,10 +158,10 @@ final class Message {
     // MARK: - Performance-optimized computed properties
     
     // Cached values for expensive computations
-    private var _cachedDisplayText: String?
-    private var _cachedContentLength: Int?
-    private var _lastDisplayTextHash: Int?
-    private var _lastContentLengthHash: Int?
+    @Transient private var _cachedDisplayText: String?
+    @Transient private var _cachedContentLength: Int?
+    @Transient private var _lastDisplayTextHash: Int?
+    @Transient private var _lastContentLengthHash: Int?
 
     // Cached decoded values for JSON-backed computed properties (not persisted)
     @Transient private var _cachedReasoningSteps: [ReasoningStep]?
@@ -236,6 +236,19 @@ final class Message {
         _cachedDisplayText = result
         _lastDisplayTextHash = combinedHash
         return result
+    }
+
+    var userVisibleText: String {
+        let text = displayText
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        return SharedRegexes.sourcesBlock.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     /// Optimized content length calculation with caching
