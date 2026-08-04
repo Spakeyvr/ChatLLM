@@ -232,19 +232,6 @@ struct MessageCellView: View {
         }
         return (extracted?.isEmpty == false) ? extracted : nil
     }
-
-    /// Check if the previous user message (that this assistant message is responding to) has an image
-    private var userMessageHasImage: Bool {
-        guard message.role == .assistant else { return false }
-
-        // Find the user message immediately before this assistant message
-        let userMessage = viewModel.conversation.messages
-            .filter { $0.role == .user && $0.order < message.order }
-            .sortedByOrder
-            .last
-
-        return userMessage?.attachments.contains(where: { $0.type == .image }) ?? false
-    }
 }
 
 // MARK: - Loading indicator reusing the shimmer style
@@ -355,14 +342,17 @@ struct StandardMessageBubble: View {
 
     @ViewBuilder
     private func renderMarkdownOrPlain(_ text: String, isSystem: Bool) -> some View {
-        if !isStreaming && !RichTextFeatureDetector.requiresAdvancedRendering(text) &&
+        // Detection runs a dozen regexes over the whole message; evaluate it once.
+        let requiresAdvancedRendering = RichTextFeatureDetector.requiresAdvancedRendering(text)
+
+        if !isStreaming && !requiresAdvancedRendering &&
             lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
             // Cache hit
             Text(cachedAttributedString!)
                 .font(.system(size: messageFontSize))
                 .foregroundStyle(isSystem ? .secondary : .primary)
         } else {
-            if !RichTextFeatureDetector.requiresAdvancedRendering(text) {
+            if !requiresAdvancedRendering {
                 let processedText = LatexProcessor.process(text)
                 Group {
                     if let attributed = try? AttributedString(markdown: processedText) {
@@ -406,22 +396,22 @@ struct ReasoningMessageBubble: View {
         viewModel.isGenerating && viewModel.streamingMessageID == message.id
     }
 
-    // Parse reasoning content on-demand if not already parsed
+    // Parse reasoning content on-demand if not already parsed.
+    // Callers should bind this once per body pass — it rescans the full message text,
+    // which runs on every streamed frame otherwise.
     private var parsedContent: (reasoning: String?, finalAnswer: String?) {
         // If already parsed, return stored values
         if let reasoning = message.reasoning, !reasoning.isEmpty {
             return (reasoning, message.finalAnswer)
         }
-        // If not parsed but contains thinking tags, parse on-demand
-        let lowercased = message.text.lowercased()
-        if lowercased.contains("<thinking>") || lowercased.contains("<think>") {
-            return parseReasoningFromText(message.text)
+        // If not parsed but contains thinking tags, parse on-demand.
+        // Case-insensitive range lookups avoid copying the whole text just to lowercase it.
+        let text = message.text
+        if text.range(of: "<thinking>", options: .caseInsensitive) != nil ||
+            text.range(of: "<think>", options: .caseInsensitive) != nil {
+            return parseReasoningFromText(text)
         }
         return (nil, nil)
-    }
-
-    private var hasReasoningContent: Bool {
-        return parsedContent.reasoning != nil && !parsedContent.reasoning!.isEmpty
     }
 
     private func parseReasoningFromText(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
@@ -451,9 +441,14 @@ struct ReasoningMessageBubble: View {
     }
 
     var body: some View {
+        // Parse once per body pass; every access rescans the full message text.
+        let parsed = parsedContent
+        let reasoningText = parsed.reasoning
+        let hasReasoningContent = !(reasoningText?.isEmpty ?? true)
+
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
-                let rawFinal = parsedContent.finalAnswer ?? message.finalAnswer ?? message.displayText
+                let rawFinal = parsed.finalAnswer ?? message.finalAnswer ?? message.displayText
                 let split = rawFinal.extractSourcesBlocks()
                 let finalText = split.visible
                 let inlineSourcesText = split.sources
@@ -536,7 +531,7 @@ struct ReasoningMessageBubble: View {
         }
         .sheet(isPresented: $showReasoningSheet) {
             StepByStepReasoningSheet(
-                reasoning: parsedContent.reasoning ?? "",
+                reasoning: reasoningText ?? "",
                 reasoningSteps: message.reasoningSteps,
                 searchInvocations: message.searchInvocations
             )

@@ -5,14 +5,14 @@ ChatLLM is a SwiftUI iPhone and iPad app for fully local chat with on-device lan
 It supports two backends:
 
 - `Apple Intelligence` via `FoundationModels`
-- `MLX` via locally downloaded Qwen 3.5 multimodal models
+- `MLX` via locally downloaded Qwen 3.5 multimodal models and SmolLM3 text models
 
 The app also includes optional web search with Tavily, image attachments, Vision-based image analysis, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
 
 ## Features
 
 - On-device chat with Apple Foundation Models when supported by the device
-- Local MLX model execution with downloadable Qwen 3.5 models
+- Local MLX model execution with downloadable Qwen 3.5 and SmolLM3 models
 - Per-chat backend/model selection before a conversation starts
 - Reasoning mode and smart reasoning support
 - Optional Tavily-powered web search for time-sensitive answers
@@ -39,10 +39,12 @@ Notes:
 
 The app currently exposes these downloadable local models:
 
-- `Qwen 3.5 4B (3/6-bit mixed)` about `2.50 GB`
+- `Qwen 3.5 4B (4-bit hybrid)` about `2.66 GB`
 - `Qwen 3.5 2B (4-bit)` about `1.75 GB`
+- `Qwen 3.5 0.8B (4-bit)` about `625 MB`
+- `SmolLM3 3B (4-bit)` about `1.75 GB`
 
-Both are configured as multimodal MLX models with reasoning support and native image support.
+The Qwen models are configured as multimodal MLX models with reasoning support and native image support. SmolLM3 is configured as a text-only MLX model with reasoning support.
 
 ## Optional Setup
 
@@ -64,7 +66,7 @@ To use MLX:
 
 1. Launch the app
 2. Open onboarding or `Manage Models`
-3. Download one of the available Qwen models
+3. Download one of the available MLX models
 4. Start a new chat and select the MLX backend/model before sending the first message
 
 ## Running the Project

@@ -225,7 +225,7 @@ Benchmark helpers in `Vendor/mlx-swift-lm/Tests/Benchmarks/RotorQuantBenchmarks.
 The executable evaluator in `Vendor/mlx-swift-lm/Tools/RotorQuantEval/main.swift` runs dense, legacy MLX quantized KV, and RotorQuant scenarios against a real Hub model. `ROTORQUANT_EVAL_SCENARIOS` can restrict runs to comma-separated scenario keys such as `dense`, `legacy`, or `rotor` for faster tuning loops, and the evaluator now preserves the order given in that variable so order-bias checks are possible. Current measured runs use the project model links:
 
 - `mlx-community/Qwen3.5-2B-4bit`
-- `Spakie/Qwen3.5-4B-MLX-mixed36`
+- `Spakie/Qwen3.5-4B-MLX-4bit-hybrid`
 
 With ISO k3/v2, exact buffer 128, 192 PPL tokens, and 128 generated tokens, the current fused path keeps PPL within the dense baseline delta and saves KV memory, but still decodes slower than the dense path:
 

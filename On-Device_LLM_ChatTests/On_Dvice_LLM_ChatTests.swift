@@ -197,6 +197,22 @@ struct On_Device_LLM_ChatTests {
         #expect(MLXModelManager.usesWrappedXMLToolCallTemplate(packageContents: packageContents))
     }
 
+    @Test func smolLM3ToolTemplateInspectionPrefersJSONToolCalls() {
+        let packageContents = """
+        <tool_call>
+        {"name": "webSearch", "arguments": {"query": "latest Swift release"}}
+        </tool_call>
+        """
+
+        let inferredFormat = MLXModelManager.inferToolCallFormat(
+            packageContents: packageContents,
+            modelType: "smollm3"
+        )
+
+        #expect(inferredFormat == .json)
+        #expect(!MLXModelManager.usesWrappedXMLToolCallTemplate(packageContents: packageContents))
+    }
+
     @Test func wrappedXMLToolCallStreamFilterSuppressesToolMarkup() async {
         let filter = WrappedXMLToolCallStreamFilter()
 
@@ -260,6 +276,21 @@ struct On_Device_LLM_ChatTests {
         let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
 
         #expect(MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
+    }
+
+    @Test func smolLM3ToolResponsesUseNativeToolRole() {
+        let manager = MLXModelManager()
+        let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
+
+        let content = MLXModelManager.toolResponsePromptContent(
+            for: model,
+            toolResult: "Search result body"
+        )
+        let role = MLXModelManager.toolResponsePromptRole(for: model)
+
+        #expect(content == "Search result body")
+        #expect(role == .tool)
+        #expect(!MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
     }
 
     @Test func nonQwenModelsKeepNativeToolRoleForToolResponses() {
@@ -468,7 +499,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(!profile.supportsModel(model))
         #expect(profile.availabilityIssue(for: model)?.contains("8 GB") == true)
@@ -480,7 +511,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(model))
         #expect(!manager.supportsToolCalls(for: model))
@@ -513,6 +544,53 @@ struct On_Device_LLM_ChatTests {
         #expect(manager.toolCallIssue(for: model) == nil)
     }
 
+    @Test func smolLM3ModelDefinitionMatchesDownloadMetadata() {
+        let manager = MLXModelManager()
+        let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
+
+        #expect(model.name == "SmolLM3")
+        #expect(model.localDirName == "SmolLM3-3B-MLX-4bit")
+        #expect(model.hfRepoId == "mlx-community/SmolLM3-3B-4bit")
+        #expect(model.parameters == "3B (4-bit)")
+        #expect(model.downloadSizeLabel == "1.75 GB")
+        #expect(model.loadPolicy == .standard)
+        #expect(model.contextLength == 65_536)
+        #expect(model.supportsReasoning)
+        #expect(!model.supportsNativeImages)
+        #expect(model.requiredProcessorClass == nil)
+    }
+
+    @Test func smolLM3PhoneMemoryLimitsGateModelAndToolCalls() {
+        let fourGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 4 * MLXDeviceSupportProfile.gibibyte
+        )
+        let sixGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
+        )
+        let eightGigabyteProfile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
+        )
+
+        let fourGigabyteManager = MLXModelManager(deviceSupportProfile: fourGigabyteProfile)
+        let sixGigabyteManager = MLXModelManager(deviceSupportProfile: sixGigabyteProfile)
+        let eightGigabyteManager = MLXModelManager(deviceSupportProfile: eightGigabyteProfile)
+        let fourGigabyteModel = try! #require(fourGigabyteManager.model(withID: "smollm3-3b-4bit"))
+        let sixGigabyteModel = try! #require(sixGigabyteManager.model(withID: "smollm3-3b-4bit"))
+        let eightGigabyteModel = try! #require(eightGigabyteManager.model(withID: "smollm3-3b-4bit"))
+
+        #expect(!fourGigabyteProfile.supportsModel(fourGigabyteModel))
+        #expect(fourGigabyteProfile.availabilityIssue(for: fourGigabyteModel)?.contains("6 GB") == true)
+        #expect(sixGigabyteProfile.supportsModel(sixGigabyteModel))
+        #expect(!sixGigabyteManager.supportsToolCalls(for: sixGigabyteModel))
+        #expect(sixGigabyteManager.toolCallIssue(for: sixGigabyteModel)?.contains("8 GB") == true)
+        #expect(eightGigabyteProfile.supportsModel(eightGigabyteModel))
+        #expect(eightGigabyteManager.supportsToolCalls(for: eightGigabyteModel))
+        #expect(eightGigabyteManager.toolCallIssue(for: eightGigabyteModel) == nil)
+    }
+
     @Test func qwenEightGigabyteTierTreatsSlightlyUnderreportedPhoneAsEightGigabytes() {
         let marketedEightGigabytesButReportedBelowEightGiB: UInt64 = 7_950_000_000
         let profile = MLXDeviceSupportProfile(
@@ -521,7 +599,7 @@ struct On_Device_LLM_ChatTests {
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
         let twoBModel = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
-        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(twoBModel))
         #expect(manager.supportsToolCalls(for: twoBModel))
@@ -593,7 +671,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(fourBModel))
         #expect(manager.supportsToolCalls(for: fourBModel))
@@ -617,7 +695,7 @@ struct On_Device_LLM_ChatTests {
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
         let manager = MLXModelManager(deviceSupportProfile: profile)
-        let model = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         manager.startDownload(for: model)
 
@@ -1365,6 +1443,29 @@ struct On_Device_LLM_ChatTests {
         #expect(prompt.contains("Always answer like a pirate."))
     }
 
+    @Test func buildPromptUsesSelectedModelIdentityInBaseSystemPrompt() throws {
+        let viewModel = try makeViewModel()
+
+        let user = On_Device_LLM_Chat.Message(
+            role: .user,
+            text: "Say hello",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let prompt = viewModel.buildPrompt(
+            upToOrderExclusive: 1,
+            modelIdentity: "Qwen 3.5 4B"
+        )
+
+        #expect(prompt.contains("You are Qwen 3.5 4B, a helpful and friendly assistant. Be conversational and practical."))
+        #expect(prompt.contains("- Be concise but complete"))
+        #expect(prompt.contains("- NEVER encourage self-harm"))
+        #expect(prompt.contains("- NEVER provide illegal content or encourage illegal actions"))
+    }
+
     @Test func buildQwenMessagesExcludeHistoricalReasoningFromContext() async throws {
         let viewModel = try makeViewModel()
         viewModel.conversation.reasoningMode = true
@@ -1431,6 +1532,29 @@ struct On_Device_LLM_ChatTests {
         let systemMessage = try #require(messages.first(where: { $0.role == .system }))
 
         #expect(systemMessage.content.contains("Respond in terse bullet points."))
+    }
+
+    @Test func buildQwenMessagesUsesModelIdentityWithoutQuantizationInSystemPrompt() async throws {
+        let viewModel = try makeViewModel()
+
+        let user = On_Device_LLM_Chat.Message(
+            role: .user,
+            text: "Say hello",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let messages = try await viewModel.buildQwenMessages(
+            upToOrderExclusive: 1,
+            modelIdentity: "Qwen 3.5 4B"
+        )
+        let systemMessage = try #require(messages.first(where: { $0.role == .system }))
+
+        #expect(systemMessage.content.contains("You are Qwen 3.5 4B, a helpful and friendly assistant. Be conversational and practical."))
+        #expect(!systemMessage.content.contains("4-bit"))
+        #expect(!systemMessage.content.contains("mixed"))
     }
 
     @Test func buildQwenMessagesKeepsOrdinaryMLXPromptStable() async throws {
@@ -1600,7 +1724,7 @@ struct On_Device_LLM_ChatTests {
     @Test func bridgeDisplayNameUsesSelectedModelInsteadOfStaleLoadedModel() {
         let bridge = ModelBackendBridge()
         let manager = MLXModelManager()
-        let loadedModel = try! #require(manager.model(withID: "qwen3.5-4b-mixed36"))
+        let loadedModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         manager.currentModel = loadedModel
         bridge.modelManager = manager
@@ -1608,6 +1732,15 @@ struct On_Device_LLM_ChatTests {
         bridge.selectedModelID = "qwen3.5-0.8b-4bit"
 
         #expect(bridge.currentModelDisplayName == "Qwen 3.5 (0.8B (4-bit))")
+    }
+
+    @Test func bridgeDisplayNameFallsBackForPersistedSmolLM3Selection() {
+        let bridge = ModelBackendBridge()
+        bridge.modelManager = nil
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = "smollm3-3b-4bit"
+
+        #expect(bridge.currentModelDisplayName == "SmolLM3 (3B (4-bit))")
     }
 
     @Test func reasoningAvailabilityTracksSelectedModelSupport() {
@@ -1632,6 +1765,15 @@ struct On_Device_LLM_ChatTests {
         bridge.selectedModelID = plainModel.id
 
         #expect(!bridge.reasoningAvailable)
+    }
+
+    @Test func reasoningAvailabilityFallsBackForPersistedSmolLM3Selection() {
+        let bridge = ModelBackendBridge()
+        bridge.modelManager = nil
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = "smollm3-3b-4bit"
+
+        #expect(bridge.reasoningAvailable)
     }
 
     @Test func messageDisplayTextStripsThinkTags() {

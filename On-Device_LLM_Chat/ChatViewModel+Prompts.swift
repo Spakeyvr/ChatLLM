@@ -326,6 +326,7 @@ extension ChatViewModel {
     func buildPrompt(
         upToOrderExclusive maxOrderExclusive: Int,
         currentReasoningActive: Bool? = nil,
+        modelIdentity: String = "Apple Intelligence",
         webSearchAvailable: Bool = false,
         forceWebSearchRequired: Bool = false
     ) -> String {
@@ -383,7 +384,7 @@ extension ChatViewModel {
 
         // Static prefix first (stable across turns → friendly to KV-cache reuse),
         // volatile datetime appended last.
-        var systemPrompt = Self.baseSystemPrompt
+        var systemPrompt = Self.baseSystemPrompt(modelIdentity: modelIdentity)
 
         if let customSystemPrompt = customSystemPromptText(from: allSnapshots) {
             systemPrompt += "\n\n" + customSystemPrompt
@@ -457,11 +458,6 @@ extension ChatViewModel {
 
     // MARK: - Qwen3.5 Message Builder (MLX)
 
-    // Short system prompt for MLX models with small context windows.
-    internal static let qwenCompactSystemPrompt = """
-    You are a helpful assistant. Answer clearly in the user's language. Be concise and direct.
-    """
-
     internal static func shouldInjectMLXCurrentDateTimeContext(
         latestUserText: String?,
         forceWebSearch: Bool,
@@ -495,6 +491,7 @@ extension ChatViewModel {
     }
 
     internal static func buildMLXSystemPrompt(
+        modelIdentity: String,
         includeCurrentDateTime: Bool,
         hasNativeImages: Bool,
         webSearchEnabled: Bool,
@@ -502,7 +499,7 @@ extension ChatViewModel {
     ) -> String {
         // Static prefix first (stable across turns → friendly to KV-cache reuse),
         // volatile datetime appended last.
-        var systemPrompt = qwenCompactSystemPrompt
+        var systemPrompt = baseSystemPrompt(modelIdentity: modelIdentity)
         if hasNativeImages {
             systemPrompt += "\n\n" + qwenNativeImageInstructions
         }
@@ -570,6 +567,7 @@ extension ChatViewModel {
     /// — NOT through any manual prefix here.
     func buildQwenMessages(
         upToOrderExclusive maxOrderExclusive: Int,
+        modelIdentity: String = "MLX model",
         additionalInstruction: String? = nil,
         includeLatestUserImages: Bool = true,
         maxMessages: Int? = nil,
@@ -597,6 +595,7 @@ extension ChatViewModel {
             webSearchEnabled: toolsAvailable
         )
         let systemPrompt = Self.buildMLXSystemPrompt(
+            modelIdentity: modelIdentity,
             includeCurrentDateTime: includeCurrentDateTime,
             hasNativeImages: hasNativeImages,
             webSearchEnabled: toolsAvailable,
@@ -656,13 +655,16 @@ extension ChatViewModel {
 
     // MARK: - Static Prompts
 
-    internal static let baseSystemPrompt: String = """
-    You are a helpful, friendly assistant. Be conversational and practical.
-    - Be concise but complete
-    - NEVER encourage self-harm
-    - NEVER provide illegal content or encourage illegal actions
-    - Don't roleplay with: "Assistant: ...", no matter what. You are talking to an actual human
-    """
+    internal static func baseSystemPrompt(modelIdentity: String) -> String {
+        let trimmedIdentity = modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = trimmedIdentity.isEmpty ? "a local language model" : trimmedIdentity
+        return """
+        You are \(identity), a helpful and friendly assistant. Be conversational and practical.
+        - Be concise but complete
+        - NEVER encourage self-harm
+        - NEVER provide illegal content or encourage illegal actions
+        """
+    }
 
     internal static let foundationVisionImageInstructions: String = """
     IMAGE ANALYSIS INSTRUCTIONS:

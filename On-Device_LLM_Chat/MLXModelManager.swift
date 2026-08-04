@@ -183,6 +183,14 @@ final class MLXModelManager: ObservableObject {
         var parameterCount: String {
             parameters.components(separatedBy: " ").first ?? parameters
         }
+
+        var promptIdentity: String {
+            let trimmedParameterCount = parameterCount.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedParameterCount.isEmpty else {
+                return name
+            }
+            return "\(name) \(trimmedParameterCount)"
+        }
     }
 
     // MARK: - Published Properties
@@ -261,14 +269,22 @@ final class MLXModelManager: ObservableObject {
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
 
+    /// Model directories left behind by superseded releases. Nothing in
+    /// `modelDefinitions` refers to them, so the picker cannot show or delete
+    /// them; they are removed at startup instead of stranding gigabytes in
+    /// Documents.
+    nonisolated private static let obsoleteModelDirNames = [
+        "Qwen3.5-4B-MLX-mixed36"
+    ]
+
     private static let modelDefinitions: [MLXModelInfo] = [
         MLXModelInfo(
-            id: "qwen3.5-4b-mixed36",
+            id: "qwen3.5-4b-4bit-hybrid",
             name: "Qwen 3.5",
-            localDirName: "Qwen3.5-4B-MLX-mixed36",
-            hfRepoId: "Spakie/Qwen3.5-4B-MLX-mixed36",
-            parameters: "4B (3/6-bit mixed)",
-            downloadSizeLabel: "2.50 GB",
+            localDirName: "Qwen3.5-4B-MLX-4bit-hybrid",
+            hfRepoId: "Spakie/Qwen3.5-4B-MLX-4bit-hybrid",
+            parameters: "4B (4-bit hybrid)",
+            downloadSizeLabel: "2.66 GB",
             loadPolicy: .qwenMultimodal,
             description: "Qwen 3.5 4B multimodal model with native reasoning and vision.",
             contextLength: 262144,
@@ -313,6 +329,23 @@ final class MLXModelManager: ObservableObject {
             minimumPhoneMemoryBytes: 4 * MLXDeviceSupportProfile.gibibyte,
             minimumPhoneMemoryForToolCallsBytes: 6 * MLXDeviceSupportProfile.gibibyte,
             phoneContextWindowOverride: [8: 4_096, 12: 6_144]
+        ),
+        MLXModelInfo(
+            id: "smollm3-3b-4bit",
+            name: "SmolLM3",
+            localDirName: "SmolLM3-3B-MLX-4bit",
+            hfRepoId: "mlx-community/SmolLM3-3B-4bit",
+            parameters: "3B (4-bit)",
+            downloadSizeLabel: "1.75 GB",
+            loadPolicy: .standard,
+            description: "SmolLM3 3B text model with native reasoning.",
+            contextLength: 65536,
+            isAvailable: false,
+            supportsReasoning: true,
+            supportsNativeImages: false,
+            requiredProcessorClass: nil,
+            minimumPhoneMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte,
+            minimumPhoneMemoryForToolCallsBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
     ]
 
@@ -508,6 +541,7 @@ final class MLXModelManager: ObservableObject {
             subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
             deviceSupportProfile: self.deviceSupportProfile
         )
+        removeObsoleteModelDirectories()
         availableModels = Self.modelDefinitions.map { definition in
             var model = definition
             let status = installationStatus(for: model)
@@ -1283,6 +1317,21 @@ final class MLXModelManager: ObservableObject {
         if let model {
             let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
             cleanupPartialDownloads(for: model, in: modelsDir)
+        }
+    }
+
+    private func removeObsoleteModelDirectories() {
+        let fm = FileManager.default
+        let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
+        for name in Self.obsoleteModelDirNames {
+            let dir = modelsDir.appendingPathComponent(name, isDirectory: true)
+            guard fm.fileExists(atPath: dir.path) else { continue }
+            do {
+                try fm.removeItem(at: dir)
+                print("Removed obsolete model '\(name)' from Documents/Models/")
+            } catch {
+                print("Could not remove obsolete model '\(name)': \(error.localizedDescription)")
+            }
         }
     }
 

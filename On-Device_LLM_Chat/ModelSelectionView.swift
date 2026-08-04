@@ -124,12 +124,7 @@ struct ModelRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-                // Model Icon
-                Image("Qwen-logo")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 44, height: 44)
-                    .clipShape(Circle())
+                modelIcon
 
                 // Model Info
                 VStack(alignment: .leading, spacing: 4) {
@@ -223,6 +218,23 @@ struct ModelRow: View {
         }
     }
 
+    @ViewBuilder
+    private var modelIcon: some View {
+        if model.id.hasPrefix("qwen") {
+            Image("Qwen-logo")
+                .resizable()
+                .scaledToFill()
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+        } else {
+            Image(systemName: "brain.head.profile")
+                .font(.title2)
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.accentColor, in: Circle())
+        }
+    }
+
 }
 
 // MARK: - Model Info Sheet
@@ -300,12 +312,12 @@ struct InfoRow: View {
     List {
         ModelRow(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-mixed36",
+                id: "qwen3.5-4b-4bit-hybrid",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-mixed36",
-                hfRepoId: "Spakie/Qwen3.5-4B-MLX-mixed36",
-                parameters: "4B (3/6-bit mixed)",
-                downloadSizeLabel: "2.50 GB",
+                localDirName: "Qwen3.5-4B-MLX-4bit-hybrid",
+                hfRepoId: "Spakie/Qwen3.5-4B-MLX-4bit-hybrid",
+                parameters: "4B (4-bit hybrid)",
+                downloadSizeLabel: "2.66 GB",
                 loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and vision.",
                 contextLength: 262144,
@@ -320,12 +332,12 @@ struct InfoRow: View {
     .sheet(isPresented: $showingInfo) {
         ModelInfoSheet(
             model: MLXModelManager.MLXModelInfo(
-                id: "qwen3.5-4b-mixed36",
+                id: "qwen3.5-4b-4bit-hybrid",
                 name: "Qwen 3.5",
-                localDirName: "Qwen3.5-4B-MLX-mixed36",
-                hfRepoId: "Spakie/Qwen3.5-4B-MLX-mixed36",
-                parameters: "4B (3/6-bit mixed)",
-                downloadSizeLabel: "2.50 GB",
+                localDirName: "Qwen3.5-4B-MLX-4bit-hybrid",
+                hfRepoId: "Spakie/Qwen3.5-4B-MLX-4bit-hybrid",
+                parameters: "4B (4-bit hybrid)",
+                downloadSizeLabel: "2.66 GB",
                 loadPolicy: .qwenMultimodal,
                 description: "Qwen 3.5 4B multimodal model with native reasoning and vision.",
                 contextLength: 262144,
@@ -360,4 +372,3 @@ struct InfoRow: View {
         )
     }
 }
-

@@ -84,6 +84,27 @@ nonisolated private final class TimeoutRace<T>: @unchecked Sendable {
     }
 }
 
+nonisolated private final class FoundationModelsGateLease: @unchecked Sendable {
+    private let gate: FoundationModelsGate
+    private let lock = NSLock()
+    private var didRelease = false
+
+    init(gate: FoundationModelsGate) {
+        self.gate = gate
+    }
+
+    func release() async {
+        let shouldRelease = lock.withLock {
+            guard !didRelease else { return false }
+            didRelease = true
+            return true
+        }
+        if shouldRelease {
+            await gate.release()
+        }
+    }
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
 
@@ -143,14 +164,15 @@ final class ChatViewModel: ObservableObject {
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         await Self.fmGate.acquire()
+        let gateLease = FoundationModelsGateLease(gate: Self.fmGate)
 
         let operationTask = Task<T, Error> {
             do {
                 let value = try await operation()
-                await Self.fmGate.release()
+                await gateLease.release()
                 return value
             } catch {
-                await Self.fmGate.release()
+                await gateLease.release()
                 throw error
             }
         }
@@ -161,6 +183,7 @@ final class ChatViewModel: ObservableObject {
             }
         } catch {
             operationTask.cancel()
+            await gateLease.release()
             throw error
         }
     }
@@ -853,6 +876,7 @@ final class ChatViewModel: ObservableObject {
             do {
                 let messages = try await buildQwenMessages(
                     upToOrderExclusive: order,
+                    modelIdentity: manager.currentModel?.promptIdentity ?? "MLX model",
                     additionalInstruction: additionalUserInstruction,
                     includeLatestUserImages: allowNativeImages,
                     maxMessages: webSearchAvailable ? 10 : nil,
@@ -879,6 +903,7 @@ final class ChatViewModel: ObservableObject {
             var prompt = buildPrompt(
                 upToOrderExclusive: order,
                 currentReasoningActive: resetState.target.isReasoningMode,
+                modelIdentity: ModelBackendBridge.Backend.foundationModels.displayName,
                 webSearchAvailable: webSearchAvailable,
                 forceWebSearchRequired: resetState.forceSearchRequired
             )
@@ -954,14 +979,18 @@ final class ChatViewModel: ObservableObject {
 
         @MainActor
         func renderIfThrottled() {
-            guard let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) else { return }
-            let hasEnoughDelta = lastRenderedLength == 0 || (result.cumulativeText.count - lastRenderedLength) >= 24
+            // Cheapest check first. `String.count` walks the whole string, so measuring
+            // the accumulated response on every token was quadratic in output length;
+            // `utf8.count` is O(1) and only needed once the time gate has passed.
             let now = Date()
-            guard now.timeIntervalSince(lastModelWrite) >= 0.12 && hasEnoughDelta else { return }
+            guard now.timeIntervalSince(lastModelWrite) >= 0.12 else { return }
+            let cumulativeLength = result.cumulativeText.utf8.count
+            guard lastRenderedLength == 0 || (cumulativeLength - lastRenderedLength) >= 24 else { return }
+            guard let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) else { return }
             syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
             updateMessageWithReasoningContent(liveTarget, fullText: result.cumulativeText, finalize: false)
             lastModelWrite = now
-            lastRenderedLength = result.cumulativeText.count
+            lastRenderedLength = cumulativeLength
             conversation.lastUpdated = now
             scheduleCoalescedSave()
         }
@@ -1102,19 +1131,26 @@ final class ChatViewModel: ObservableObject {
             return TaskBackedAsyncThrowingStream.make { continuation in
                 Task { @MainActor in
                     await Self.fmGate.acquire()
-                    do {
-                        let textStream = try await self.generator.streamResponse(to: prompt, tools: tools)
-                        for try await chunk in textStream {
-                            continuation.yield(.text(chunk))
+                    let gateLease = FoundationModelsGateLease(gate: Self.fmGate)
+                    await withTaskCancellationHandler {
+                        do {
+                            let textStream = try await self.generator.streamResponse(to: prompt, tools: tools)
+                            for try await chunk in textStream {
+                                continuation.yield(.text(chunk))
+                            }
+                            await gateLease.release()
+                            continuation.finish()
+                        } catch is CancellationError {
+                            await gateLease.release()
+                            continuation.finish()
+                        } catch {
+                            await gateLease.release()
+                            continuation.finish(throwing: error)
                         }
-                        await Self.fmGate.release()
-                        continuation.finish()
-                    } catch is CancellationError {
-                        await Self.fmGate.release()
-                        continuation.finish()
-                    } catch {
-                        await Self.fmGate.release()
-                        continuation.finish(throwing: error)
+                    } onCancel: {
+                        Task {
+                            await gateLease.release()
+                        }
                     }
                 }
             }
@@ -1122,7 +1158,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     internal static func mergedStreamingChunk(currentText: String, newText: String) -> String? {
-        if currentText.contains(newText) && newText.count > 10 {
+        // Length guard first: `contains` scans the whole accumulated response, so
+        // evaluating it per token made streaming cost quadratic in output length.
+        if newText.count > 10 && currentText.contains(newText) {
             return nil
         }
         if !currentText.isEmpty &&

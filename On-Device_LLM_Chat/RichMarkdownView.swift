@@ -110,7 +110,7 @@ enum RichTextFeatureDetector {
     }
 }
 
-private struct RichTextPalette: Equatable {
+private struct RichTextPalette: Hashable {
     let text: String
     let link: String
     let codeBackground: String
@@ -229,14 +229,22 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        // Hash the inputs, not the assembled document: the document embeds ~430 KB of
+        // bundled KaTeX/markdown-it sources, and building + hashing it on every SwiftUI
+        // update was dominating the cost of showing a message bubble.
+        var hasher = Hasher()
+        hasher.combine(text)
+        hasher.combine(fontSize)
+        hasher.combine(palette)
+        let payloadHash = hasher.finalize()
+
+        guard context.coordinator.lastPayloadHash != payloadHash else { return }
+
         guard let html = Self.makeHTML(text: text, fontSize: fontSize, palette: palette) else {
             context.coordinator.setFailedToLoad(true)
             return
         }
 
-        let payloadHash = html.hashValue
-
-        guard context.coordinator.lastPayloadHash != payloadHash else { return }
         context.coordinator.lastPayloadHash = payloadHash
         context.coordinator.setHasMeasuredHeight(false)
         context.coordinator.setDynamicHeight(1)
@@ -250,15 +258,26 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         webView.navigationDelegate = nil
     }
 
+    // Bundled renderer sources are ~430 KB in total and never change at runtime.
+    // Read and escape them once instead of on every updateUIView call.
+    private static let markdownItJS: String? = bundledTextResource(named: "markdown-it.min", extension: "js")?
+        .escapedInlineScript
+    private static let katexCSS: String = (bundledTextResource(named: "katex.min", extension: "css") ?? "")
+        .escapedInlineStyle
+    private static let katexJS: String = (bundledTextResource(named: "katex.min", extension: "js") ?? "")
+        .escapedInlineScript
+    private static let katexAutoRenderJS: String = (bundledTextResource(named: "katex-auto-render.min", extension: "js") ?? "")
+        .escapedInlineScript
+
     private static func makeHTML(text: String, fontSize: Double, palette: RichTextPalette) -> String? {
         let encodedText = text.jsLiteral
-        guard let markdownItJS = bundledTextResource(named: "markdown-it.min", extension: "js") else {
+        guard let markdownItJS else {
             return nil
         }
 
-        let katexCSS = bundledTextResource(named: "katex.min", extension: "css") ?? ""
-        let katexJS = bundledTextResource(named: "katex.min", extension: "js") ?? ""
-        let katexAutoRenderJS = bundledTextResource(named: "katex-auto-render.min", extension: "js") ?? ""
+        let katexCSS = Self.katexCSS
+        let katexJS = Self.katexJS
+        let katexAutoRenderJS = Self.katexAutoRenderJS
 
         return """
         <!doctype html>
@@ -267,7 +286,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
           <style>
-          \(katexCSS.escapedInlineStyle)
+          \(katexCSS)
           </style>
           <style>
             :root {
@@ -384,13 +403,13 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         <body>
           <div id="content"></div>
           <script>
-          \(markdownItJS.escapedInlineScript)
+          \(markdownItJS)
           </script>
           <script>
-          \(katexJS.escapedInlineScript)
+          \(katexJS)
           </script>
           <script>
-          \(katexAutoRenderJS.escapedInlineScript)
+          \(katexAutoRenderJS)
           </script>
           <script>
             const source = \(encodedText);

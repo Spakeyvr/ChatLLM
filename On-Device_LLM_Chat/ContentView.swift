@@ -368,26 +368,33 @@ struct ContentView: View {
         let calendar = Calendar.current
         let now = Date()
 
+        // Evaluate the filter once: when a search term is active it rebuilds every
+        // conversation's full visible transcript, so re-deriving it per bucket made
+        // sidebar rendering scale with total message history × 5.
+        let candidates = filteredConversations
+        let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now)
+        let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now)
+
         let buckets: [(id: String, title: LocalizedStringKey, conversations: [Conversation])] = [
             (
                 id: "today",
                 title: "Today",
-                conversations: filteredConversations.filter { calendar.isDateInToday($0.lastUpdated) }
+                conversations: candidates.filter { calendar.isDateInToday($0.lastUpdated) }
             ),
             (
                 id: "yesterday",
                 title: "Yesterday",
-                conversations: filteredConversations.filter { calendar.isDateInYesterday($0.lastUpdated) }
+                conversations: candidates.filter { calendar.isDateInYesterday($0.lastUpdated) }
             ),
             (
                 id: "last7Days",
                 title: "Last 7 Days",
-                conversations: filteredConversations.filter {
+                conversations: candidates.filter {
                     guard !calendar.isDateInToday($0.lastUpdated),
                           !calendar.isDateInYesterday($0.lastUpdated) else {
                         return false
                     }
-                    guard let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now) else {
+                    guard let sevenDaysAgo else {
                         return false
                     }
                     return $0.lastUpdated >= sevenDaysAgo
@@ -396,9 +403,8 @@ struct ContentView: View {
             (
                 id: "last30Days",
                 title: "Last 30 Days",
-                conversations: filteredConversations.filter {
-                    guard let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now),
-                          let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) else {
+                conversations: candidates.filter {
+                    guard let sevenDaysAgo, let thirtyDaysAgo else {
                         return false
                     }
                     return $0.lastUpdated < sevenDaysAgo && $0.lastUpdated >= thirtyDaysAgo
@@ -407,8 +413,8 @@ struct ContentView: View {
             (
                 id: "older",
                 title: "Older",
-                conversations: filteredConversations.filter {
-                    guard let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) else {
+                conversations: candidates.filter {
+                    guard let thirtyDaysAgo else {
                         return false
                     }
                     return $0.lastUpdated < thirtyDaysAgo
@@ -428,10 +434,13 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebar: some View {
+        // One pass over the (potentially expensive) search filter per render.
+        let sections = groupedConversations
+
         ZStack(alignment: .bottom) {
             // Main list content — keep selection binding for NavigationSplitView
             List(selection: $selection) {
-                if filteredConversations.isEmpty && !searchText.isEmpty {
+                if sections.isEmpty && !searchText.isEmpty {
                     // Empty search results state
                     VStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
@@ -449,7 +458,7 @@ struct ContentView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 } else {
-                    ForEach(groupedConversations) { section in
+                    ForEach(sections) { section in
                         Section {
                             ForEach(section.conversations, id: \.id) { convo in
                                 let conversationID = convo.id

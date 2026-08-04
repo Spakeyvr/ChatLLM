@@ -15,7 +15,8 @@ import SwiftData
 @MainActor
 class ModelBackendBridge: ObservableObject {
     private static let legacyModelIDMap: [String: String] = [
-        "qwen3.5-4b-4bit": "qwen3.5-4b-mixed36"
+        "qwen3.5-4b-4bit": "qwen3.5-4b-4bit-hybrid",
+        "qwen3.5-4b-mixed36": "qwen3.5-4b-4bit-hybrid"
     ]
 
     // MARK: - Published Properties
@@ -242,7 +243,7 @@ class ModelBackendBridge: ObservableObject {
 
     /// Known model families that support reasoning/thinking mode.
     /// Used as fallback when modelManager isn't available but a model ID is stored.
-    private static let knownReasoningPrefixes = ["qwen"]
+    private static let knownReasoningPrefixes = ["qwen", "smollm3"]
 
     /// Reasoning is only exposed for MLX models that support it.
     var reasoningAvailable: Bool {
@@ -270,10 +271,12 @@ class ModelBackendBridge: ObservableObject {
             return "\(model.name) (\(model.parameters))"
         }
         switch modelID {
-        case "qwen3.5-4b-mixed36":
+        case "qwen3.5-4b-4bit-hybrid":
             return "Qwen 3.5 (4B)"
         case "qwen3.5-2b-4bit":
             return "Qwen 3.5 (2B)"
+        case "smollm3-3b-4bit":
+            return "SmolLM3 (3B (4-bit))"
         default:
             return modelID
         }
@@ -418,7 +421,7 @@ extension ModelBackendBridge {
     static var preview: ModelBackendBridge {
         let bridge = ModelBackendBridge()
         bridge.selectedBackend = .mlx
-        bridge.selectedModelID = "qwen3.5-4b-mixed36"
+        bridge.selectedModelID = "qwen3.5-4b-4bit-hybrid"
         return bridge
     }
 }

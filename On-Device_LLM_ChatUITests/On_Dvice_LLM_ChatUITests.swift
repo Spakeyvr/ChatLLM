@@ -8,7 +8,7 @@
 import XCTest
 
 final class On_Device_LLM_ChatUITests: XCTestCase {
-    private let firstMLXModelID = "qwen3.5-4b-mixed36"
+    private let firstMLXModelID = "qwen3.5-4b-4bit-hybrid"
     private let secondMLXModelID = "qwen3.5-2b-4bit"
 
     private func launchApp(
