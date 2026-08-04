@@ -726,6 +726,14 @@ final class ChatViewModel: ObservableObject {
             generationID: lifecycleID
         ) else {
             streamingMessageID = nil
+            // `currentStreamTask` is not assigned until after preparation, so a
+            // cancel landing in this window never reaches `finalizeStreaming`.
+            // The placeholder has already been reset and persisted by
+            // `prepareStreamResetState`, so tidy it up here instead.
+            if !isGenerationActive(lifecycleID) {
+                discardOrRestoreResetPlaceholder(resetState)
+                return .cancelled
+            }
             return .failedBeforeOutput
         }
 
@@ -753,6 +761,31 @@ final class ChatViewModel: ObservableObject {
             currentStreamTask = nil
         }
         return lastStreamOutcome
+    }
+
+    /// Undoes `prepareStreamResetState` for a turn cancelled before streaming
+    /// began. Mirrors the cancellation branch of `finalizeStreaming`: restore
+    /// prior content when regenerating, otherwise drop the empty placeholder.
+    private func discardOrRestoreResetPlaceholder(_ resetState: StreamResetState) {
+        guard let target = conversation.messages.first(where: { $0.id == resetState.targetID }) else {
+            return
+        }
+        guard target.generationError == nil else { return }
+
+        let hasPreviousContent = !resetState.previousText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !(resetState.previousFinal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+        if hasPreviousContent {
+            target.text = resetState.previousText
+            target.reasoning = resetState.previousReasoning
+            target.finalAnswer = resetState.previousFinal
+            target.markAsComplete()
+        } else {
+            conversation.messages.removeAll { $0.id == target.id }
+            context.delete(target)
+        }
+        conversation.lastUpdated = Date()
+        immediateSave()
     }
 
     private func prepareStreamResetState(
@@ -1273,12 +1306,16 @@ final class ChatViewModel: ObservableObject {
             return outcome
         }
 
-        if preparation.forceSearchRequired && capturedInvocations.isEmpty {
+        // A failed search is still recorded as an invocation, so presence alone
+        // does not prove the answer is grounded -- require one that succeeded.
+        if preparation.forceSearchRequired && !capturedInvocations.contains(where: { $0.succeeded }) {
             target.text = ""
             target.finalAnswer = nil
             target.reasoning = nil
             target.searchInvocations = nil
-            target.generationError = "Search was explicitly required for this response, but the model did not call the webSearch tool."
+            target.generationError = capturedInvocations.isEmpty
+                ? "Search was explicitly required for this response, but the model did not call the webSearch tool."
+                : "Search was explicitly required for this response, but every webSearch attempt failed."
             outcome = .failedBeforeOutput
         }
 

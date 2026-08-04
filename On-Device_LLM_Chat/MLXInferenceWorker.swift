@@ -260,9 +260,11 @@ actor MLXInferenceWorker {
         var activePromptImages = latestUserMessage.images
         var activePromptVideos = latestUserMessage.videos
         var activeTools = request.tools
-        var explicitMessageHistory = usesExplicitMessageHistory
-            ? Array(request.messages.dropLast())
-            : []
+        // Seeds every path that builds its own `ChatSession` below, not just the
+        // explicit tool loop. Media turns also skip session reuse, and leaving
+        // this empty for them dropped the system prompt and the entire prior
+        // conversation from the fresh session.
+        var explicitMessageHistory = Array(request.messages.dropLast())
         let toolInvocationState = ToolInvocationState()
         let effectiveCachePolicy = MLXModelManager.cachePolicy(for: request.params)
         let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
@@ -384,16 +386,19 @@ actor MLXInferenceWorker {
                     }
                 }
 
-                if usesExplicitMessageHistory {
-                    explicitMessageHistory.append(
-                        Chat.Message(
-                            role: activePromptRole,
-                            content: activePromptContent,
-                            images: activePromptImages,
-                            videos: activePromptVideos
-                        )
+                // Unconditional: this is only ever read when `reusableSession` is
+                // nil and the loop rebuilds a session per iteration, which now
+                // includes media turns. Skipping it there dropped the current
+                // question from every post-tool-call iteration. When a session is
+                // being reused the value is never read, so appending is inert.
+                explicitMessageHistory.append(
+                    Chat.Message(
+                        role: activePromptRole,
+                        content: activePromptContent,
+                        images: activePromptImages,
+                        videos: activePromptVideos
                     )
-                }
+                )
 
                 activePromptContent = MLXModelManager.toolResponsePromptContent(
                     for: loadedModel.model,

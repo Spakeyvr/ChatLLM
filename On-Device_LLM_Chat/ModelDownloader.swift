@@ -14,6 +14,10 @@ actor ModelDownloader {
     private static let minProgressInterval: Double = 0.01  // report at most every 1% change
     private static let disallowedRemotePathComponents: Set<String> = [".", ".."]
 
+    /// Last value handed to `onProgress`. Actor state rather than a local so the
+    /// in-flight delegate callbacks share one throttle with the per-file path.
+    private var lastReportedProgress: Double = -1
+
     // MARK: - File List
 
     func fetchFileList(repoId: String) async throws -> [(name: String, size: Int64)] {
@@ -52,7 +56,7 @@ actor ModelDownloader {
         let fileCount = files.count
         var totalWritten: Int64 = 0
         var filesCompleted = 0
-        var lastReportedProgress: Double = -1
+        lastReportedProgress = -1
 
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
@@ -72,7 +76,29 @@ actor ModelDownloader {
             let parentDir = destURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-            let (downloadedURL, response) = try await URLSession.shared.download(from: fileURL)
+            // `download(from:)` only returns once the whole file has landed, so
+            // reporting progress per completed file leaves the UI pinned near 0%
+            // for repositories dominated by a single multi-gigabyte weights file.
+            // The delegate reports bytes as they arrive instead.
+            let bytesSoFar = totalWritten
+            let progressDelegate = DownloadProgressDelegate { [weak self] written, expected in
+                guard let self else { return }
+                Task { @Sendable in
+                    await self.reportInFlightProgress(
+                        bytesForCurrentFile: written,
+                        expectedForCurrentFile: expected,
+                        declaredSizeForCurrentFile: file.size,
+                        completedBytes: bytesSoFar,
+                        totalExpected: totalExpected,
+                        onProgress: onProgress
+                    )
+                }
+            }
+
+            let (downloadedURL, response) = try await URLSession.shared.download(
+                from: fileURL,
+                delegate: progressDelegate
+            )
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 try? FileManager.default.removeItem(at: downloadedURL)
                 throw DownloadError.badResponse
@@ -95,16 +121,47 @@ actor ModelDownloader {
                 filesCompleted: filesCompleted,
                 fileCount: fileCount
             )
-            if progress - lastReportedProgress >= Self.minProgressInterval {
-                lastReportedProgress = progress
-                onProgress(progress)
-            }
+            emitProgress(progress, onProgress: onProgress)
         }
 
+        lastReportedProgress = 1.0
         onProgress(1.0)
     }
 
     // MARK: - Helpers
+
+    /// Throttled, monotonic progress emission. Shared by the per-file completion
+    /// path and the in-flight delegate callbacks.
+    private func emitProgress(
+        _ progress: Double,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) {
+        guard progress - lastReportedProgress >= Self.minProgressInterval else { return }
+        lastReportedProgress = progress
+        onProgress(progress)
+    }
+
+    private func reportInFlightProgress(
+        bytesForCurrentFile: Int64,
+        expectedForCurrentFile: Int64,
+        declaredSizeForCurrentFile: Int64,
+        completedBytes: Int64,
+        totalExpected: Int64,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) {
+        guard totalExpected > 0 else { return }
+
+        // `totalBytesExpectedToWrite` is `NSURLSessionTransferSizeUnknown` (-1)
+        // when the server omits Content-Length; fall back to the size the
+        // HuggingFace API reported for this file.
+        let expected = expectedForCurrentFile > 0 ? expectedForCurrentFile : declaredSizeForCurrentFile
+        let clamped = expected > 0 ? min(bytesForCurrentFile, expected) : bytesForCurrentFile
+
+        // Never let an in-flight estimate reach 1.0 -- completion is only
+        // reported once every file has actually been moved into place.
+        let progress = min(Double(completedBytes + clamped) / Double(totalExpected), 0.999)
+        emitProgress(progress, onProgress: onProgress)
+    }
 
     private func computeProgress(
         totalWritten: Int64,
@@ -199,6 +256,39 @@ actor ModelDownloader {
         guard resolvedPath == targetPath || resolvedPath.hasPrefix(targetPath + "/") else {
             throw DownloadError.invalidRemotePath(file: originalFile)
         }
+    }
+
+    // MARK: - Progress Delegate
+
+    /// Reports bytes as they arrive for a single `URLSession` download task.
+    /// Only stored property is an immutable `Sendable` closure, so the
+    /// unchecked conformance is safe despite the `NSObject` base.
+    private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let onUpdate: @Sendable (_ totalBytesWritten: Int64, _ totalBytesExpected: Int64) -> Void
+
+        init(onUpdate: @escaping @Sendable (Int64, Int64) -> Void) {
+            self.onUpdate = onUpdate
+            super.init()
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didWriteData bytesWritten: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            onUpdate(totalBytesWritten, totalBytesExpectedToWrite)
+        }
+
+        /// Required by `URLSessionDownloadDelegate`. The async
+        /// `download(from:delegate:)` API takes care of the finished file, so
+        /// there is nothing to do here.
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didFinishDownloadingTo location: URL
+        ) {}
     }
 
     // MARK: - Errors
