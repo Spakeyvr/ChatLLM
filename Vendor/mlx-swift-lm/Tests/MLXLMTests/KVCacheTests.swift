@@ -202,6 +202,70 @@ struct KVCacheTests {
     }
 
     @Test
+    func testRotorQuantTrimDropsNewestTokensAcrossCompressedAndExactRows() {
+        let cache = RotorQuantKVCache(
+            configuration: RotorQuantConfiguration(
+                keyBits: 8,
+                valueBits: 8,
+                seed: 42,
+                exactBufferSize: 2,
+                attentionBlockTokens: 64,
+                variant: .iso
+            )
+        )
+        let prefillKeys = patternedArray(shape: [1, 1, 6, 128])
+        let prefillValues = patternedArray(shape: [1, 1, 6, 128], scale: 0.015)
+        let decodeKeys = patternedArray(shape: [1, 1, 1, 128], scale: 0.02)
+        let decodeValues = patternedArray(shape: [1, 1, 1, 128], scale: 0.022)
+        let appendedKeys = patternedArray(shape: [1, 1, 1, 128], scale: 0.024)
+        let appendedValues = patternedArray(shape: [1, 1, 1, 128], scale: 0.026)
+
+        _ = cache.update(keys: prefillKeys, values: prefillValues)
+        _ = cache.update(keys: decodeKeys, values: decodeValues)
+        #expect(cache.offset == 7)
+        #expect(cache.metaState[11] == "5")
+        #expect(cache.metaState[12] == "2")
+
+        #expect(cache.trim(3) == 3)
+        #expect(cache.offset == 4)
+
+        let (restoredKeys, restoredValues) = cache.update(
+            keys: appendedKeys,
+            values: appendedValues
+        )
+
+        #expect(restoredKeys.shape == [1, 1, 5, 128])
+        #expect(
+            maxAbsoluteDifference(
+                restoredKeys[.ellipsis, ..<4, 0...],
+                prefillKeys[.ellipsis, ..<4, 0...]
+            ) < 0.01
+        )
+        #expect(
+            maxAbsoluteDifference(
+                restoredValues[.ellipsis, ..<4, 0...],
+                prefillValues[.ellipsis, ..<4, 0...]
+            ) < 0.01
+        )
+        #expect(maxAbsoluteDifference(restoredKeys[.ellipsis, 4..<5, 0...], appendedKeys) < 0.01)
+    }
+
+    @Test
+    func testTrimPromptCacheTrimsEveryLayer() {
+        let cache: [KVCache] = [KVCacheSimple(), KVCacheSimple(), RotorQuantKVCache()]
+        let keys = patternedArray(shape: [1, 1, 8, 128])
+        let values = patternedArray(shape: [1, 1, 8, 128])
+        for item in cache {
+            _ = item.update(keys: keys, values: values)
+        }
+
+        #expect(trimPromptCache(cache, numTokens: 3) == 3)
+        for item in cache {
+            #expect(item.offset == 5)
+        }
+    }
+
+    @Test
     func testRotorQuantAttentionPathSupportsGQAHeadDimension256() {
         let cache = RotorQuantKVCache(
             configuration: RotorQuantConfiguration(

@@ -2339,37 +2339,17 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
 
     public override var isTrimmable: Bool { true }
 
+    /// Drops the newest `n` tokens, matching `KVCacheSimple.trim`. The newest rows live in the
+    /// exact tail, so that buffer releases before any compressed row does.
     @discardableResult
     public override func trim(_ n: Int) -> Int {
         guard n > 0 else { return 0 }
-        var remaining = n
-        let trimmedCompressed = min(compressedCount, remaining)
-        if trimmedCompressed > 0 {
-            keyIndices = keyIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
-            keyNorms = keyNorms?[.ellipsis, trimmedCompressed..<compressedCount]
-            valueIndices = valueIndices?[.ellipsis, trimmedCompressed..<compressedCount, 0...]
-            valueNorms = valueNorms?[.ellipsis, trimmedCompressed..<compressedCount]
-            compressedCount -= trimmedCompressed
-            compressedCapacity = keyIndices?.dim(2) ?? 0
-            remaining -= trimmedCompressed
-        }
-
-        if remaining > 0, let exactKeys, let exactValues, exactCount > 0 {
-            let trimmedExact = min(remaining, exactCount)
-            let retainedExactCount = exactCount - trimmedExact
-            if retainedExactCount > 0 {
-                self.exactKeys?[.ellipsis, ..<retainedExactCount, 0...] =
-                    exactKeys[.ellipsis, trimmedExact..<exactCount, 0...]
-                self.exactValues?[.ellipsis, ..<retainedExactCount, 0...] =
-                    exactValues[.ellipsis, trimmedExact..<exactCount, 0...]
-            }
-            self.exactCount = retainedExactCount
-            offset = compressedCount + self.exactCount
-            return trimmedCompressed + trimmedExact
-        }
-
+        let trimmedExact = min(exactCount, n)
+        exactCount -= trimmedExact
+        let trimmedCompressed = min(compressedCount, n - trimmedExact)
+        compressedCount -= trimmedCompressed
         offset = compressedCount + exactCount
-        return trimmedCompressed
+        return trimmedExact + trimmedCompressed
     }
 
     private func ingest(keys: MLXArray, values: MLXArray) {
@@ -3919,7 +3899,7 @@ public func canTrimPromptCache(_ cache: [KVCache]) -> Bool {
 @discardableResult
 public func trimPromptCache(_ cache: [KVCache], numTokens: Int) -> Int {
     guard canTrimPromptCache(cache), !cache.isEmpty else { return 0 }
-    return cache.first?.trim(numTokens) ?? 0
+    return cache.map { $0.trim(numTokens) }.first ?? 0
 }
 
 // MARK: - Type Aliases

@@ -227,6 +227,7 @@ Current status:
 - The block-parallel path removes the catastrophic long-context slowdown seen in the first sweep, e.g. 2B 8k improved from `7.3 tok/s` to `35.6 tok/s`.
 - Batched exact flushing removes most of the remaining 2B 2048 decode gap on the 64-token probe: RotorQuant is `1.07x` dense and `1.25x` legacy while using `33.45%` of dense KV memory and `81.97%` of legacy KV memory.
 - RotorQuant still does not have clean proof for the original "no decode regression versus dense/legacy" performance gate on the primary mixed 4B 2048 check. The 128-token generated runs are order-sensitive; a clean final audit needs a cooler or randomized benchmark protocol.
+- Cache trimming now matches the dense cache. `RotorQuantKVCache.trim` drops the newest tokens by releasing the exact tail before any compressed row; it previously dropped the oldest compressed rows, so a prompt-cache rewind would have kept the wrong context. `trimPromptCache` now trims every layer instead of only the first. Both paths are unreachable in the app today, because nothing calls `trimPromptCache` and hybrid Mamba caches report as untrimmable, so this is a latent-correctness fix rather than a behavior change.
 - The app exposes RotorQuant as an experimental MLX-only option with a tappable `(E)` badge and beta warning.
 - The app runtime no longer falls back to legacy MLX quantized KV when RotorQuant is disabled or unsupported. In-app choices are RotorQuant or dense/rotating KV; legacy quantized KV remains only as an explicit benchmark/evaluator baseline.
 

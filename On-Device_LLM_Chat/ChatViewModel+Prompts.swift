@@ -659,10 +659,7 @@ extension ChatViewModel {
         let trimmedIdentity = modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
         let identity = trimmedIdentity.isEmpty ? "a local language model" : trimmedIdentity
         return """
-        You are \(identity), a helpful and friendly assistant. Be conversational and practical.
-        - Be concise but complete
-        - NEVER encourage self-harm
-        - NEVER provide illegal content or encourage illegal actions
+        You are \(identity), a helpful and friendly assistant.
         """
     }
 
