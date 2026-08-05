@@ -30,7 +30,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
     init(
         isPhone: Bool,
         physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory,
-        ramPrecautionsDisabledOverride: Bool? = false
+        ramPrecautionsDisabledOverride: Bool? = nil
     ) {
         self.isPhone = isPhone
         self.physicalMemoryBytes = physicalMemoryBytes

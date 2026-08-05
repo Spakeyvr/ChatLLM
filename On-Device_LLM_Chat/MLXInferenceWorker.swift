@@ -24,13 +24,31 @@ import os
 /// actually matters when chasing out-of-memory kills.
 nonisolated enum MLXMemoryDiagnostics {
     static func status() -> String {
-        let headroomMB = Double(os_proc_available_memory()) / 1_048_576
-        let activeMB = Double(Memory.activeMemory) / 1_048_576
-        let cacheMB = Double(Memory.cacheMemory) / 1_048_576
-        let peakMB = Double(Memory.peakMemory) / 1_048_576
+        // One snapshot rather than three separate reads, so active/cache/peak
+        // describe the same instant. `os_proc_available_memory` reports 0 when
+        // the process has no jetsam limit (Simulator, Mac Catalyst), so the
+        // headroom field is only meaningful on device.
+        let snapshot = Memory.snapshot()
+        let headroom = os_proc_available_memory()
+        let headroomMB = Double(headroom) / 1_048_576
+        let activeMB = Double(snapshot.activeMemory) / 1_048_576
+        let cacheMB = Double(snapshot.cacheMemory) / 1_048_576
+        let peakMB = Double(snapshot.peakMemory) / 1_048_576
+        let headroomField = headroom > 0
+            ? String(format: "headroom=%.0fMB", headroomMB)
+            : "headroom=n/a"
         return String(
-            format: "headroom=%.0fMB mlx_active=%.0fMB mlx_cache=%.0fMB mlx_peak=%.0fMB",
-            headroomMB, activeMB, cacheMB, peakMB
+            format: "%@ mlx_active=%.0fMB mlx_cache=%.0fMB mlx_peak=%.0fMB",
+            headroomField, activeMB, cacheMB, peakMB
+        )
+    }
+
+    /// Single place the `MLX mem[...]` log line is built, so its format, level
+    /// and privacy stay consistent across the ~11 checkpoints that emit it.
+    static func log(_ logger: Logger, _ tag: String, _ detail: String = "") {
+        let suffix = detail.isEmpty ? "" : " \(detail)"
+        logger.notice(
+            "MLX mem[\(tag, privacy: .public)]\(suffix, privacy: .public): \(status(), privacy: .public)"
         )
     }
 }
@@ -292,16 +310,13 @@ actor MLXInferenceWorker {
         )
 
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
-        self.logger.notice(
-            "MLX mem[generate.entry]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
-        )
+        MLXMemoryDiagnostics.log(self.logger, "generate.entry")
         let iterateStream = {
             var streamIteration = 0
             while true {
                 streamIteration += 1
-                self.logger.notice(
-                    "MLX mem[prefill.start] iteration=\(streamIteration, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
-                )
+                MLXMemoryDiagnostics.log(
+                    self.logger, "prefill.start", "iteration=\(streamIteration)")
                 let session: ChatSession
                 if let reusableSession {
                     session = reusableSession
@@ -337,15 +352,12 @@ actor MLXInferenceWorker {
                     case .chunk(let text):
                         if firstTokenAt == nil {
                             firstTokenAt = Date()
-                            self.logger.notice(
-                                "MLX mem[first-token]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
-                            )
+                            MLXMemoryDiagnostics.log(self.logger, "first-token")
                         }
                         chunkEventCount += 1
                         if chunkEventCount % 128 == 0 {
-                            self.logger.notice(
-                                "MLX mem[decode] chunks=\(chunkEventCount, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
-                            )
+                            MLXMemoryDiagnostics.log(
+                                self.logger, "decode", "chunks=\(chunkEventCount)")
                         }
                         if let outputFilter {
                             if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
@@ -358,9 +370,7 @@ actor MLXInferenceWorker {
                         }
                     case .toolCall(let toolCall):
                         emittedToolCall = toolCall
-                        self.logger.notice(
-                            "MLX mem[tool-call.emitted]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
-                        )
+                        MLXMemoryDiagnostics.log(self.logger, "tool-call.emitted")
                         onToolCall(toolCall)
                         if let outputFilter {
                             await outputFilter.didDispatchToolCall()
@@ -416,9 +426,8 @@ actor MLXInferenceWorker {
 
                     self.logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
                     toolResult = try await toolDispatch(emittedToolCall)
-                    self.logger.notice(
-                        "MLX mem[tool.dispatched] result_chars=\(toolResult.count, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
-                    )
+                    MLXMemoryDiagnostics.log(
+                        self.logger, "tool.dispatched", "result_chars=\(toolResult.count)")
                     if MLXModelManager.shouldDisableTools(after: toolResult) {
                         self.logger.notice("MLX disabling tools for remainder of response after search limit was reached")
                         activeTools = []
@@ -466,9 +475,7 @@ actor MLXInferenceWorker {
         }
 
         let finishedAt = Date()
-        logger.notice(
-            "MLX mem[generate.end]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
-        )
+        MLXMemoryDiagnostics.log(logger, "generate.end")
         let memoryAfter = Memory.snapshot()
         let toolInvocationCount = await toolInvocationState.currentCount()
         let performanceSample = MLXPerformanceSample(

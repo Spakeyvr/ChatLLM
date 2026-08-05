@@ -220,9 +220,6 @@ final class MLXModelManager: ObservableObject {
     private var appWillResignActiveCancellable: AnyCancellable?
     private var appDidEnterBackgroundCancellable: AnyCancellable?
     private var settingsDidChangeCancellable: AnyCancellable?
-    private var lastKnownRAMPrecautionsDisabled = UserDefaults.standard.bool(
-        forKey: AppSettingsKeys.disableRAMPrecautions
-    )
     private var compatibilityErrors: [String: String] = [:]
     private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
@@ -583,21 +580,24 @@ final class MLXModelManager: ObservableObject {
             }
         }
 
+        // `UserDefaults.didChangeNotification` fires on every defaults write in
+        // the process — including this manager's own prefill-tuning writes and
+        // each of the ~13 keys a settings save persists. Collapse the stream to
+        // actual transitions of the one flag before hopping to the main actor.
         settingsDidChangeCancellable = NotificationCenter.default.publisher(
             for: UserDefaults.didChangeNotification
         )
+        .map { _ in
+            UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
+        }
+        .prepend(UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions))
+        .removeDuplicates()
+        .dropFirst()
         .sink { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.handleRAMPrecautionsSettingChangeIfNeeded()
+                self?.refreshModelAvailability()
             }
         }
-    }
-
-    private func handleRAMPrecautionsSettingChangeIfNeeded() {
-        let disabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
-        guard disabled != lastKnownRAMPrecautionsDisabled else { return }
-        lastKnownRAMPrecautionsDisabled = disabled
-        refreshModelAvailability()
     }
 
     deinit {
@@ -1211,7 +1211,7 @@ final class MLXModelManager: ObservableObject {
                 }
                 print("MLX model loaded: \(model.displayName)")
                 self.logger.notice("MLX container load finished: id=\(model.id, privacy: .public)")
-                self.logger.notice("MLX mem[load.finished]: \(MLXMemoryDiagnostics.status(), privacy: .public)")
+                MLXMemoryDiagnostics.log(self.logger, "load.finished")
                 await MainActor.run {
                     self.logToolTemplateSupport(for: model)
                     self.schedulePrefillTuningIfNeeded(
@@ -1456,7 +1456,7 @@ final class MLXModelManager: ObservableObject {
         }
         prewarmInFlightModelID = model.id
         logger.notice("MLX prewarm start: id=\(model.id, privacy: .public) reason=\(reason, privacy: .public)")
-        logger.notice("MLX mem[prewarm.start]: \(MLXMemoryDiagnostics.status(), privacy: .public)")
+        MLXMemoryDiagnostics.log(logger, "prewarm.start")
         print("Pre-warming LM Metal shaders...")
         // Free every cached Metal buffer before shader compilation so the compilation
         // spike has the maximum possible headroom on top of the ~3 GB model weights.
@@ -1477,7 +1477,7 @@ final class MLXModelManager: ObservableObject {
             prewarmInFlightModelID = nil
             print("LM Metal shaders pre-warmed")
             logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
-            logger.notice("MLX mem[prewarm.finished]: \(MLXMemoryDiagnostics.status(), privacy: .public)")
+            MLXMemoryDiagnostics.log(logger, "prewarm.finished")
         } catch is CancellationError {
             cleanupMemoryAfterPrewarm()
             prewarmInFlightModelID = nil
@@ -1526,7 +1526,7 @@ final class MLXModelManager: ObservableObject {
         logger.notice(
             "MLX generation start: model=\(currentModel.localDirName, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public) messages=\(messages.count, privacy: .public) thinking=\(enableThinking, privacy: .public) memory_constrained=\(memoryConstrained, privacy: .public) tools=\(tools.count, privacy: .public) media=\(includesMedia, privacy: .public) cache_policy=\(generationConfiguration.cachePolicy.diagnosticLabel, privacy: .public) cache_compression=\(generationConfiguration.cacheCompression.diagnosticLabel, privacy: .public) max_kv=\(generationConfiguration.maxKVSize ?? -1, privacy: .public)"
         )
-        logger.notice("MLX mem[generation.start]: \(MLXMemoryDiagnostics.status(), privacy: .public)")
+        MLXMemoryDiagnostics.log(logger, "generation.start")
         let toolCallFormat = await container.configuration.toolCallFormat
         let suppressWrappedXMLToolMarkup =
             !tools.isEmpty &&

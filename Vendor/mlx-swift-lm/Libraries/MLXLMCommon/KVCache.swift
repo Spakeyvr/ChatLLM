@@ -3899,7 +3899,17 @@ public func canTrimPromptCache(_ cache: [KVCache]) -> Bool {
 @discardableResult
 public func trimPromptCache(_ cache: [KVCache], numTokens: Int) -> Int {
     guard canTrimPromptCache(cache), !cache.isEmpty else { return 0 }
-    return cache.map { $0.trim(numTokens) }.first ?? 0
+    // Every layer has to be trimmed, not just the first: leaving the rest at
+    // their old offsets desynchronizes the cache. Each layer clamps to its own
+    // offset, so the reported count is the first layer's, matching mlx-lm.
+    var trimmed = 0
+    for (index, layer) in cache.enumerated() {
+        let layerTrimmed = layer.trim(numTokens)
+        if index == 0 {
+            trimmed = layerTrimmed
+        }
+    }
+    return trimmed
 }
 
 // MARK: - Type Aliases
