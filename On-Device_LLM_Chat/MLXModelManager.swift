@@ -219,6 +219,10 @@ final class MLXModelManager: ObservableObject {
     private var memoryWarningCancellable: AnyCancellable?
     private var appWillResignActiveCancellable: AnyCancellable?
     private var appDidEnterBackgroundCancellable: AnyCancellable?
+    private var settingsDidChangeCancellable: AnyCancellable?
+    private var lastKnownRAMPrecautionsDisabled = UserDefaults.standard.bool(
+        forKey: AppSettingsKeys.disableRAMPrecautions
+    )
     private var compatibilityErrors: [String: String] = [:]
     private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
@@ -578,12 +582,29 @@ final class MLXModelManager: ObservableObject {
                 self?.handleApplicationInactivity(reason: "application.did_enter_background")
             }
         }
+
+        settingsDidChangeCancellable = NotificationCenter.default.publisher(
+            for: UserDefaults.didChangeNotification
+        )
+        .sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleRAMPrecautionsSettingChangeIfNeeded()
+            }
+        }
+    }
+
+    private func handleRAMPrecautionsSettingChangeIfNeeded() {
+        let disabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
+        guard disabled != lastKnownRAMPrecautionsDisabled else { return }
+        lastKnownRAMPrecautionsDisabled = disabled
+        refreshModelAvailability()
     }
 
     deinit {
         memoryWarningCancellable?.cancel()
         appWillResignActiveCancellable?.cancel()
         appDidEnterBackgroundCancellable?.cancel()
+        settingsDidChangeCancellable?.cancel()
     }
 
     func invalidateConversationSession(_ conversationID: UUID, reason: String) {

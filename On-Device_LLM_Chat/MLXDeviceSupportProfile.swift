@@ -15,20 +15,35 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
     @MainActor static var current: Self {
         Self(
             isPhone: UIDevice.current.userInterfaceIdiom == .phone,
-            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+            ramPrecautionsDisabledOverride: nil
         )
     }
 
     let isPhone: Bool
     let physicalMemoryBytes: UInt64
+    /// When nil the flag is read live from UserDefaults, so toggling the Dev
+    /// Settings option takes effect without recreating long-lived holders of
+    /// this profile (e.g. MLXModelManager).
+    let ramPrecautionsDisabledOverride: Bool?
 
-    init(isPhone: Bool, physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory) {
+    init(
+        isPhone: Bool,
+        physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory,
+        ramPrecautionsDisabledOverride: Bool? = false
+    ) {
         self.isPhone = isPhone
         self.physicalMemoryBytes = physicalMemoryBytes
+        self.ramPrecautionsDisabledOverride = ramPrecautionsDisabledOverride
+    }
+
+    var ramPrecautionsDisabled: Bool {
+        ramPrecautionsDisabledOverride
+            ?? UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
     }
 
     func supportsModel(_ model: MLXModelManager.MLXModelInfo) -> Bool {
-        guard isPhone, let minimumBytes = model.minimumPhoneMemoryBytes else {
+        guard isPhone, let minimumBytes = model.minimumPhoneMemoryBytes, !ramPrecautionsDisabled else {
             return true
         }
         return normalizedMemoryBytes >= minimumBytes
@@ -38,7 +53,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
         guard supportsModel(model) else {
             return false
         }
-        guard isPhone, let minimumBytes = model.minimumPhoneMemoryForToolCallsBytes else {
+        guard isPhone, let minimumBytes = model.minimumPhoneMemoryForToolCallsBytes, !ramPrecautionsDisabled else {
             return true
         }
         return normalizedMemoryBytes >= minimumBytes
@@ -46,6 +61,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
 
     func availabilityIssue(for model: MLXModelManager.MLXModelInfo) -> String? {
         guard isPhone,
+              !ramPrecautionsDisabled,
               let minimumBytes = model.minimumPhoneMemoryBytes,
               normalizedMemoryBytes < minimumBytes else {
             return nil
@@ -56,6 +72,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
     func toolCallIssue(for model: MLXModelManager.MLXModelInfo) -> String? {
         guard supportsModel(model),
               isPhone,
+              !ramPrecautionsDisabled,
               let minimumBytes = model.minimumPhoneMemoryForToolCallsBytes,
               normalizedMemoryBytes < minimumBytes else {
             return nil

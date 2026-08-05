@@ -16,6 +16,7 @@ enum AppSettingsKeys {
     static let autoDeleteOldChats = "autoDeleteOldChats"
     static let autoDeleteDays = "autoDeleteDays"
     static let developerModeEnabled = "developerModeEnabled"
+    static let disableRAMPrecautions = "disableRAMPrecautions"
     static let visionConfidenceThreshold = "visionConfidenceThreshold"
     static let disableToolCalls = "disableToolCalls"
 }
@@ -37,6 +38,7 @@ struct AppSettingsDraft: Equatable {
     var autoDeleteOldChats: Bool
     var autoDeleteDays: Int
     var developerModeEnabled: Bool
+    var disableRAMPrecautions: Bool
     var visionConfidenceThreshold: Double
     var disableToolCalls: Bool
 
@@ -64,6 +66,7 @@ struct AppSettingsDraft: Equatable {
             autoDeleteOldChats: defaults.bool(forKey: AppSettingsKeys.autoDeleteOldChats),
             autoDeleteDays: defaults.object(forKey: AppSettingsKeys.autoDeleteDays) as? Int ?? 30,
             developerModeEnabled: defaults.bool(forKey: AppSettingsKeys.developerModeEnabled),
+            disableRAMPrecautions: defaults.bool(forKey: AppSettingsKeys.disableRAMPrecautions),
             visionConfidenceThreshold: defaults.object(forKey: AppSettingsKeys.visionConfidenceThreshold) as? Double ?? 0.5,
             disableToolCalls: defaults.bool(forKey: AppSettingsKeys.disableToolCalls)
         )
@@ -87,6 +90,7 @@ struct AppSettingsDraft: Equatable {
             autoDeleteOldChats: false,
             autoDeleteDays: 30,
             developerModeEnabled: false,
+            disableRAMPrecautions: false,
             visionConfidenceThreshold: 0.5,
             disableToolCalls: false
         )
@@ -112,6 +116,7 @@ struct AppSettingsDraft: Equatable {
         defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
         defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)
         defaults.set(developerModeEnabled, forKey: AppSettingsKeys.developerModeEnabled)
+        defaults.set(disableRAMPrecautions, forKey: AppSettingsKeys.disableRAMPrecautions)
         defaults.set(visionConfidenceThreshold, forKey: AppSettingsKeys.visionConfidenceThreshold)
         defaults.disableToolCalls = disableToolCalls
 

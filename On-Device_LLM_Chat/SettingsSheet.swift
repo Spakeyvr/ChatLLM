@@ -37,6 +37,7 @@ struct SettingsSheet: View {
     }
 
     @State var pendingAction: PendingAction?
+    @State private var showingRAMPrecautionsWarning = false
 
     private let builtInPresets: [SystemPromptPreset] = [
         .init(name: String(localized: "Helpful assistant"),
@@ -130,16 +131,11 @@ struct SettingsSheet: View {
                     }
                     .accessibilityHint(Self.mlxRotorQuantAccessibilityHint)
 
-                    Toggle(isOn: $settings.developerModeEnabled) {
-                        HStack(spacing: 6) {
-                            Text(String(localized: "Developer Mode"))
-                            InfoButton(
-                                title: String(localized: "Developer Mode"),
-                                message: String(localized: "Shows an extra developer action under assistant messages with raw output and generation diagnostics.")
-                            )
-                        }
+                    NavigationLink {
+                        devSettingsView
+                    } label: {
+                        Text(String(localized: "Dev Settings"))
                     }
-                    .accessibilityHint(String(localized: "Shows raw output and generation diagnostics for assistant messages."))
                 }
 
                 Section(
@@ -472,6 +468,57 @@ struct SettingsSheet: View {
         }
         .navigationTitle(String(localized: "Context and tokens"))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var devSettingsView: some View {
+        let ramPrecautionsBinding = Binding<Bool>(
+            get: { settings.disableRAMPrecautions },
+            set: { newValue in
+                if newValue {
+                    showingRAMPrecautionsWarning = true
+                } else {
+                    settings.disableRAMPrecautions = false
+                }
+            }
+        )
+
+        return Form {
+            Section(
+                footer: Text(String(localized: "Disabling RAM precautions can cause crashes or severe slowdowns when a model needs more memory than the device has."))
+            ) {
+                Toggle(isOn: $settings.developerModeEnabled) {
+                    HStack(spacing: 6) {
+                        Text(String(localized: "Show Output Stats"))
+                        InfoButton(
+                            title: String(localized: "Show Output Stats"),
+                            message: String(localized: "Shows an extra developer action under assistant messages with raw output and generation diagnostics.")
+                        )
+                    }
+                }
+                .accessibilityHint(String(localized: "Shows raw output and generation diagnostics for assistant messages."))
+
+                Toggle(isOn: ramPrecautionsBinding) {
+                    HStack(spacing: 6) {
+                        Text(String(localized: "Disable RAM Precautions"))
+                        InfoButton(
+                            title: String(localized: "Disable RAM Precautions"),
+                            message: String(localized: "Removes the RAM-based restrictions that block certain models and tool calls on lower-memory devices. Models may crash or run very slowly if the device runs out of memory.")
+                        )
+                    }
+                }
+                .accessibilityHint(String(localized: "Removes RAM-based restrictions on models and tool calls. May cause crashes on low-memory devices."))
+            }
+        }
+        .navigationTitle(String(localized: "Dev Settings"))
+        .navigationBarTitleDisplayMode(.inline)
+        .alert(String(localized: "Disable RAM Precautions?"), isPresented: $showingRAMPrecautionsWarning) {
+            Button(String(localized: "Disable"), role: .destructive) {
+                settings.disableRAMPrecautions = true
+            }
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "These restrictions exist because models that need more RAM than your device has can crash the app or make it extremely slow. Only disable them if you know what you are doing."))
+        }
     }
 
     @ViewBuilder
