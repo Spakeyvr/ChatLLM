@@ -16,6 +16,24 @@ import MLXVLM
 import Tokenizers
 import OSLog
 import UIKit
+import os
+
+/// Formats the process's remaining jetsam budget alongside MLX allocator
+/// stats. `os_proc_available_memory` reports how many bytes the app can
+/// still allocate before iOS terminates it, which is the number that
+/// actually matters when chasing out-of-memory kills.
+nonisolated enum MLXMemoryDiagnostics {
+    static func status() -> String {
+        let headroomMB = Double(os_proc_available_memory()) / 1_048_576
+        let activeMB = Double(Memory.activeMemory) / 1_048_576
+        let cacheMB = Double(Memory.cacheMemory) / 1_048_576
+        let peakMB = Double(Memory.peakMemory) / 1_048_576
+        return String(
+            format: "headroom=%.0fMB mlx_active=%.0fMB mlx_cache=%.0fMB mlx_peak=%.0fMB",
+            headroomMB, activeMB, cacheMB, peakMB
+        )
+    }
+}
 
 nonisolated struct MLXVisibleMessageSignature: Equatable, Sendable {
     let role: Chat.Message.Role
@@ -274,8 +292,16 @@ actor MLXInferenceWorker {
         )
 
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
+        self.logger.notice(
+            "MLX mem[generate.entry]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
+        )
         let iterateStream = {
+            var streamIteration = 0
             while true {
+                streamIteration += 1
+                self.logger.notice(
+                    "MLX mem[prefill.start] iteration=\(streamIteration, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
+                )
                 let session: ChatSession
                 if let reusableSession {
                     session = reusableSession
@@ -296,6 +322,7 @@ actor MLXInferenceWorker {
                     : nil
                 var completionInfo: GenerateCompletionInfo?
                 var emittedToolCall: MLXToolCall?
+                var chunkEventCount = 0
 
                 for try await generation in session.streamDetails(
                     to: activePromptContent,
@@ -310,6 +337,15 @@ actor MLXInferenceWorker {
                     case .chunk(let text):
                         if firstTokenAt == nil {
                             firstTokenAt = Date()
+                            self.logger.notice(
+                                "MLX mem[first-token]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
+                            )
+                        }
+                        chunkEventCount += 1
+                        if chunkEventCount % 128 == 0 {
+                            self.logger.notice(
+                                "MLX mem[decode] chunks=\(chunkEventCount, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
+                            )
                         }
                         if let outputFilter {
                             if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
@@ -322,6 +358,9 @@ actor MLXInferenceWorker {
                         }
                     case .toolCall(let toolCall):
                         emittedToolCall = toolCall
+                        self.logger.notice(
+                            "MLX mem[tool-call.emitted]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
+                        )
                         onToolCall(toolCall)
                         if let outputFilter {
                             await outputFilter.didDispatchToolCall()
@@ -377,6 +416,9 @@ actor MLXInferenceWorker {
 
                     self.logger.notice("MLX dispatching tool call: name=\(emittedToolCall.function.name, privacy: .public)")
                     toolResult = try await toolDispatch(emittedToolCall)
+                    self.logger.notice(
+                        "MLX mem[tool.dispatched] result_chars=\(toolResult.count, privacy: .public): \(MLXMemoryDiagnostics.status(), privacy: .public)"
+                    )
                     if MLXModelManager.shouldDisableTools(after: toolResult) {
                         self.logger.notice("MLX disabling tools for remainder of response after search limit was reached")
                         activeTools = []
@@ -424,6 +466,9 @@ actor MLXInferenceWorker {
         }
 
         let finishedAt = Date()
+        logger.notice(
+            "MLX mem[generate.end]: \(MLXMemoryDiagnostics.status(), privacy: .public)"
+        )
         let memoryAfter = Memory.snapshot()
         let toolInvocationCount = await toolInvocationState.currentCount()
         let performanceSample = MLXPerformanceSample(

@@ -25,7 +25,146 @@ private func computeGatedDeltaG(_ aLog: MLXArray, _ a: MLXArray, _ dtBias: MLXAr
     return decay.asType(a.dtype)
 }
 
-private func gatedDeltaStepOps(
+// Fused Metal kernel for the gated delta recurrence, ported from mlx-lm's
+// `gated_delta.py` (scalar-gating variants). The per-token ops loop below
+// builds ~10 lazy-graph nodes per token per layer; over a multi-hundred-token
+// prefill across 27 linear-attention layers that graph plus its Metal
+// encoding state costs hundreds of MB of process memory that MLX's array
+// accounting never sees. The kernel walks the whole sequence in one dispatch
+// with the recurrent state held in registers, using float accumulation like
+// the reference implementation.
+private func gatedDeltaKernelSource(hasMask: Bool) -> String {
+    let maskSource = hasMask ? "mask[b_idx * T + t]" : "true"
+    return """
+        auto n = thread_position_in_grid.z;
+        auto b_idx = n / Hv;
+        auto hv_idx = n % Hv;
+        auto hk_idx = hv_idx / (Hv / Hk);
+        constexpr int n_per_t = Dk / 32;
+
+        // q, k: [B, T, Hk, Dk]
+        auto q_ = q + b_idx * T * Hk * Dk + hk_idx * Dk;
+        auto k_ = k + b_idx * T * Hk * Dk + hk_idx * Dk;
+
+        // v, y: [B, T, Hv, Dv]
+        auto v_ = v + b_idx * T * Hv * Dv + hv_idx * Dv;
+        y += b_idx * T * Hv * Dv + hv_idx * Dv;
+
+        auto dk_idx = thread_position_in_threadgroup.x;
+        auto dv_idx = thread_position_in_grid.y;
+
+        // state_in, state_out: [B, Hv, Dv, Dk]
+        auto i_state = state_in + (n * Dv + dv_idx) * Dk;
+        auto o_state = state_out + (n * Dv + dv_idx) * Dk;
+
+        float state[n_per_t];
+        for (int i = 0; i < n_per_t; ++i) {
+          auto s_idx = n_per_t * dk_idx + i;
+          state[i] = static_cast<float>(i_state[s_idx]);
+        }
+
+        // g: [B, T, Hv]
+        auto g_ = g + b_idx * T * Hv;
+        auto beta_ = beta + b_idx * T * Hv;
+
+        for (int t = 0; t < T; ++t) {
+          if (\(maskSource)) {
+            float kv_mem = 0.0f;
+            for (int i = 0; i < n_per_t; ++i) {
+              auto s_idx = n_per_t * dk_idx + i;
+              state[i] = state[i] * g_[hv_idx];
+              kv_mem += state[i] * k_[s_idx];
+            }
+            kv_mem = simd_sum(kv_mem);
+
+            auto delta = (v_[dv_idx] - kv_mem) * beta_[hv_idx];
+
+            float out = 0.0f;
+            for (int i = 0; i < n_per_t; ++i) {
+              auto s_idx = n_per_t * dk_idx + i;
+              state[i] = state[i] + k_[s_idx] * delta;
+              out += state[i] * q_[s_idx];
+            }
+            out = simd_sum(out);
+            if (thread_index_in_simdgroup == 0) {
+              y[dv_idx] = static_cast<InT>(out);
+            }
+          } else {
+            y[dv_idx] = static_cast<InT>(0);
+          }
+          // Increment data pointers to next time step
+          q_ += Hk * Dk;
+          k_ += Hk * Dk;
+          v_ += Hv * Dv;
+          y += Hv * Dv;
+          g_ += Hv;
+          beta_ += Hv;
+        }
+        for (int i = 0; i < n_per_t; ++i) {
+          auto s_idx = n_per_t * dk_idx + i;
+          o_state[s_idx] = static_cast<StT>(state[i]);
+        }
+        """
+}
+
+private let gatedDeltaFusedKernel = MLXFast.metalKernel(
+    name: "qwen35_gated_delta_step",
+    inputNames: ["q", "k", "v", "g", "beta", "state_in", "T"],
+    outputNames: ["y", "state_out"],
+    source: gatedDeltaKernelSource(hasMask: false)
+)
+
+private let gatedDeltaFusedKernelMasked = MLXFast.metalKernel(
+    name: "qwen35_gated_delta_step_mask",
+    inputNames: ["q", "k", "v", "g", "beta", "state_in", "T", "mask"],
+    outputNames: ["y", "state_out"],
+    source: gatedDeltaKernelSource(hasMask: true)
+)
+
+func gatedDeltaKernelApply(
+    q: MLXArray,
+    k: MLXArray,
+    v: MLXArray,
+    g: MLXArray,
+    beta: MLXArray,
+    state: MLXArray,
+    mask: MLXArray?
+) -> (MLXArray, MLXArray) {
+    let B = k.dim(0)
+    let T = k.dim(1)
+    let Hk = k.dim(2)
+    let Dk = k.dim(3)
+    let Hv = v.dim(2)
+    let Dv = v.dim(3)
+
+    var inputs: [any ScalarOrArray] = [q, k, v, g, beta, state, MLXArray(Int32(T))]
+    let kernel: MLXFast.MLXFastKernel
+    if let mask {
+        inputs.append(mask)
+        kernel = gatedDeltaFusedKernelMasked
+    } else {
+        kernel = gatedDeltaFusedKernel
+    }
+
+    let outputs = kernel(
+        inputs,
+        template: [
+            ("InT", q.dtype),
+            ("StT", state.dtype),
+            ("Dk", Dk),
+            ("Dv", Dv),
+            ("Hk", Hk),
+            ("Hv", Hv),
+        ],
+        grid: (32, Dv, B * Hv),
+        threadGroup: (32, 4, 1),
+        outputShapes: [[B, T, Hv, Dv], state.shape],
+        outputDTypes: [q.dtype, state.dtype]
+    )
+    return (outputs[0], outputs[1])
+}
+
+func gatedDeltaStepOps(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -67,7 +206,7 @@ private func gatedDeltaStepOps(
     return (y, state)
 }
 
-private func gatedDeltaOps(
+func gatedDeltaOps(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -122,7 +261,7 @@ private func gatedDeltaOps(
     return (y, state)
 }
 
-private func gatedDeltaUpdate(
+func gatedDeltaUpdate(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -142,6 +281,13 @@ private func gatedDeltaUpdate(
     let Dv = v.dim(3)
 
     let state = state ?? MLXArray.zeros([B, Hv, Dv, Dk], dtype: q.dtype)
+
+    // The fused kernel covers scalar gating ([B, T, Hv]) with an optional
+    // [B, T] mask, and needs Dk to split evenly across a 32-lane simdgroup.
+    if g.ndim == 3, Dk % 32 == 0, mask == nil || mask?.ndim == 2 {
+        return gatedDeltaKernelApply(
+            q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)
+    }
     return gatedDeltaOps(q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)
 }
 
@@ -919,7 +1065,8 @@ enum Qwen35Language {
             positionIds providedPositionIds: MLXArray? = nil,
             pixelValues: MLXArray? = nil,
             imageGridTHW: [THW]? = nil,
-            videoGridTHW: [THW]? = nil
+            videoGridTHW: [THW]? = nil,
+            lastLogitsOnly: Bool = false
         ) -> LMOutput {
             if pixelValues != nil {
                 precomputedPositionIds = nil
@@ -993,6 +1140,13 @@ enum Qwen35Language {
                 cache: cache,
                 positionIds: positionIds
             )
+
+            // Projecting every position through lm_head materializes a
+            // [B, S, vocab] array; the token samplers only read the final
+            // position, so callers that know that can keep it [B, 1, vocab].
+            if lastLogitsOnly && out.dim(1) > 1 {
+                out = out[0..., (-1)..., 0...]
+            }
 
             if let lmHead {
                 out = lmHead(out)
@@ -1101,7 +1255,7 @@ public class Qwen35: Module, VLMModel {
     public func prepare(
         _ input: LMInput,
         cache: [any KVCache],
-        windowSize _: Int?
+        windowSize: Int?
     ) throws -> PrepareResult {
         let inputIds = input.text.tokens
 
@@ -1144,6 +1298,57 @@ public class Qwen35: Module, VLMModel {
             inputEmbeddings = mergedEmbeds
         } else {
             languageModel.resetPositionState()
+
+            // Text-only prompts are prefilled in windowed chunks. A single
+            // full-length forward pass materializes attention weights and
+            // per-position logits for the whole prompt at once, which spikes
+            // peak memory with long prompts (tool definitions, tool results,
+            // rehydrated histories). Vision turns keep the single pass because
+            // M-RoPE position indexing needs the full sequence.
+            //
+            // Positions are supplied explicitly so every chunk matches what
+            // `getRopeIndex` produces for the whole segment in the single-pass
+            // path: text-only positions count 0..<N across the new segment on
+            // all three M-RoPE axes, with zero rope deltas for decode.
+            if let windowSize, inputIds.ndim == 2, inputIds.dim(-1) > windowSize {
+                let typedCache = castCache(cache)
+                let batchSize = inputIds.dim(0)
+                var remaining = input.text
+                var segmentOffset = 0
+                while remaining.tokens.dim(-1) > 0 {
+                    let chunkLength = min(windowSize, remaining.tokens.dim(-1))
+                    let chunk = remaining[.ellipsis, ..<chunkLength]
+                    let chunkPositions = broadcast(
+                        MLXArray(
+                            Int32(segmentOffset) ..< Int32(segmentOffset + chunkLength)
+                        )[.newAxis, .newAxis, 0...],
+                        to: [3, batchSize, chunkLength]
+                    )
+                    let isLastChunk = remaining.tokens.dim(-1) <= windowSize
+                    let output = languageModel(
+                        chunk.tokens,
+                        inputsEmbeds: nil,
+                        cache: typedCache,
+                        mask: chunk.mask,
+                        positionIds: chunkPositions,
+                        pixelValues: nil,
+                        imageGridTHW: nil,
+                        videoGridTHW: nil,
+                        lastLogitsOnly: true
+                    )
+                    if isLastChunk {
+                        // Decode steps derive their positions from the cache
+                        // offset plus these deltas, mirroring what
+                        // `getRopeIndex` reports for text-only sequences.
+                        languageModel.ropeDeltas = MLXArray.zeros(
+                            [batchSize], dtype: .int32)
+                        return .logits(output)
+                    }
+                    eval(cache)
+                    segmentOffset += chunkLength
+                    remaining = remaining[.ellipsis, chunkLength...]
+                }
+            }
         }
 
         let typedCache = castCache(cache)
@@ -1155,7 +1360,8 @@ public class Qwen35: Module, VLMModel {
             positionIds: nil,
             pixelValues: pixelValues,
             imageGridTHW: imageFrames,
-            videoGridTHW: videoFrames
+            videoGridTHW: videoFrames,
+            lastLogitsOnly: true
         )
 
         return .logits(output)
@@ -1171,7 +1377,8 @@ public class Qwen35: Module, VLMModel {
             positionIds: nil,
             pixelValues: nil,
             imageGridTHW: nil,
-            videoGridTHW: nil
+            videoGridTHW: nil,
+            lastLogitsOnly: true
         )
         return result.logits
     }
