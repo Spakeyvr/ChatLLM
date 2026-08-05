@@ -11,7 +11,6 @@ struct ModelSelectionView: View {
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showingModelInfo = false
     @State private var selectedModelForInfo: MLXModelManager.MLXModelInfo?
 
     private var modelManager: MLXModelManager? { modelBackendBridge.modelManager }
@@ -43,10 +42,8 @@ struct ModelSelectionView: View {
                         Text(error)
                     }
                 }
-                .sheet(isPresented: $showingModelInfo) {
-                    if let model = selectedModelForInfo {
-                        ModelInfoSheet(model: model)
-                    }
+                .sheet(item: $selectedModelForInfo) { model in
+                    ModelInfoSheet(model: model)
                 }
         }
     }
@@ -71,7 +68,6 @@ struct ModelSelectionView: View {
             modelManager: modelManager
         ) {
             selectedModelForInfo = model
-            showingModelInfo = true
         } onDelete: {
             deleteModel(model)
         }
