@@ -465,10 +465,6 @@ struct ContentView: View {
 
                                 ConversationRow(conversation: convo)
                                     .contentShape(Rectangle())
-                                    .overlay(alignment: .bottom) {
-                                        Divider()
-                                            .padding(.leading, 12)
-                                    }
                                     .onTapGesture {
                                         AppHaptics.selectionChanged()
                                         selection = convo
