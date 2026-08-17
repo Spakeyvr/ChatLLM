@@ -286,7 +286,7 @@ final class MLXModelManager: ObservableObject {
             supportsNativeImages: true,
             requiredProcessorClass: "Qwen3VLProcessor",
             minimumPhoneMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte,
-            minimumPhoneMemoryForToolCallsBytes: 12 * MLXDeviceSupportProfile.gibibyte
+            minimumPhoneMemoryForToolCallsBytes: 8 * MLXDeviceSupportProfile.gibibyte
         ),
         MLXModelInfo(
             id: "qwen3.5-2b-4bit",

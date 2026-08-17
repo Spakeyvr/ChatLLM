@@ -532,7 +532,7 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.availabilityIssue(for: model)?.contains("8 GB") == true)
     }
 
-    @Test func qwen4BToolCallsRequireTwelveGigabytesOnIPhone() {
+    @Test func qwen4BEnablesToolCallsAtEightGigabytesOnIPhone() {
         let profile = MLXDeviceSupportProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
@@ -541,8 +541,8 @@ struct On_Device_LLM_ChatTests {
         let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(model))
-        #expect(!manager.supportsToolCalls(for: model))
-        #expect(manager.toolCallIssue(for: model)?.contains("12 GB") == true)
+        #expect(manager.supportsToolCalls(for: model))
+        #expect(manager.toolCallIssue(for: model) == nil)
     }
 
     @Test func qwen2BAllowsSixGigabyteIPhonesButBlocksToolCalls() {
@@ -631,7 +631,7 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.supportsModel(twoBModel))
         #expect(manager.supportsToolCalls(for: twoBModel))
         #expect(profile.supportsModel(fourBModel))
-        #expect(!manager.supportsToolCalls(for: fourBModel))
+        #expect(manager.supportsToolCalls(for: fourBModel))
     }
 
     @Test func twelveGigabyteTierDisablesLowMemoryKVFallbackAfterNormalization() {
