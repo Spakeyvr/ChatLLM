@@ -33,7 +33,7 @@ Notes:
 
 - The project deployment target is `iOS 26.0`.
 - `FoundationModels` requires device support for Apple Intelligence.
-- MLX model downloads and multimodal execution are intended for physical devices, not just the simulator.
+- MLX model downloads and execution are supported on Apple-silicon iPhone and iPad simulators as well as physical devices. A physical device is still recommended for representative memory and performance testing.
 
 ## Included MLX Models
 

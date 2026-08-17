@@ -99,6 +99,7 @@ nonisolated struct MLXSessionKey: Hashable, Sendable {
 }
 
 nonisolated struct MLXLoadedModelState: @unchecked Sendable {
+    let loadID: UUID
     let container: ModelContainer
     let model: MLXModelManager.MLXModelInfo
     let wiredMemoryPolicy: MLXLMCommon.WiredSumPolicy
@@ -125,6 +126,12 @@ nonisolated struct MLXInferenceRequest: @unchecked Sendable {
 nonisolated struct MLXInferenceResponse: Sendable {
     let toolInvocationCount: Int
     let performanceSample: MLXPerformanceSample
+}
+
+nonisolated enum MLXPersistentSessionReleaseScope: Equatable, Sendable {
+    case none
+    case conversation
+    case all
 }
 
 actor MLXInferenceWorker {
@@ -165,9 +172,13 @@ actor MLXInferenceWorker {
         _ = deviceSupportProfile
     }
 
-    func setLoadedModel(_ state: MLXLoadedModelState) {
+    func setLoadedModel(_ state: MLXLoadedModelState) async {
+        let previousReservationTicket = loadedModel?.reservationTicket
         loadedModel = state
         sessions.removeAll()
+        if let previousReservationTicket {
+            _ = await previousReservationTicket.end()
+        }
     }
 
     func updateLoadedModelTuning(
@@ -190,12 +201,18 @@ actor MLXInferenceWorker {
         return loadedModel.prefillStepSize
     }
 
-    func clearLoadedModel() async {
-        if let reservationTicket = loadedModel?.reservationTicket {
-            _ = await reservationTicket.end()
+    @discardableResult
+    func clearLoadedModel(ifLoadID expectedLoadID: UUID? = nil) async -> Bool {
+        if let expectedLoadID, loadedModel?.loadID != expectedLoadID {
+            return false
         }
+        let reservationTicket = loadedModel?.reservationTicket
         loadedModel = nil
         sessions.removeAll()
+        if let reservationTicket {
+            _ = await reservationTicket.end()
+        }
+        return true
     }
 
     func invalidateConversation(_ conversationID: UUID, reason: String) {
@@ -235,6 +252,16 @@ actor MLXInferenceWorker {
         let usesExplicitMessageHistory =
             !request.tools.isEmpty &&
             MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: loadedModel.model)
+
+        let persistentSessionReleaseScope = Self.persistentSessionReleaseScope(
+            usesExplicitMessageHistory: usesExplicitMessageHistory,
+            maxKVSize: request.params.maxKVSize
+        )
+        try await releasePersistentSessions(
+            scope: persistentSessionReleaseScope,
+            conversationID: request.conversationID,
+            expectedLoadID: loadedModel.loadID
+        )
 
         let reusableSession: ChatSession?
         if usesExplicitMessageHistory {
@@ -404,10 +431,25 @@ actor MLXInferenceWorker {
                 }
 
                 guard let emittedToolCall else {
+                    if reusableSession == nil {
+                        await session.synchronize()
+                        await session.clear()
+                        Memory.clearCache()
+                        MLXMemoryDiagnostics.log(
+                            self.logger, "disposable-session.cleared",
+                            "iteration=\(streamIteration) reason=response-complete")
+                    }
                     break
                 }
 
                 await session.synchronize()
+                if reusableSession == nil {
+                    await session.clear()
+                    Memory.clearCache()
+                    MLXMemoryDiagnostics.log(
+                        self.logger, "disposable-session.cleared",
+                        "iteration=\(streamIteration) reason=tool-call")
+                }
 
                 let invocationCount = await toolInvocationState.increment()
                 let toolResult: String
@@ -471,6 +513,9 @@ actor MLXInferenceWorker {
             }
         } catch {
             sessions.removeValue(forKey: request.sessionKey)
+            if reusableSession == nil {
+                Memory.clearCache()
+            }
             throw error
         }
 
@@ -538,6 +583,49 @@ actor MLXInferenceWorker {
             size: size,
             policy: loadedModel.wiredMemoryPolicy,
             kind: .active
+        )
+    }
+
+    nonisolated static func persistentSessionReleaseScope(
+        usesExplicitMessageHistory: Bool,
+        maxKVSize: Int?
+    ) -> MLXPersistentSessionReleaseScope {
+        guard usesExplicitMessageHistory else { return .none }
+        return maxKVSize == nil ? .conversation : .all
+    }
+
+    private func releasePersistentSessions(
+        scope: MLXPersistentSessionReleaseScope,
+        conversationID: UUID,
+        expectedLoadID: UUID
+    ) async throws {
+        let keysToRemove: [MLXSessionKey]
+        switch scope {
+        case .none:
+            return
+        case .conversation:
+            keysToRemove = sessions.keys.filter { $0.conversationID == conversationID }
+        case .all:
+            keysToRemove = Array(sessions.keys)
+        }
+
+        let discardedSessions = keysToRemove.compactMap { key -> ChatSession? in
+            sessions.removeValue(forKey: key)?.session
+        }
+        for session in discardedSessions {
+            await session.clear()
+        }
+
+        guard loadedModel?.loadID == expectedLoadID else {
+            throw MLXModelManager.GenerationError.modelNotLoaded
+        }
+
+        // MLX retains freed buffers in its allocator cache. Releasing them here
+        // prevents a fresh full-history tool prefill from overlapping old KV
+        // allocations on memory-constrained devices.
+        Memory.clearCache()
+        logger.notice(
+            "MLX released persistent sessions before explicit tool loop: scope=\(String(describing: scope), privacy: .public) count=\(discardedSessions.count, privacy: .public) conversation=\(conversationID.uuidString, privacy: .public)"
         )
     }
 

@@ -104,15 +104,6 @@ final class MLXModelManager: ObservableObject {
                 }
             }
 
-            var simulatorUnsupportedReason: String? {
-                switch self {
-                case .standard:
-                    return nil
-                case .qwenMultimodal:
-                    return "Qwen multimodal MLX loading is unavailable on the simulator because the upstream MLX/Metal VLM initialization path crashes during load."
-                }
-            }
-
             var defersAutomaticPrewarm: Bool {
                 switch self {
                 case .standard:
@@ -225,6 +216,7 @@ final class MLXModelManager: ObservableObject {
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
     private var promptTokenCountCache: [PromptTokenCountCacheKey: Int] = [:]
     private var activeLoadID: UUID?
+    private var installedWorkerLoadID: UUID?
     private var deferredPrewarmModelID: String?
     private var deferredTuningModelID: String?
     private var prewarmInFlightModelID: String?
@@ -449,30 +441,11 @@ final class MLXModelManager: ObservableObject {
         }
 
         guard hasConfig else {
-            #if targetEnvironment(simulator)
-            if let simulatorUnsupportedReason = info.loadPolicy.simulatorUnsupportedReason {
-                return ModelInstallationStatus(
-                    isInstalled: false,
-                    isCompatible: false,
-                    compatibilityError: simulatorUnsupportedReason
-                )
-            }
-            #endif
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
         guard hasWeights else {
             return ModelInstallationStatus(isInstalled: false, isCompatible: false, compatibilityError: nil)
         }
-
-        #if targetEnvironment(simulator)
-        if let simulatorUnsupportedReason = info.loadPolicy.simulatorUnsupportedReason {
-            return ModelInstallationStatus(
-                isInstalled: true,
-                isCompatible: false,
-                compatibilityError: simulatorUnsupportedReason
-            )
-        }
-        #endif
 
         guard info.supportsNativeImages else {
             return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
@@ -537,6 +510,7 @@ final class MLXModelManager: ObservableObject {
     // MARK: - Init
 
     init(deviceSupportProfile: MLXDeviceSupportProfile? = nil) {
+        MLXRuntimeConfiguration.configureForCurrentProcess()
         self.deviceSupportProfile = deviceSupportProfile ?? MLXDeviceSupportProfile.current
         self.inferenceWorker = MLXInferenceWorker(
             subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
@@ -1036,6 +1010,23 @@ final class MLXModelManager: ObservableObject {
         logger.notice("MLX paused deferred tuning: reason=\(reason, privacy: .public)")
     }
 
+    private func cancelDeferredTuningBeforeGeneration(for model: MLXModelInfo) async {
+        guard let activeTuningTask = tuningTask else { return }
+
+        activeTuningTask.cancel()
+        await activeTuningTask.value
+        tuningTask = nil
+
+        if currentModel?.id == model.id,
+           tuningNeedsRetry(for: model),
+           !hasSeenMemoryWarningSinceCurrentLoad {
+            deferredTuningModelID = model.id
+        }
+        logger.notice(
+            "MLX deferred tuning stopped before user generation: id=\(model.id, privacy: .public)"
+        )
+    }
+
     // MARK: - Loading
 
     func startLoading(modelID: String? = nil, source: String = "unknown") {
@@ -1071,10 +1062,16 @@ final class MLXModelManager: ObservableObject {
             )
         }
 
+        let replacingWorkerLoadID = installedWorkerLoadID
         cancelCurrentLoad(reason: "superseded by \(model.id)", tearDownModel: false)
-        tearDownCurrentModel(reason: "preparing to load \(model.id)")
+        tearDownCurrentModel(reason: "preparing to load \(model.id)", clearInferenceWorker: false)
         activeLoadID = loadID
-        load(model, loadID: loadID, source: source)
+        load(
+            model,
+            loadID: loadID,
+            replacingWorkerLoadID: replacingWorkerLoadID,
+            source: source
+        )
     }
 
     func model(withID id: String) -> MLXModelInfo? {
@@ -1120,7 +1117,12 @@ final class MLXModelManager: ObservableObject {
         startLoading(modelID: model.id, source: "manager.cancelAndLoad")
     }
 
-    private func load(_ model: MLXModelInfo, loadID: UUID, source: String) {
+    private func load(
+        _ model: MLXModelInfo,
+        loadID: UUID,
+        replacingWorkerLoadID: UUID?,
+        source: String
+    ) {
         guard model.isAvailable, let modelURL = modelDirectoryURL(for: model) else {
             activeLoadID = nil
             isLoading = false
@@ -1146,7 +1148,11 @@ final class MLXModelManager: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                await self.inferenceWorker.clearLoadedModel()
+                if let replacingWorkerLoadID {
+                    _ = await self.inferenceWorker.clearLoadedModel(
+                        ifLoadID: replacingWorkerLoadID
+                    )
+                }
                 await MainActor.run {
                     self.prepareMemoryForModelLoadTransition()
                 }
@@ -1169,6 +1175,7 @@ final class MLXModelManager: ObservableObject {
                 )
                 await self.inferenceWorker.setLoadedModel(
                     MLXLoadedModelState(
+                        loadID: loadID,
                         container: loaded,
                         model: model,
                         wiredMemoryPolicy: wiredMemoryPolicy,
@@ -1180,6 +1187,7 @@ final class MLXModelManager: ObservableObject {
                     )
                 )
                 guard !Task.isCancelled else {
+                    _ = await self.inferenceWorker.clearLoadedModel(ifLoadID: loadID)
                     await MainActor.run {
                         if self.activeLoadID == loadID {
                             self.isLoading = false
@@ -1193,7 +1201,7 @@ final class MLXModelManager: ObservableObject {
                 }
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded: stale load id=\(model.id, privacy: .public)")
-                    await self.inferenceWorker.clearLoadedModel()
+                    _ = await self.inferenceWorker.clearLoadedModel(ifLoadID: loadID)
                     await MainActor.run {
                         self.cleanupMemoryAfterLoadInterruption()
                     }
@@ -1202,6 +1210,7 @@ final class MLXModelManager: ObservableObject {
                 await MainActor.run {
                     self.container = loaded
                     self.currentModel = model
+                    self.installedWorkerLoadID = loadID
                     self.isLoading = false
                     self.pendingModelToLoad = nil
                     self.activeLoadID = nil
@@ -1506,6 +1515,10 @@ final class MLXModelManager: ObservableObject {
         guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
         }
+        await cancelDeferredTuningBeforeGeneration(for: currentModel)
+        guard self.container === container, self.currentModel?.id == currentModel.id else {
+            throw GenerationError.modelNotLoaded
+        }
         let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
         let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
         let configuredContextWindow = configuredContextWindowLimit(for: currentModel)
@@ -1717,7 +1730,7 @@ final class MLXModelManager: ObservableObject {
         configuredContextWindow: Int
     ) -> GenerationConfiguration {
         let maxTokens: Int? = if hasTools {
-            4096
+            configuredMaxOutputTokens.map { min($0, 4096) } ?? 4096
         } else if memoryConstrained {
             configuredMaxOutputTokens.map { min($0, 1024) }
         } else {
@@ -2219,13 +2232,18 @@ final class MLXModelManager: ObservableObject {
         aggressivelyFreeMemory(reason: "model.load.transition")
     }
 
-    private func tearDownCurrentModel(reason: String) {
+    private func tearDownCurrentModel(
+        reason: String,
+        clearInferenceWorker: Bool = true
+    ) {
         if container != nil || currentModel != nil || deferredPrewarmModelID != nil || deferredTuningModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
         }
         stopMemoryMaintenanceTimer()
         container = nil
         currentModel = nil
+        let workerLoadID = installedWorkerLoadID
+        installedWorkerLoadID = nil
         promptTokenCountCache.removeAll(keepingCapacity: false)
         deferredPrewarmModelID = nil
         deferredTuningModelID = nil
@@ -2233,8 +2251,10 @@ final class MLXModelManager: ObservableObject {
         tuningTask?.cancel()
         tuningTask = nil
         hasSeenMemoryWarningSinceCurrentLoad = false
-        Task {
-            await inferenceWorker.clearLoadedModel()
+        if clearInferenceWorker, let workerLoadID {
+            Task {
+                _ = await inferenceWorker.clearLoadedModel(ifLoadID: workerLoadID)
+            }
         }
         cleanupMemoryAfterUnload()
     }

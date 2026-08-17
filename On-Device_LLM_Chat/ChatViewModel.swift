@@ -1191,11 +1191,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     internal static func mergedStreamingChunk(currentText: String, newText: String) -> String? {
-        // Length guard first: `contains` scans the whole accumulated response, so
-        // evaluating it per token made streaming cost quadratic in output length.
-        if newText.count > 10 && currentText.contains(newText) {
-            return nil
-        }
         if !currentText.isEmpty &&
             newText.hasPrefix(currentText) &&
             newText.count > currentText.count {
@@ -1203,6 +1198,16 @@ final class ChatViewModel: ObservableObject {
         }
         if !newText.isEmpty && newText.count > 10 && currentText.hasPrefix(newText) {
             return nil
+        }
+
+        // Providers occasionally repeat a recently emitted phrase. Search only a
+        // bounded tail: scanning the entire accumulated response for every chunk
+        // makes long generations quadratic in output length.
+        if newText.count > 10 && newText.count <= 4_096 {
+            let searchLength = min(currentText.count, max(512, min(4_096, newText.count * 2)))
+            if currentText.suffix(searchLength).contains(newText) {
+                return nil
+            }
         }
 
         var overlapLength = 0

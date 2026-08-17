@@ -1386,6 +1386,16 @@ public class Qwen35: Module, VLMModel {
     public func sanitize(weights: [String: MLXArray], metadata: [String: String]) -> [String:
         MLXArray]
     {
+        var weights = weights
+        #if targetEnvironment(simulator)
+        // CoreSimulator's Metal driver cannot create bfloat16 pipelines.
+        // Float16 has the same storage cost; convert once on load so all
+        // subsequent model evaluation remains on the GPU.
+        for (key, value) in weights where value.dtype == .bfloat16 {
+            weights[key] = value.asType(.float16, stream: .cpu)
+        }
+        #endif
+
         if metadata["format"]?.lowercased() == "mlx" {
             return weights
         }

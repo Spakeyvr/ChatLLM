@@ -87,17 +87,11 @@ enum RichTextFeatureDetector {
         return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
     }()
 
-    private static let paragraphBreakRegex: NSRegularExpression? =
-        try? NSRegularExpression(pattern: #"\n\s*\n"#, options: [])
-
     static func requiresAdvancedRendering(_ text: String) -> Bool {
         guard !text.isEmpty else { return false }
         let ns = text as NSString
         let range = NSRange(location: 0, length: ns.length)
 
-        if let re = paragraphBreakRegex, re.firstMatch(in: text, options: [], range: range) != nil {
-            return true
-        }
         if text.contains("\\begin{") || text.contains("\\end{") {
             return true
         }

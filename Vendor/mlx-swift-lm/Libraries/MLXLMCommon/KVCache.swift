@@ -2407,6 +2407,7 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             values: exactValues[.ellipsis, ..<exactCount, 0...]
         )
         self.exactCount = 0
+        compactExactStorageIfNeeded()
     }
 
     private func flushOldestExact(tokenCount: Int) {
@@ -2424,6 +2425,7 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 exactValues[.ellipsis, flushCount..<exactCount, 0...]
         }
         self.exactCount = retained
+        compactExactStorageIfNeeded()
     }
 
     private func appendCompressed(keys: MLXArray, values: MLXArray) {
@@ -2563,6 +2565,29 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
             keyDimension: keyDimension,
             valueDimension: valueDimension,
             dtype: dtype
+        )
+    }
+
+    /// Releases the dense prefill backing allocation after older rows have moved into
+    /// compressed storage. Keeping `exactCapacity` at its prefill high-water mark retains
+    /// the entire dense prompt alongside the compressed cache and defeats the RAM saving.
+    private func compactExactStorageIfNeeded() {
+        guard let exactKeys, let exactValues, let keyDimension, let valueDimension else { return }
+        // Preserve the existing flush slack so decode does not reallocate this
+        // buffer one token at a time after compaction.
+        let targetCapacity = max(exactBufferSize + exactFlushSlack, exactCount, 1)
+        guard exactKeys.dim(2) > targetCapacity || exactValues.dim(2) > targetCapacity else {
+            exactCapacity = targetCapacity
+            return
+        }
+
+        exactCapacity = targetCapacity
+        ensureExactStorage(
+            batch: exactKeys.dim(0),
+            kvHeads: exactKeys.dim(1),
+            keyDimension: keyDimension,
+            valueDimension: valueDimension,
+            dtype: exactKeys.dtype
         )
     }
 

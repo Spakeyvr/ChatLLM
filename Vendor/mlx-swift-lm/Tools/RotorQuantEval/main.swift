@@ -264,7 +264,13 @@ private func measureCacheAfterFirstDecode(
     maybeApplyKVCacheCompression(cache: &cache, compression: parameters.resolvedCacheCompression)
     eval(decodeResult.logits)
 
-    let cacheArrays = cache.flatMap(\.state)
+    // `state` is serialization-oriented and may expose logical slices backed by
+    // larger live allocations. Measure the runtime arrays so capacity regressions
+    // cannot make the reported KV footprint look artificially small.
+    let cacheArrays = cache.flatMap { cacheItem in
+        let runtimeArrays = cacheItem.innerState()
+        return runtimeArrays.isEmpty ? cacheItem.state : runtimeArrays
+    }
     if !cacheArrays.isEmpty {
         eval(cacheArrays)
     }

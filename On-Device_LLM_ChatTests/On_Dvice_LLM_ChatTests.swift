@@ -278,6 +278,33 @@ struct On_Device_LLM_ChatTests {
         #expect(MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
     }
 
+    @Test func boundedExplicitToolLoopReleasesAllPersistentSessionsBeforePrefill() {
+        let scope = MLXInferenceWorker.persistentSessionReleaseScope(
+            usesExplicitMessageHistory: true,
+            maxKVSize: 4096
+        )
+
+        #expect(scope == .all)
+    }
+
+    @Test func unboundedExplicitToolLoopOnlyReleasesCurrentConversationSession() {
+        let scope = MLXInferenceWorker.persistentSessionReleaseScope(
+            usesExplicitMessageHistory: true,
+            maxKVSize: nil
+        )
+
+        #expect(scope == .conversation)
+    }
+
+    @Test func nativeToolLoopPreservesPersistentSessions() {
+        let scope = MLXInferenceWorker.persistentSessionReleaseScope(
+            usesExplicitMessageHistory: false,
+            maxKVSize: 4096
+        )
+
+        #expect(scope == .none)
+    }
+
     @Test func smolLM3ToolResponsesUseNativeToolRole() {
         let manager = MLXModelManager()
         let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
@@ -380,13 +407,13 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 32768
         )
 
-        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxTokens == 2048)
         #expect(configuration.maxKVSize == nil)
         #expect(configuration.cachePolicy == .persistentSimple)
         #expect(configuration.cacheCompression == .none)
     }
 
-    @Test func generationConfigurationKeepsToolTurnsUnboundedWhenRotorQuantIsOffOnHighMemoryDevices() {
+    @Test func generationConfigurationRespectsConfiguredToolOutputLimitWhenRotorQuantIsOff() {
         let configuration = MLXModelManager.generationConfiguration(
             isEnabled: false,
             preferRotorQuant: false,
@@ -398,7 +425,7 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 32768
         )
 
-        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxTokens == 2048)
         #expect(configuration.maxKVSize == nil)
         #expect(configuration.cachePolicy == .persistentSimple)
         #expect(configuration.cacheCompression == .none)
@@ -416,7 +443,7 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 32768
         )
 
-        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxTokens == 2048)
         #expect(configuration.maxKVSize == nil)
         #expect(configuration.cachePolicy == .persistentSimple)
         #expect(configuration.cacheCompression == .none)
@@ -434,7 +461,7 @@ struct On_Device_LLM_ChatTests {
             configuredContextWindow: 8192
         )
 
-        #expect(configuration.maxTokens == 4096)
+        #expect(configuration.maxTokens == 2048)
         #expect(configuration.maxKVSize == 4096)
         #expect(configuration.cachePolicy == .boundedRotating(maxKVSize: 4096))
         #expect(configuration.cacheCompression == .none)
@@ -676,6 +703,29 @@ struct On_Device_LLM_ChatTests {
         #expect(profile.supportsModel(fourBModel))
         #expect(manager.supportsToolCalls(for: fourBModel))
         #expect(profile.availabilityIssue(for: fourBModel) == nil)
+    }
+
+    #if targetEnvironment(simulator)
+    @Test func qwenModelsAreEligibleForDownloadOnIPhoneSimulator() {
+        let profile = MLXDeviceSupportProfile(
+            isPhone: true,
+            physicalMemoryBytes: 16 * MLXDeviceSupportProfile.gibibyte
+        )
+        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let qwenModels = manager.availableModels.filter { $0.id.hasPrefix("qwen") }
+
+        #expect(qwenModels.count == 3)
+        #expect(qwenModels.allSatisfy { manager.availabilityIssue(for: $0) == nil })
+        #expect(qwenModels.allSatisfy { !$0.isAvailable })
+    }
+    #endif
+
+    @Test func simulatorMLXArchitectureUsesHostAppleSiliconGenerationAndVariant() {
+        #expect(MLXRuntimeConfiguration.metalGPUArchitecture(for: "Apple M1") == "applegpu_g13g")
+        #expect(MLXRuntimeConfiguration.metalGPUArchitecture(for: "Apple M3 Pro") == "applegpu_g15g")
+        #expect(MLXRuntimeConfiguration.metalGPUArchitecture(for: "Apple M5 Max") == "applegpu_g17s")
+        #expect(MLXRuntimeConfiguration.metalGPUArchitecture(for: "Apple M2 Ultra") == "applegpu_g14d")
+        #expect(MLXRuntimeConfiguration.metalGPUArchitecture(for: "Generic Simulator GPU") == nil)
     }
 
     @Test func phoneContextOverridesDoNotClampNonPhoneDevices() {
@@ -1867,6 +1917,22 @@ struct On_Device_LLM_ChatTests {
         )
 
         #expect(merged == "Hello world")
+    }
+
+    @Test func streamingChunkMergeDropsRecentRepeatedPhraseWithoutScanningFullHistory() {
+        let repeated = "a recently repeated phrase"
+        let current = String(repeating: "x", count: 20_000) + repeated
+        let merged = ChatViewModel.mergedStreamingChunk(
+            currentText: current,
+            newText: repeated
+        )
+
+        #expect(merged == nil)
+    }
+
+    @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("A formula: $x^2$"))
     }
 
     @Test func webSearchBridgeReturnsRecoverableErrorForMissingQueryArgument() async throws {

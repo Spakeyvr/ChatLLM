@@ -164,6 +164,40 @@ struct KVCacheTests {
         #expect(cache.metaState[11] == "3")
         #expect(cache.metaState[12] == "2")
         #expect(cache.offset == 5)
+
+        let runtimeArrays = cache.innerState()
+        #expect(runtimeArrays.count == 6)
+        #expect(runtimeArrays[4].dim(2) == 3)
+        #expect(runtimeArrays[5].dim(2) == 3)
+    }
+
+    @Test
+    func testRotorQuantReleasesDensePrefillCapacityAfterDeferredFlush() {
+        let cache = RotorQuantKVCache(
+            configuration: RotorQuantConfiguration(
+                keyBits: 3,
+                valueBits: 2,
+                seed: 42,
+                exactBufferSize: 16,
+                attentionBlockTokens: 64,
+                variant: .iso
+            )
+        )
+        let prefillKeys = patternedArray(shape: [1, 1, 256, 128])
+        let prefillValues = patternedArray(shape: [1, 1, 256, 128])
+        let decodeKeys = patternedArray(shape: [1, 1, 1, 128], scale: 0.02)
+        let decodeValues = patternedArray(shape: [1, 1, 1, 128], scale: 0.02)
+
+        _ = cache.update(keys: prefillKeys, values: prefillValues)
+        #expect(cache.innerState()[0].dim(2) == 256)
+
+        _ = cache.update(keys: decodeKeys, values: decodeValues)
+        let runtimeArrays = cache.innerState()
+
+        #expect(runtimeArrays.count == 6)
+        #expect(runtimeArrays[4].dim(2) == 18)
+        #expect(runtimeArrays[5].dim(2) == 18)
+        #expect(cache.metaState[12] == "16")
     }
 
     @Test
