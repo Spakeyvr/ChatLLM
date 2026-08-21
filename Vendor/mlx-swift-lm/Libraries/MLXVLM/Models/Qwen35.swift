@@ -1325,17 +1325,19 @@ public class Qwen35: Module, VLMModel {
                         to: [3, batchSize, chunkLength]
                     )
                     let isLastChunk = remaining.tokens.dim(-1) <= windowSize
-                    let output = languageModel(
-                        chunk.tokens,
-                        inputsEmbeds: nil,
-                        cache: typedCache,
-                        mask: chunk.mask,
-                        positionIds: chunkPositions,
-                        pixelValues: nil,
-                        imageGridTHW: nil,
-                        videoGridTHW: nil,
-                        lastLogitsOnly: true
-                    )
+                    let output = autoreleasepool {
+                        languageModel(
+                            chunk.tokens,
+                            inputsEmbeds: nil,
+                            cache: typedCache,
+                            mask: chunk.mask,
+                            positionIds: chunkPositions,
+                            pixelValues: nil,
+                            imageGridTHW: nil,
+                            videoGridTHW: nil,
+                            lastLogitsOnly: true
+                        )
+                    }
                     if isLastChunk {
                         // Decode steps derive their positions from the cache
                         // offset plus these deltas, mirroring what

@@ -236,6 +236,45 @@ struct KVCacheTests {
     }
 
     @Test
+    func testRotorQuantCompressedCapacityAvoidsDoublingSlack() {
+        #expect(
+            RotorQuantKVCache.nextStorageCapacity(current: 4_608, required: 4_609, step: 256)
+                == 6_912
+        )
+        #expect(
+            RotorQuantKVCache.nextStorageCapacity(current: 0, required: 64, step: 256)
+                == 512
+        )
+        #expect(
+            RotorQuantKVCache.nextStorageCapacity(current: 512, required: 800, step: 256)
+                == 1_024
+        )
+    }
+
+    @Test
+    func testRotorQuantInitialExactStorageIncludesFlushSlack() {
+        let cache = RotorQuantKVCache(
+            configuration: RotorQuantConfiguration(
+                keyBits: 3,
+                valueBits: 2,
+                seed: 42,
+                exactBufferSize: 16,
+                attentionBlockTokens: 64,
+                variant: .iso
+            )
+        )
+        let keys = patternedArray(shape: [1, 1, 16, 128])
+        let values = patternedArray(shape: [1, 1, 16, 128])
+
+        _ = cache.update(keys: keys, values: values)
+
+        let runtimeArrays = cache.innerState()
+        #expect(runtimeArrays.count == 2)
+        #expect(runtimeArrays[0].dim(2) == 18)
+        #expect(runtimeArrays[1].dim(2) == 18)
+    }
+
+    @Test
     func testRotorQuantTrimDropsNewestTokensAcrossCompressedAndExactRows() {
         let cache = RotorQuantKVCache(
             configuration: RotorQuantConfiguration(

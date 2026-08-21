@@ -1,5 +1,6 @@
 // Copyright © 2024 Apple Inc.
 
+import Foundation
 import MLX
 import MLXLMCommon
 import Tokenizers
@@ -27,9 +28,11 @@ extension LLMModel {
 
         // Prepare the prompt in chunks if larger than the prefill size
         while y.tokens.size > prefillStepSize {
-            let input = y[.newAxis, ..<prefillStepSize]
-            _ = self(input, cache: cache.isEmpty ? nil : cache, state: nil)
-            eval(cache)
+            autoreleasepool {
+                let input = y[.newAxis, ..<prefillStepSize]
+                _ = self(input, cache: cache.isEmpty ? nil : cache, state: nil)
+                eval(cache)
+            }
             y = y[prefillStepSize...]
         }
 

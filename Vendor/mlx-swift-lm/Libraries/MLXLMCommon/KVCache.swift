@@ -2465,9 +2465,11 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         let requiredCapacity = compressedCount + tokenCount
         guard keyIndices == nil || requiredCapacity > compressedCapacity else { return }
 
-        let baselineCapacity = max(compressedCapacity, step)
-        let growthTarget = max(baselineCapacity * 2, requiredCapacity)
-        let newCapacity = ((growthTarget + step - 1) / step) * step
+        let newCapacity = Self.nextStorageCapacity(
+            current: compressedCapacity,
+            required: requiredCapacity,
+            step: step
+        )
 
         let newKeyIndices = MLXArray.zeros([batch, kvHeads, newCapacity, keyPackedWidth], dtype: .uint8)
         let newKeyNorms = MLXArray.zeros([batch, kvHeads, newCapacity], dtype: .float32)
@@ -2490,6 +2492,16 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         self.valueIndices = newValueIndices
         self.valueNorms = newValueNorms
         compressedCapacity = newCapacity
+    }
+
+    /// Grow compressed storage by 1.5x, rounded to the existing allocation step.
+    /// Doubling retained almost 2K unused rows at common 6K-token context limits;
+    /// this curve keeps reallocations bounded without carrying that large slack.
+    static func nextStorageCapacity(current: Int, required: Int, step: Int) -> Int {
+        let allocationStep = max(step, 1)
+        let baseline = max(current, allocationStep)
+        let growthTarget = max(baseline + baseline / 2, required)
+        return ((growthTarget + allocationStep - 1) / allocationStep) * allocationStep
     }
 
     private func ensureQuantizers(keyDimension: Int, valueDimension: Int) {
@@ -2520,7 +2532,10 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         valueDimension: Int,
         dtype: DType
     ) {
-        let capacity = max(exactBufferSize, exactCapacity, exactCount, 1)
+        // Include the intentional decode flush slack in the initial allocation.
+        // Without this, a full exact tail grows one token at a time until the
+        // first flush, briefly overlapping each old and replacement allocation.
+        let capacity = max(exactBufferSize + exactFlushSlack, exactCapacity, exactCount, 1)
         let desiredKeyShape = [batch, kvHeads, capacity, keyDimension]
         let desiredValueShape = [batch, kvHeads, capacity, valueDimension]
         let needsAllocation =

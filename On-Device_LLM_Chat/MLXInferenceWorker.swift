@@ -175,7 +175,7 @@ actor MLXInferenceWorker {
     func setLoadedModel(_ state: MLXLoadedModelState) async {
         let previousReservationTicket = loadedModel?.reservationTicket
         loadedModel = state
-        sessions.removeAll()
+        await discardSessions(keys: Array(sessions.keys))
         if let previousReservationTicket {
             _ = await previousReservationTicket.end()
         }
@@ -208,25 +208,25 @@ actor MLXInferenceWorker {
         }
         let reservationTicket = loadedModel?.reservationTicket
         loadedModel = nil
-        sessions.removeAll()
+        await discardSessions(keys: Array(sessions.keys))
         if let reservationTicket {
             _ = await reservationTicket.end()
         }
         return true
     }
 
-    func invalidateConversation(_ conversationID: UUID, reason: String) {
-        let removedCount = sessions.keys.filter { $0.conversationID == conversationID }.count
-        guard removedCount > 0 else { return }
-        sessions = sessions.filter { $0.key.conversationID != conversationID }
+    func invalidateConversation(_ conversationID: UUID, reason: String) async {
+        let keysToRemove = sessions.keys.filter { $0.conversationID == conversationID }
+        guard !keysToRemove.isEmpty else { return }
+        await discardSessions(keys: keysToRemove)
         logger.notice(
-            "MLX session invalidated: conversation=\(conversationID.uuidString, privacy: .public) removed=\(removedCount, privacy: .public) reason=\(reason, privacy: .public)"
+            "MLX session invalidated: conversation=\(conversationID.uuidString, privacy: .public) removed=\(keysToRemove.count, privacy: .public) reason=\(reason, privacy: .public)"
         )
     }
 
-    func invalidateAll(reason: String) {
+    func invalidateAll(reason: String) async {
         guard !sessions.isEmpty else { return }
-        sessions.removeAll()
+        await discardSessions(keys: Array(sessions.keys))
         logger.notice("MLX invalidated all sessions: reason=\(reason, privacy: .public)")
     }
 
@@ -512,10 +512,10 @@ actor MLXInferenceWorker {
                 try await iterateStream()
             }
         } catch {
-            sessions.removeValue(forKey: request.sessionKey)
-            if reusableSession == nil {
-                Memory.clearCache()
-            }
+            let failedSession = sessions.removeValue(forKey: request.sessionKey)?.session
+                ?? reusableSession
+            await failedSession?.clear()
+            Memory.clearCache()
             throw error
         }
 
@@ -562,7 +562,7 @@ actor MLXInferenceWorker {
                 latestPerformance: performanceSample,
                 lastAccessed: finishedAt
             )
-            evictPersistentSessionsIfNeeded()
+            await evictPersistentSessionsIfNeeded()
         }
 
         logger.notice(
@@ -629,16 +629,27 @@ actor MLXInferenceWorker {
         )
     }
 
-    private func evictPersistentSessionsIfNeeded() {
+    private func evictPersistentSessionsIfNeeded() async {
         guard sessions.count > maxPersistentSessions else { return }
         let overflow = sessions.count - maxPersistentSessions
         let keysToRemove = sessions
             .sorted { $0.value.lastAccessed < $1.value.lastAccessed }
             .prefix(overflow)
             .map(\.key)
-        for key in keysToRemove {
-            sessions.removeValue(forKey: key)
-        }
+        await discardSessions(keys: keysToRemove)
         logger.notice("MLX evicted \(keysToRemove.count, privacy: .public) persistent session(s) to cap KV memory")
+    }
+
+    /// Removes session ownership before awaiting cache teardown so no later
+    /// actor re-entry can observe a session whose cache is being cleared.
+    private func discardSessions<S: Sequence>(keys: S) async where S.Element == MLXSessionKey {
+        let discardedSessions = keys.compactMap { key in
+            sessions.removeValue(forKey: key)?.session
+        }
+        guard !discardedSessions.isEmpty else { return }
+        for session in discardedSessions {
+            await session.clear()
+        }
+        Memory.clearCache()
     }
 }

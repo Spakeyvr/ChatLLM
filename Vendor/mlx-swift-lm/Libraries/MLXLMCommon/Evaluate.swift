@@ -662,17 +662,32 @@ public struct TokenIterator: Sequence, IteratorProtocol {
             return nil
         }
 
-        // save current value -- this will be returned
-        let previousY = y
+        // A model forward creates many autoreleased MLX wrapper objects. The
+        // iterator can otherwise run for the entire generation without reaching
+        // an autorelease-pool boundary, causing host memory to grow with tokens.
+        return autoreleasepool {
+            // save current value -- this will be returned
+            let previousY = y
 
-        // compute the next state and async eval the next token
-        let token = step(previous: previousY)
-        y = .init(tokens: token)
-        asyncEval(token)
+            // compute the next state and async eval the next token
+            let token = step(previous: previousY)
+            y = .init(tokens: token)
 
-        tokenCount += 1
+            // Cache updates are functional MLX operations. Evaluate their state
+            // alongside the token so lazy update chains do not retain every
+            // previous decode step's intermediates.
+            asyncEval([token] + cache.flatMap { $0.state })
 
-        return previousY.tokens.item(Int.self)
+            tokenCount += 1
+
+            // Return freed buffers that cannot be reused because their sizes
+            // change as the cache grows. This matches mlx-lm's decode cadence.
+            if tokenCount % 256 == 0 {
+                MLX.Memory.clearCache()
+            }
+
+            return previousY.tokens.item(Int.self)
+        }
     }
 }
 
