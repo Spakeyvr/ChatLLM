@@ -108,6 +108,22 @@ extension ChatViewModel {
         return prompts.joined(separator: "\n\n")
     }
 
+    private func userTextApplyingChatPreferences(
+        _ text: String,
+        isLatestUserMessage: Bool
+    ) -> String {
+        let preferences = conversation.chatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLatestUserMessage, !preferences.isEmpty else { return text }
+
+        return """
+        User preferences for this response:
+        \(preferences)
+
+        User request:
+        \(text)
+        """
+    }
+
     func setSmartReasoningMode(_ enabled: Bool) {
         let previousValue = conversation.smartReasoningMode
         conversation.smartReasoningMode = enabled
@@ -341,6 +357,10 @@ extension ChatViewModel {
             from: allSnapshots,
             maxMessages: nil
         )
+        let latestUserOrder = snapshots
+            .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(\.order)
+            .max()
 
         var parts: [String] = snapshots.compactMap { msg in
             // *** CRITICAL FIX: Only include finalized assistant messages in the prompt ***
@@ -359,7 +379,11 @@ extension ChatViewModel {
 
             switch msg.role {
             case .user:
-                return Self.foundationPromptMessage(role: "user", content: msg.text)
+                let userText = userTextApplyingChatPreferences(
+                    msg.text,
+                    isLatestUserMessage: msg.order == latestUserOrder
+                )
+                return Self.foundationPromptMessage(role: "user", content: userText)
             case .assistant:
                 if msg.isReasoningMode, let answer = msg.finalAnswer {
                     let cleanAnswer = stripSourcesFromText(answer)
@@ -613,7 +637,11 @@ extension ChatViewModel {
                 let userText = includeImages
                     ? stripVisionFallbackFromNativeImageUserText(msg.text)
                     : msg.text
-                messages.append(.user(userText, images: images))
+                let userTextWithPreferences = userTextApplyingChatPreferences(
+                    userText,
+                    isLatestUserMessage: msg.order == latestUserOrder
+                )
+                messages.append(.user(userTextWithPreferences, images: images))
             case .assistant:
                 let content: String
                 if msg.isReasoningMode, let answer = msg.finalAnswer {

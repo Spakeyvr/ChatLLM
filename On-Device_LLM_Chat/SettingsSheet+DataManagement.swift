@@ -86,17 +86,6 @@ extension SettingsSheet {
 
     // MARK: - Actions
 
-    func deletePreset(_ preset: SystemPromptPreset) {
-        settings.customPresets.removeAll { $0.id == preset.id }
-    }
-
-    func saveCurrentAsPreset() {
-        let trimmed = settings.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        editingPreset = SystemPromptPreset(name: "", text: trimmed)
-        isEditingSheetPresented = true
-    }
-
     func exportConversations() {
         onExportChats()
     }

@@ -36,7 +36,7 @@ struct ContentView: View {
     @State private var attachmentCleanupTask: Task<Void, Never>?
 
     // App-wide preferences
-    @AppStorage("defaultSystemPrompt") private var defaultSystemPrompt: String = ""
+    @AppStorage("chatPreferences") private var chatPreferences: String = ""
     @AppStorage("appAppearance") private var appAppearance: String = "system" // system | light | dark
     @AppStorage("appLanguage") private var appLanguage: String = "en" // en | de | es
     @AppStorage("reasoningModeDefault") private var reasoningModeDefault: Bool = false
@@ -51,6 +51,14 @@ struct ContentView: View {
         case "dark": return .dark
         default: return nil
         }
+    }
+
+    private var storedChatPreferences: String {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: AppSettingsKeys.chatPreferences) != nil {
+            return chatPreferences
+        }
+        return defaults.string(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) ?? ""
     }
 
     var body: some View {
@@ -638,16 +646,14 @@ struct ContentView: View {
         AppHaptics.impact(.medium)
         Task { @MainActor in
             currentViewModel?.cancelGeneration()
-            let convo = Conversation(title: String(localized: "New Chat"))
+            let convo = Conversation(
+                title: String(localized: "New Chat"),
+                chatPreferences: storedChatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
             convo.reasoningMode = reasoningModeDefault
             let backendBridge = ModelBackendBridge.shared
             convo.preferredBackendRawValue = backendBridge.selectedBackend.rawValue
             convo.preferredModelID = backendBridge.selectedModelID
-            let trimmed = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                let sys = Message(role: .system, text: trimmed, order: 0, conversation: convo, isFinal: true)
-                convo.messages.append(sys)
-            }
             // Set draft BEFORE clearing selection so handleSelectionChange preserves this vm.
             draftConversation = convo
             currentViewModel = createViewModel(for: convo)

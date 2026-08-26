@@ -956,24 +956,41 @@ struct On_Device_LLM_ChatTests {
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set("Existing prompt", forKey: AppSettingsKeys.defaultSystemPrompt)
+        defaults.set("Existing preferences", forKey: AppSettingsKeys.chatPreferences)
         defaults.set(false, forKey: AppSettingsKeys.developerModeEnabled)
         defaults.set(false, forKey: AppSettingsKeys.disableToolCalls)
 
         var draft = AppSettingsDraft.load(from: defaults)
-        draft.defaultSystemPrompt = "Draft only"
+        draft.chatPreferences = "Draft only"
         draft.developerModeEnabled = true
         draft.disableToolCalls = true
 
-        #expect(defaults.string(forKey: AppSettingsKeys.defaultSystemPrompt) == "Existing prompt")
+        #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == "Existing preferences")
         #expect(defaults.bool(forKey: AppSettingsKeys.developerModeEnabled) == false)
         #expect(defaults.bool(forKey: AppSettingsKeys.disableToolCalls) == false)
 
         draft.persist(to: defaults)
 
-        #expect(defaults.string(forKey: AppSettingsKeys.defaultSystemPrompt) == "Draft only")
+        #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == "Draft only")
         #expect(defaults.bool(forKey: AppSettingsKeys.developerModeEnabled))
         #expect(defaults.bool(forKey: AppSettingsKeys.disableToolCalls))
+    }
+
+    @Test func appSettingsDraftMigratesLegacyDefaultPromptToChatPreferences() throws {
+        let suiteName = "settings-migration-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("Prefer concise answers.", forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
+
+        let draft = AppSettingsDraft.load(from: defaults)
+        #expect(draft.chatPreferences == "Prefer concise answers.")
+
+        draft.persist(to: defaults)
+
+        #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == "Prefer concise answers.")
+        #expect(defaults.object(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) == nil)
     }
 
     @Test func tavilyKeyMigratesOutOfPlaintextUserDefaults() throws {
@@ -1577,6 +1594,29 @@ struct On_Device_LLM_ChatTests {
         #expect(prompt.contains("Always answer like a pirate."))
     }
 
+    @Test func buildPromptAppliesChatPreferencesAtUserPriority() throws {
+        let viewModel = try makeViewModel()
+        viewModel.conversation.chatPreferences = "Prefer concise answers and metric units."
+
+        let user = On_Device_LLM_Chat.Message(
+            role: .user,
+            text: "How far is the Moon?",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let prompt = viewModel.buildPrompt(upToOrderExclusive: 1)
+        let systemMessageEnd = try #require(prompt.range(of: "</message>"))
+        let systemMessage = prompt[..<systemMessageEnd.upperBound]
+
+        #expect(!systemMessage.contains("Prefer concise answers and metric units."))
+        #expect(prompt.contains("<message role=\"user\">\nUser preferences for this response:"))
+        #expect(prompt.contains("Prefer concise answers and metric units."))
+        #expect(prompt.contains("User request:\nHow far is the Moon?"))
+    }
+
     @Test func buildPromptUsesSelectedModelIdentityInBaseSystemPrompt() throws {
         let viewModel = try makeViewModel()
 
@@ -1666,6 +1706,29 @@ struct On_Device_LLM_ChatTests {
         let systemMessage = try #require(messages.first(where: { $0.role == .system }))
 
         #expect(systemMessage.content.contains("Respond in terse bullet points."))
+    }
+
+    @Test func buildQwenMessagesApplyChatPreferencesAtUserPriority() async throws {
+        let viewModel = try makeViewModel()
+        viewModel.conversation.chatPreferences = "Use plain language."
+
+        let user = On_Device_LLM_Chat.Message(
+            role: .user,
+            text: "Explain Swift actors",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        )
+        viewModel.conversation.messages.append(user)
+
+        let messages = try await viewModel.buildQwenMessages(upToOrderExclusive: 1)
+        let systemMessage = try #require(messages.first(where: { $0.role == .system }))
+        let userMessage = try #require(messages.first(where: { $0.role == .user }))
+
+        #expect(!systemMessage.content.contains("Use plain language."))
+        #expect(userMessage.content.contains("User preferences for this response:"))
+        #expect(userMessage.content.contains("Use plain language."))
+        #expect(userMessage.content.contains("User request:\nExplain Swift actors"))
     }
 
     @Test func buildQwenMessagesUsesModelIdentityWithoutQuantizationInSystemPrompt() async throws {

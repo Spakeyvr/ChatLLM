@@ -131,8 +131,8 @@ extension SettingsSheet {
 
                 FeatureRow(
                     icon: "text.alignleft",
-                    title: String(localized: "Custom System Prompts"),
-                    description: String(localized: "Personalize the assistant's behavior and tone")
+                    title: String(localized: "Chat Preferences"),
+                    description: String(localized: "Tailor responses to your preferred style")
                 )
 
                 FeatureRow(

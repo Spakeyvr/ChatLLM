@@ -16,11 +16,8 @@ struct SettingsSheet: View {
 
     let confirmBeforeDeletingChats = true
     private let showCharacterCount = true
-    private let useMonospacedEditors = true
 
-    @State var editingPreset: SystemPromptPreset?
-    @State var isEditingSheetPresented = false
-    @State private var isDefaultPromptFocused = false
+    @State private var areChatPreferencesFocused = false
 
     enum PendingAction: Identifiable {
         case deleteAll
@@ -38,17 +35,6 @@ struct SettingsSheet: View {
 
     @State var pendingAction: PendingAction?
     @State private var showingRAMPrecautionsWarning = false
-
-    private let builtInPresets: [SystemPromptPreset] = [
-        .init(name: String(localized: "Helpful assistant"),
-              text: "You are a helpful, concise assistant. Prefer clear explanations and actionable steps."),
-        .init(name: String(localized: "Creative writer"),
-              text: "You are a creative writing assistant. Use vivid language, varied rhythm, and avoid clichés."),
-        .init(name: String(localized: "Code helper"),
-              text: "You are a precise coding assistant. Provide correct code snippets and explain tradeoffs correctly."),
-        .init(name: String(localized: "Teacher"),
-              text: "You are a patient teacher. Break concepts into steps and check for understanding with brief questions.")
-    ]
 
     var body: some View {
         NavigationStack {
@@ -253,107 +239,58 @@ struct SettingsSheet: View {
                 Section(
                     header:
                         HStack(spacing: 6) {
-                            Text(String(localized: "Chat Defaults"))
+                            Text(String(localized: "Chat Preferences"))
                             InfoButton(
-                                title: String(localized: "Default System Prompt"),
-                                message: String(localized: "New chats start with this system prompt. You can change it per chat from the gear button in a conversation.")
+                                title: String(localized: "Chat Preferences"),
+                                message: String(localized: "Describe how you prefer responses to be written. These preferences are included with your requests in new chats and do not replace the app’s system instructions.")
                             )
                         }
                         .padding(.top, 8),
-                    footer: Text(String(localized: "New chats will start with this system prompt. You can change it per chat from the gear button in the conversation."))
+                    footer: Text(String(localized: "Applied to new chats. Existing conversations keep the preferences they started with."))
                 ) {
-                    NativePromptEditor(
-                        text: $settings.defaultSystemPrompt,
-                        placeholder: String(localized: "Describe the assistant’s default behavior for new chats…"),
-                        isFocused: $isDefaultPromptFocused,
+                    ChatPreferencesEditor(
+                        text: $settings.chatPreferences,
+                        placeholder: String(localized: "For example: Keep answers concise, use metric units, and explain technical terms…"),
+                        isFocused: $areChatPreferencesFocused,
                         minHeight: 140,
-                        maxHeight: 240,
-                        isMonospaced: useMonospacedEditors
+                        maxHeight: 240
                     )
 
                     HStack {
                         if showCharacterCount {
-                            let count = settings.defaultSystemPrompt.count
+                            let count = settings.chatPreferences.count
                             let counter = String(localized: "characters")
                             Text("\(count) \(counter)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Menu {
-                            Button {
-                                saveCurrentAsPreset()
+                        if !settings.chatPreferences.isEmpty {
+                            Button(role: .destructive) {
+                                settings.chatPreferences = ""
                             } label: {
-                                Label(String(localized: "Save as Preset"), systemImage: "bookmark.badge.plus")
+                                Label(String(localized: "Clear"), systemImage: "trash")
+                                    .font(.caption)
                             }
-                            if !settings.defaultSystemPrompt.isEmpty {
-                                Button(role: .destructive) {
-                                    settings.defaultSystemPrompt = ""
-                                } label: {
-                                    Label(String(localized: "Clear"), systemImage: "trash")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(String(localized: "Clear Chat Preferences"))
                         }
-                        .accessibilityLabel(String(localized: "Default System Prompt Actions"))
                     }
                     .contextMenu {
-                        if !settings.defaultSystemPrompt.isEmpty {
+                        if !settings.chatPreferences.isEmpty {
                             Button {
-                                UIPasteboard.general.string = settings.defaultSystemPrompt
+                                UIPasteboard.general.string = settings.chatPreferences
                             } label: {
                                 Label(String(localized: "Copy"), systemImage: "doc.on.doc")
                             }
                         }
                         Button {
                             if let str = UIPasteboard.general.string {
-                                settings.defaultSystemPrompt = str
+                                settings.chatPreferences = str
                             }
                         } label: {
                             Label(String(localized: "Paste"), systemImage: "doc.on.clipboard")
                         }
-                    }
-                }
-
-                Section(header: Text(String(localized: "System Prompt Presets"))) {
-                    if !builtInPresets.isEmpty {
-                        DisclosureGroup(String(localized: "Built‑in")) {
-                            ForEach(builtInPresets) { preset in
-                                presetRow(preset, isCustom: false)
-                            }
-                        }
-                    }
-
-                    DisclosureGroup(String(localized: "Your Presets")) {
-                        if settings.customPresets.isEmpty {
-                            Text(String(localized: "No custom presets yet. Tap “New Preset” to create one."))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            EditablePresetList(
-                                presets: settings.customPresets,
-                                onMove: { from, to in
-                                    settings.customPresets.move(fromOffsets: from, toOffset: to)
-                                },
-                                onDelete: { offsets in
-                                    settings.customPresets.remove(atOffsets: offsets)
-                                },
-                                row: { preset in
-                                    presetRow(preset, isCustom: true)
-                                }
-                            )
-                        }
-
-                        Button {
-                            editingPreset = SystemPromptPreset(
-                                name: "",
-                                text: settings.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                            )
-                            isEditingSheetPresented = true
-                        } label: {
-                            Label(String(localized: "New Preset"), systemImage: "plus.circle")
-                        }
-                        .buttonStyle(.glass)
                     }
                 }
 
@@ -365,23 +302,6 @@ struct SettingsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .listSectionSpacing(.compact)
-        .sheet(isPresented: $isEditingSheetPresented) {
-            NavigationStack {
-                PresetEditorView(
-                    preset: editingPreset ?? SystemPromptPreset(name: "", text: ""),
-                    onCancel: { isEditingSheetPresented = false },
-                    onSave: { saved in
-                        if let idx = settings.customPresets.firstIndex(where: { $0.id == saved.id }) {
-                            settings.customPresets[idx] = saved
-                        } else {
-                            settings.customPresets.insert(saved, at: 0)
-                        }
-                        isEditingSheetPresented = false
-                    }
-                )
-            }
-            .presentationDetents([.medium, .large])
-        }
         .alert(item: $pendingAction) { action in
             switch action {
             case .deleteAll:
@@ -741,97 +661,6 @@ struct SettingsSheet: View {
         Label(localized, systemImage: icon).tag(tag)
     }
 
-    @ViewBuilder
-    private func presetRow(_ preset: SystemPromptPreset, isCustom: Bool) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(preset.name.isEmpty ? String(localized: "Untitled Preset") : preset.name)
-                    .font(.body)
-                Text(preset.text)
-                    .font(.caption)
-                    .lineLimit(2)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                settings.defaultSystemPrompt = preset.text
-            } label: {
-                Image(systemName: "arrow.down.doc")
-                    .accessibilityLabel(String(localized: "Apply preset"))
-            }
-        }
-        .contextMenu {
-            Button {
-                settings.defaultSystemPrompt = preset.text
-            } label: {
-                Label(String(localized: "Apply"), systemImage: "arrow.down.doc")
-            }
-
-            Button {
-                UIPasteboard.general.string = preset.text
-            } label: {
-                Label(String(localized: "Copy"), systemImage: "doc.on.doc")
-            }
-
-            if isCustom {
-                Button {
-                    var copy = preset
-                    copy.id = UUID()
-                    copy.createdAt = Date()
-                    settings.customPresets.insert(copy, at: 0)
-                } label: {
-                    Label(String(localized: "Duplicate"), systemImage: "plus.square.on.square")
-                }
-
-                Button {
-                    editingPreset = preset
-                    isEditingSheetPresented = true
-                } label: {
-                    Label(String(localized: "Edit"), systemImage: "pencil")
-                }
-
-                Button(role: .destructive) {
-                    deletePreset(preset)
-                } label: {
-                    Label(String(localized: "Delete"), systemImage: "trash")
-                }
-            }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button {
-                settings.defaultSystemPrompt = preset.text
-            } label: {
-                Label(String(localized: "Apply"), systemImage: "arrow.down.doc")
-            }
-            .tint(.blue)
-
-            if isCustom {
-                Button {
-                    var copy = preset
-                    copy.id = UUID()
-                    copy.createdAt = Date()
-                    settings.customPresets.insert(copy, at: 0)
-                } label: {
-                    Label(String(localized: "Duplicate"), systemImage: "plus.square.on.square")
-                }
-                .tint(.green)
-
-                Button {
-                    editingPreset = preset
-                    isEditingSheetPresented = true
-                } label: {
-                    Label(String(localized: "Edit"), systemImage: "pencil")
-                }
-                .tint(.orange)
-
-                Button(role: .destructive) {
-                    deletePreset(preset)
-                } label: {
-                    Label(String(localized: "Delete"), systemImage: "trash")
-                }
-            }
-        }
-    }
 }
 
 private struct InfoButton: View {
@@ -883,33 +712,12 @@ private struct ExperimentalBadgeButton: View {
     }
 }
 
-private struct EditablePresetList<Row: View>: View {
-    var presets: [SystemPromptPreset]
-    var onMove: (IndexSet, Int) -> Void
-    var onDelete: (IndexSet) -> Void
-    var row: (SystemPromptPreset) -> Row
-
-    var body: some View {
-        List {
-            ForEach(presets) { preset in
-                row(preset)
-            }
-            .onMove(perform: onMove)
-            .onDelete(perform: onDelete)
-        }
-        .frame(minHeight: 44 * CGFloat(max(1, presets.count)))
-        .environment(\.editMode, .constant(.active))
-        .listStyle(.plain)
-    }
-}
-
-struct NativePromptEditor: View {
+private struct ChatPreferencesEditor: View {
     @Binding var text: String
     let placeholder: String
     @Binding var isFocused: Bool
     var minHeight: CGFloat
     var maxHeight: CGFloat? = nil
-    var isMonospaced: Bool = true
     @FocusState private var isEditorFocused: Bool
 
     var body: some View {
@@ -923,7 +731,7 @@ struct NativePromptEditor: View {
 
             TextEditor(text: $text)
                 .focused($isEditorFocused)
-                .font(isMonospaced ? .body.monospaced() : .body)
+                .font(.body)
                 .textInputAutocapitalization(.sentences)
                 .autocorrectionDisabled(false)
                 .scrollContentBackground(.hidden)

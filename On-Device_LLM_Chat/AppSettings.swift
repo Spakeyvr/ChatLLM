@@ -1,10 +1,10 @@
 import Foundation
 
 enum AppSettingsKeys {
-    static let defaultSystemPrompt = "defaultSystemPrompt"
+    static let chatPreferences = "chatPreferences"
+    static let legacyDefaultSystemPrompt = "defaultSystemPrompt"
     static let appAppearance = "appAppearance"
     static let appLanguage = "appLanguage"
-    static let customSystemPromptPresets = "customSystemPromptPresets"
     static let sendOnReturn = "sendOnReturn"
     static let enableHaptics = "enableHaptics"
     static let reasoningModeDefault = "reasoningModeDefault"
@@ -22,10 +22,9 @@ enum AppSettingsKeys {
 }
 
 struct AppSettingsDraft: Equatable {
-    var defaultSystemPrompt: String
+    var chatPreferences: String
     var appAppearance: String
     var appLanguage: String
-    var customPresets: [SystemPromptPreset]
     var tavilyApiKey: String
     var sendOnReturn: Bool
     var enableHaptics: Bool
@@ -44,10 +43,11 @@ struct AppSettingsDraft: Equatable {
 
     static func load(from defaults: UserDefaults = .standard) -> Self {
         Self(
-            defaultSystemPrompt: defaults.string(forKey: AppSettingsKeys.defaultSystemPrompt) ?? "",
+            chatPreferences: defaults.string(forKey: AppSettingsKeys.chatPreferences)
+                ?? defaults.string(forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
+                ?? "",
             appAppearance: defaults.string(forKey: AppSettingsKeys.appAppearance) ?? "system",
             appLanguage: defaults.string(forKey: AppSettingsKeys.appLanguage) ?? "en",
-            customPresets: decodePresets(from: defaults.data(forKey: AppSettingsKeys.customSystemPromptPresets) ?? Data()),
             tavilyApiKey: TavilyAPIKeyStore.currentKey(
                 userDefaults: defaults,
                 service: TavilyAPIKeyStore.service,
@@ -74,10 +74,9 @@ struct AppSettingsDraft: Equatable {
 
     static func defaults() -> Self {
         Self(
-            defaultSystemPrompt: "",
+            chatPreferences: "",
             appAppearance: "system",
             appLanguage: "en",
-            customPresets: [],
             tavilyApiKey: "",
             sendOnReturn: false,
             enableHaptics: true,
@@ -101,10 +100,10 @@ struct AppSettingsDraft: Equatable {
     }
 
     func persist(to defaults: UserDefaults = .standard) {
-        defaults.set(defaultSystemPrompt, forKey: AppSettingsKeys.defaultSystemPrompt)
+        defaults.set(chatPreferences, forKey: AppSettingsKeys.chatPreferences)
+        defaults.removeObject(forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
         defaults.set(appAppearance, forKey: AppSettingsKeys.appAppearance)
         defaults.set(appLanguage, forKey: AppSettingsKeys.appLanguage)
-        defaults.set(encodePresets(customPresets), forKey: AppSettingsKeys.customSystemPromptPresets)
         defaults.sendOnReturn = sendOnReturn
         defaults.enableHapticsPreference = enableHaptics
         defaults.set(reasoningModeDefault, forKey: AppSettingsKeys.reasoningModeDefault)
@@ -137,13 +136,6 @@ struct AppSettingsDraft: Equatable {
         }
     }
 
-    private static func decodePresets(from data: Data) -> [SystemPromptPreset] {
-        (try? JSONDecoder().decode([SystemPromptPreset].self, from: data)) ?? []
-    }
-
-    private func encodePresets(_ presets: [SystemPromptPreset]) -> Data {
-        (try? JSONEncoder().encode(presets)) ?? Data()
-    }
 }
 
 extension UserDefaults {
