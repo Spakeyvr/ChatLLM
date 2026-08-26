@@ -5,7 +5,7 @@ This map covers the current checkout at `/Users/nevio/Desktop/Projects/ChatLLM`.
 ## Backends Present
 
 - MLX Swift LM: present under `Vendor/mlx-swift-lm`.
-- Apple Foundation Models: present in `On-Device_LLM_Chat/LLMGenerator.swift` and related `FoundationModels` chat/title/tool code.
+- Apple Foundation Models: present in `ChatLLM/LLMGenerator.swift` and related `FoundationModels` chat/title/tool code.
 - llama.cpp/GGML: not present in this checkout. There is no `ggml`, `llama.cpp`, C/C++ backend bridge, CMake target, or GGUF runtime surface to wire.
 
 RotorQuant is implemented for the MLX backend. AFM remains outside the KV-cache compression path because it manages its own model runtime and cache behavior.
@@ -14,7 +14,7 @@ RotorQuant is implemented for the MLX backend. AFM remains outside the KV-cache 
 
 AFM is isolated behind:
 
-- `On-Device_LLM_Chat/LLMGenerator.swift`
+- `ChatLLM/LLMGenerator.swift`
 - `OnDeviceLLMGenerator`
 - `FoundationModels.LanguageModelSession`
 
@@ -24,7 +24,7 @@ This path does not use `GenerateParameters`, `KVCache`, `KVCacheCompressionMode`
 
 RotorQuant settings live at:
 
-- `On-Device_LLM_Chat/SettingsSheet.swift`
+- `ChatLLM/SettingsSheet.swift`
   - `mlxRotorQuantInfoMessage`
   - `mlxRotorQuantExperimentalTitle`
   - `mlxRotorQuantExperimentalMessage`
@@ -32,16 +32,16 @@ RotorQuant settings live at:
   - toggle label `RotorQuant (MLX Only)`
   - tappable `(E)` badge that presents the early beta warning
   - `settings.mlxEnableRotorQuant`
-- `On-Device_LLM_Chat/AppSettings.swift`
+- `ChatLLM/AppSettings.swift`
   - `mlxEnableRotorQuant`
-- `On-Device_LLM_Chat/ModelBackendBridge.swift`
+- `ChatLLM/ModelBackendBridge.swift`
   - `UserDefaults.mlxEnableRotorQuant`
 
 Fresh installs default to RotorQuant enabled for persistent MLX chats. The older generic `mlxEnableKVCacheQuantization` preference no longer controls RotorQuant defaults.
 
 ## App-Level Compression Configuration
 
-`On-Device_LLM_Chat/MLXModelManager.swift` defines:
+`ChatLLM/MLXModelManager.swift` defines:
 
 - `CacheCompressionMode.none`
 - `CacheCompressionMode.rotorQuant`
@@ -212,7 +212,7 @@ Vendored package tests in `Vendor/mlx-swift-lm/Tests/MLXLMTests/KVCacheTests.swi
 - Qwen3.5 hybrid cache creation: full-attention layers use RotorQuant and linear layers remain `MambaCache`
 - historical compressed prompt-cache migration into `KVCacheSimple`
 
-App tests in `On-Device_LLM_ChatTests/On_Dvice_LLM_ChatTests.swift` cover:
+App tests in `ChatLLMTests/ChatLLMTests.swift` cover:
 
 - RotorQuant settings copy
 - experimental `(E)` beta-warning copy

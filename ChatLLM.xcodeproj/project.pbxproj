@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3D11527F2EAFB66200FC2980 /* ChatLLM 2.icon in Resources */ = {isa = PBXBuildFile; fileRef = 3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */; };
+		3D11527F2EAFB66200FC2980 /* ChatLLM.icon in Resources */ = {isa = PBXBuildFile; fileRef = 3D11527E2EAFB66200FC2980 /* ChatLLM.icon */; };
 		3D1342292EF6F07600AB678F /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 3D1342302EF6F07600AB678F /* Tokenizers */; };
 		3DD829762EB154F000D2EE7F /* AsyncAlgorithms in Frameworks */ = {isa = PBXBuildFile; productRef = 3DD829752EB154F000D2EE7F /* AsyncAlgorithms */; };
 		E52029172F572460005824D2 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = E52029162F572460005824D2 /* MLXEmbedders */; };
@@ -22,52 +22,52 @@
 			containerPortal = 3DAC543E2EAC24740054484A /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3DAC54452EAC24740054484A;
-			remoteInfo = "On-Device_LLM_Chat";
+			remoteInfo = "ChatLLM";
 		};
 		3DAC54602EAC24760054484A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3DAC543E2EAC24740054484A /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3DAC54452EAC24740054484A;
-			remoteInfo = "On-Device_LLM_Chat";
+			remoteInfo = "ChatLLM";
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "ChatLLM 2.icon"; sourceTree = "<group>"; };
+		3D11527E2EAFB66200FC2980 /* ChatLLM.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "ChatLLM.icon"; sourceTree = "<group>"; };
 		3D1B7FCF2F928C5F00EA41C7 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
-		3DAC54462EAC24740054484A /* On-Device_LLM_Chat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "On-Device_LLM_Chat.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3DAC54552EAC24760054484A /* On-Device_LLM_ChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "On-Device_LLM_ChatTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3DAC545F2EAC24760054484A /* On-Device_LLM_ChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "On-Device_LLM_ChatUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC54462EAC24740054484A /* ChatLLM.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ChatLLM.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC54552EAC24760054484A /* ChatLLMTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChatLLMTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChatLLMUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E5FD88882F548912004FD5CC /* Exceptions for "On-Device_LLM_Chat" folder in "On-Device_LLM_Chat" target */ = {
+		E5FD88882F548912004FD5CC /* Exceptions for "ChatLLM" folder in "ChatLLM" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				CoreML.xcconfig,
 			);
-			target = 3DAC54452EAC24740054484A /* On-Device_LLM_Chat */;
+			target = 3DAC54452EAC24740054484A /* ChatLLM */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		3DAC54482EAC24740054484A /* On-Device_LLM_Chat */ = {
+		3DAC54482EAC24740054484A /* ChatLLM */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				E5FD88882F548912004FD5CC /* Exceptions for "On-Device_LLM_Chat" folder in "On-Device_LLM_Chat" target */,
+				E5FD88882F548912004FD5CC /* Exceptions for "ChatLLM" folder in "ChatLLM" target */,
 			);
-			path = "On-Device_LLM_Chat";
+			path = "ChatLLM";
 			sourceTree = "<group>";
 		};
-		3DAC54582EAC24760054484A /* On-Device_LLM_ChatTests */ = {
+		3DAC54582EAC24760054484A /* ChatLLMTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "On-Device_LLM_ChatTests";
+			path = "ChatLLMTests";
 			sourceTree = "<group>";
 		};
-		3DAC54622EAC24760054484A /* On-Device_LLM_ChatUITests */ = {
+		3DAC54622EAC24760054484A /* ChatLLMUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "On-Device_LLM_ChatUITests";
+			path = "ChatLLMUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -107,11 +107,11 @@
 			isa = PBXGroup;
 			children = (
 				3D1B7FCF2F928C5F00EA41C7 /* LICENSE */,
-				3DAC54482EAC24740054484A /* On-Device_LLM_Chat */,
-				3DAC54582EAC24760054484A /* On-Device_LLM_ChatTests */,
-				3DAC54622EAC24760054484A /* On-Device_LLM_ChatUITests */,
+				3DAC54482EAC24740054484A /* ChatLLM */,
+				3DAC54582EAC24760054484A /* ChatLLMTests */,
+				3DAC54622EAC24760054484A /* ChatLLMUITests */,
 				3DAC54472EAC24740054484A /* Products */,
-				3D11527E2EAFB66200FC2980 /* ChatLLM 2.icon */,
+				3D11527E2EAFB66200FC2980 /* ChatLLM.icon */,
 				E52029152F572460005824D2 /* Frameworks */,
 			);
 			sourceTree = "<group>";
@@ -119,9 +119,9 @@
 		3DAC54472EAC24740054484A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3DAC54462EAC24740054484A /* On-Device_LLM_Chat.app */,
-				3DAC54552EAC24760054484A /* On-Device_LLM_ChatTests.xctest */,
-				3DAC545F2EAC24760054484A /* On-Device_LLM_ChatUITests.xctest */,
+				3DAC54462EAC24740054484A /* ChatLLM.app */,
+				3DAC54552EAC24760054484A /* ChatLLMTests.xctest */,
+				3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -136,9 +136,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3DAC54452EAC24740054484A /* On-Device_LLM_Chat */ = {
+		3DAC54452EAC24740054484A /* ChatLLM */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3DAC54692EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_Chat" */;
+			buildConfigurationList = 3DAC54692EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLM" */;
 			buildPhases = (
 				3DAC54422EAC24740054484A /* Sources */,
 				3DAC54432EAC24740054484A /* Frameworks */,
@@ -149,9 +149,9 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				3DAC54482EAC24740054484A /* On-Device_LLM_Chat */,
+				3DAC54482EAC24740054484A /* ChatLLM */,
 			);
-			name = "On-Device_LLM_Chat";
+			name = "ChatLLM";
 			packageProductDependencies = (
 				3D1342302EF6F07600AB678F /* Tokenizers */,
 				E52029162F572460005824D2 /* MLXEmbedders */,
@@ -159,13 +159,13 @@
 				E520291A2F572460005824D2 /* MLXLMCommon */,
 				E520291C2F572460005824D2 /* MLXVLM */,
 			);
-			productName = "On-Device_LLM_Chat";
-			productReference = 3DAC54462EAC24740054484A /* On-Device_LLM_Chat.app */;
+			productName = "ChatLLM";
+			productReference = 3DAC54462EAC24740054484A /* ChatLLM.app */;
 			productType = "com.apple.product-type.application";
 		};
-		3DAC54542EAC24760054484A /* On-Device_LLM_ChatTests */ = {
+		3DAC54542EAC24760054484A /* ChatLLMTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3DAC546C2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatTests" */;
+			buildConfigurationList = 3DAC546C2EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLMTests" */;
 			buildPhases = (
 				3DAC54512EAC24760054484A /* Sources */,
 				3DAC54522EAC24760054484A /* Frameworks */,
@@ -177,19 +177,19 @@
 				3DAC54572EAC24760054484A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				3DAC54582EAC24760054484A /* On-Device_LLM_ChatTests */,
+				3DAC54582EAC24760054484A /* ChatLLMTests */,
 			);
-			name = "On-Device_LLM_ChatTests";
+			name = "ChatLLMTests";
 			packageProductDependencies = (
 				3DD829752EB154F000D2EE7F /* AsyncAlgorithms */,
 			);
-			productName = "On-Device_LLM_ChatTests";
-			productReference = 3DAC54552EAC24760054484A /* On-Device_LLM_ChatTests.xctest */;
+			productName = "ChatLLMTests";
+			productReference = 3DAC54552EAC24760054484A /* ChatLLMTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		3DAC545E2EAC24760054484A /* On-Device_LLM_ChatUITests */ = {
+		3DAC545E2EAC24760054484A /* ChatLLMUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3DAC546F2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatUITests" */;
+			buildConfigurationList = 3DAC546F2EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLMUITests" */;
 			buildPhases = (
 				3DAC545B2EAC24760054484A /* Sources */,
 				3DAC545C2EAC24760054484A /* Frameworks */,
@@ -201,13 +201,13 @@
 				3DAC54612EAC24760054484A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				3DAC54622EAC24760054484A /* On-Device_LLM_ChatUITests */,
+				3DAC54622EAC24760054484A /* ChatLLMUITests */,
 			);
-			name = "On-Device_LLM_ChatUITests";
+			name = "ChatLLMUITests";
 			packageProductDependencies = (
 			);
-			productName = "On-Device_LLM_ChatUITests";
-			productReference = 3DAC545F2EAC24760054484A /* On-Device_LLM_ChatUITests.xctest */;
+			productName = "ChatLLMUITests";
+			productReference = 3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -255,9 +255,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				3DAC54452EAC24740054484A /* On-Device_LLM_Chat */,
-				3DAC54542EAC24760054484A /* On-Device_LLM_ChatTests */,
-				3DAC545E2EAC24760054484A /* On-Device_LLM_ChatUITests */,
+				3DAC54452EAC24740054484A /* ChatLLM */,
+				3DAC54542EAC24760054484A /* ChatLLMTests */,
+				3DAC545E2EAC24760054484A /* ChatLLMUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -267,7 +267,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3D11527F2EAFB66200FC2980 /* ChatLLM 2.icon in Resources */,
+				3D11527F2EAFB66200FC2980 /* ChatLLM.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -314,12 +314,12 @@
 /* Begin PBXTargetDependency section */
 		3DAC54572EAC24760054484A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 3DAC54452EAC24740054484A /* On-Device_LLM_Chat */;
+			target = 3DAC54452EAC24740054484A /* ChatLLM */;
 			targetProxy = 3DAC54562EAC24760054484A /* PBXContainerItemProxy */;
 		};
 		3DAC54612EAC24760054484A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 3DAC54452EAC24740054484A /* On-Device_LLM_Chat */;
+			target = 3DAC54452EAC24740054484A /* ChatLLM */;
 			targetProxy = 3DAC54602EAC24760054484A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -453,10 +453,10 @@
 		3DAC546A2EAC24760054484A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM 2";
+				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = "On-Device_LLM_Chat/On-Device_LLM_Chat.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "ChatLLM/ChatLLM.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COREML_CODEGEN_LANGU = "";
@@ -481,7 +481,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.16;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-Chat";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLM";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
@@ -502,10 +502,10 @@
 		3DAC546B2EAC24760054484A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM 2";
+				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = "On-Device_LLM_Chat/On-Device_LLM_Chat.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "ChatLLM/ChatLLM.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COREML_CODEGEN_LANGU = "";
@@ -530,7 +530,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.16;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-Chat";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLM";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
@@ -557,7 +557,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-ChatTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -568,7 +568,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/On-Device_LLM_Chat.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/On-Device_LLM_Chat";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChatLLM.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChatLLM";
 			};
 			name = Debug;
 		};
@@ -581,7 +581,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-ChatTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -592,7 +592,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/On-Device_LLM_Chat.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/On-Device_LLM_Chat";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChatLLM.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChatLLM";
 			};
 			name = Release;
 		};
@@ -603,7 +603,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-ChatUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -614,7 +614,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "On-Device_LLM_Chat";
+				TEST_TARGET_NAME = "ChatLLM";
 			};
 			name = Debug;
 		};
@@ -625,7 +625,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.On-Device-LLM-ChatUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -636,7 +636,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "On-Device_LLM_Chat";
+				TEST_TARGET_NAME = "ChatLLM";
 			};
 			name = Release;
 		};
@@ -652,7 +652,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		3DAC54692EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_Chat" */ = {
+		3DAC54692EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLM" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3DAC546A2EAC24760054484A /* Debug */,
@@ -661,7 +661,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		3DAC546C2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatTests" */ = {
+		3DAC546C2EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLMTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3DAC546D2EAC24760054484A /* Debug */,
@@ -670,7 +670,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		3DAC546F2EAC24760054484A /* Build configuration list for PBXNativeTarget "On-Device_LLM_ChatUITests" */ = {
+		3DAC546F2EAC24760054484A /* Build configuration list for PBXNativeTarget "ChatLLMUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3DAC54702EAC24760054484A /* Debug */,

@@ -72,7 +72,7 @@ To use MLX:
 ## Running the Project
 
 1. Open [ChatLLM.xcodeproj](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM.xcodeproj)
-2. Select the `On-Device_LLM_Chat` scheme
+2. Select the `ChatLLM` scheme
 3. Choose an iPhone or iPad simulator/device
 4. Build and run
 
@@ -80,20 +80,20 @@ Swift Package dependencies are resolved through Xcode. The project includes MLX-
 
 ## Project Structure
 
-- [On-Device_LLM_Chat](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat): main app target
-- [On-Device_LLM_ChatTests](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_ChatTests): unit tests
-- [On-Device_LLM_ChatUITests](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_ChatUITests): UI tests
+- [ChatLLM](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM): main app target
+- [ChatLLMTests](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLMTests): unit tests
+- [ChatLLMUITests](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLMUITests): UI tests
 - [Vendor/mlx-swift-lm](/Users/nevio/Desktop/Projects/ChatLLM/Vendor/mlx-swift-lm): local MLX package source
 
 Key app files:
 
-- [ContentView.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
-- [ChatView.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ChatView.swift): conversation screen and composer integration
-- [ChatViewModel.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
-- [ModelBackendBridge.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/ModelBackendBridge.swift): backend selection and capability gating
-- [MLXModelManager.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
-- [VisionAnalyzer.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/VisionAnalyzer.swift): Vision-based image analysis pipeline
-- [TavilySearchService.swift](/Users/nevio/Desktop/Projects/ChatLLM/On-Device_LLM_Chat/TavilySearchService.swift): optional web search integration
+- [ContentView.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
+- [ChatView.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ChatView.swift): conversation screen and composer integration
+- [ChatViewModel.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
+- [ModelBackendBridge.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ModelBackendBridge.swift): backend selection and capability gating
+- [MLXModelManager.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
+- [VisionAnalyzer.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/VisionAnalyzer.swift): Vision-based image analysis pipeline
+- [TavilySearchService.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/TavilySearchService.swift): optional web search integration
 
 ## Architecture Overview
 
@@ -108,8 +108,8 @@ Key app files:
 
 The repository includes:
 
-- unit tests in `On-Device_LLM_ChatTests`
-- UI tests in `On-Device_LLM_ChatUITests`
+- unit tests in `ChatLLMTests`
+- UI tests in `ChatLLMUITests`
 
 Run them from Xcode with `Product > Test`.
 

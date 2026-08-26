@@ -3,7 +3,7 @@
 *.mlmodelc
 *.bin
 weights/
-On-Device_LLM_Chat/**/*.mlmodelc/
+ChatLLM/**/*.mlmodelc/
 
 
 # === NEVER commit large ML models ===
@@ -11,7 +11,7 @@ On-Device_LLM_Chat/**/*.mlmodelc/
 *.mlmodel
 **/*weight.bin
 weights/
-On-Device_LLM_Chat/Qwen*mlmodelc/
+ChatLLM/Qwen*mlmodelc/
 
 
 # === Build artifacts (Xcode / Swift / ML projects) ===
