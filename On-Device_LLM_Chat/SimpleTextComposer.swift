@@ -35,9 +35,12 @@ enum ComposerReturnKeyBehavior {
 struct SimpleTextComposer: View {
     @Binding var text: String
     var placeholder: String
+    var focusRequest: Int
+    var isEditing: Bool
     var onSend: () -> Void
     var onStop: () -> Void
     var onClear: () -> Void
+    var onCancelEditing: () -> Void
     var canSend: Bool
     var isGenerating: Bool
     var onCamera: (() -> Void)?
@@ -122,6 +125,15 @@ struct SimpleTextComposer: View {
                         .presentationDragIndicator(.visible)
                     }
 
+                    if isEditing {
+                        Button(String(localized: "Cancel edit"), action: onCancelEditing)
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(.red)
+                            .accessibilityIdentifier("chat.edit.cancel")
+                    }
+
                     Spacer()
 
                     Button {
@@ -178,6 +190,9 @@ struct SimpleTextComposer: View {
                     style: .continuous
                 )
             )
+        }
+        .onChange(of: focusRequest) {
+            isTextViewFocused = true
         }
     }
 

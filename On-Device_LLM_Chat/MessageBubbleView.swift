@@ -177,6 +177,13 @@ struct MessageCellView: View {
                                 }
                             )
                         }
+                        .accessibilityActions {
+                            if message.role == .user {
+                                Button(String(localized: "Edit")) {
+                                    onEdit(message)
+                                }
+                            }
+                        }
 
                 }
             }
@@ -756,7 +763,7 @@ struct MessageContextMenuView: View {
             Button {
                 deferMenuSafe { onEdit(message) }
             } label: {
-                Label(String(localized: "Edit & Regenerate"), systemImage: "pencil.circle")
+                Label(String(localized: "Edit"), systemImage: "pencil.circle")
             }
         }
     }
@@ -815,64 +822,6 @@ struct MessageSwipeActionsView: View {
             }
             .tint(.orange)
         }
-    }
-}
-
-// MARK: - Edit message sheet
-
-struct EditMessageSheet: View {
-    @Binding var editedText: String
-    let isGenerating: Bool
-    let onSave: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    TextEditor(text: $editedText)
-                        .font(.body)
-                        .frame(minHeight: 200)
-                        .textInputAutocapitalization(.sentences)
-                        .autocorrectionDisabled(false)
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                                        .strokeBorder(Color.secondary.opacity(0.2))
-                                )
-                        )
-                        .overlay(alignment: .topLeading) {
-                            if editedText.isEmpty {
-                                Text(String(localized: "Enter your message here…"))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 20)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                }
-                .padding()
-            }
-            .navigationTitle(String(localized: "Edit Message"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Cancel"), action: onCancel)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Save & Regenerate")) {
-                        onSave()
-                    }
-                    .disabled(editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
     }
 }
 

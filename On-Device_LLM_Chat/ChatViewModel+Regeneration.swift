@@ -9,6 +9,11 @@ import Foundation
 import SwiftData
 import os
 
+struct UserMessageEditRewindResult: Equatable {
+    let restoredText: String
+    let requiresTitleRegeneration: Bool
+}
+
 extension ChatViewModel {
 
     // MARK: - Scheduled Regeneration (Menu-Safe)
@@ -188,88 +193,48 @@ extension ChatViewModel {
         await streamAssistant(into: msg, basedOnHistoryUpTo: msg.order, additionalUserInstruction: trimmed)
     }
 
-    func editUserMessageAndRegenerate(from messageID: UUID, newText: String) async {
-        guard !isRegenerating else {
-            logger.warning("Edit and regenerate failed: already regenerating (double-tap protection)")
-            return
-        }
-        isRegenerating = true
-        defer { isRegenerating = false }
-
-        guard await waitForStreamToFinish() else { return }
-
-        guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
-            logger.warning("Edit and regenerate failed: message not found")
-            return
-        }
-        // Force SwiftData fault resolution before async boundaries
-        let messageRole = conversation.messages[index].role
-        let messageOrder = conversation.messages[index].order
-
-        guard messageRole == .user else {
-            logger.warning("Edit and regenerate failed: message is not a user message")
-            return
+    @discardableResult
+    func rewindForEditingUserMessage(messageID: UUID) -> UserMessageEditRewindResult? {
+        guard !isGenerating, !isRegenerating else {
+            logger.warning("Edit failed: generation is in progress")
+            return nil
         }
 
-        guard !Task.isCancelled else {
-            logger.warning("Edit and regenerate failed: task was cancelled")
-            return
+        guard let message = conversation.messages.first(where: { $0.id == messageID }) else {
+            logger.warning("Edit failed: message not found")
+            return nil
         }
 
-        conversation.messages[index].text = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-        conversation.lastUpdated = Date()
+        guard message.role == .user else {
+            logger.warning("Edit failed: message is not a user message")
+            return nil
+        }
 
-        let assistantToRegenerate = conversation.messages
-            .filter({ $0.role == .assistant && $0.order > messageOrder })
-            .sorted(by: { $0.order < $1.order })
-            .first
+        let restoredText = message.text
+        let requiresTitleRegeneration = !conversation.messages.contains {
+            $0.role == .user && $0.order < message.order
+        }
+        let messagesToDelete = conversation.messages.filter { $0.order >= message.order }
+        let idsToDelete = Set(messagesToDelete.map(\.id))
 
-        let assistantID = assistantToRegenerate?.id
-
-        let messagesToDelete = conversation.messages
-            .filter { $0.order > messageOrder }
-
-        let idsToDelete = Set(messagesToDelete.lazy.filter { $0.id != assistantID }.map(\.id))
         conversation.messages.removeAll { idsToDelete.contains($0.id) }
-        for msg in messagesToDelete where idsToDelete.contains(msg.id) {
-            context.delete(msg)
+        for message in messagesToDelete {
+            context.delete(message)
         }
 
         renumberMessagesByOrder()
-        immediateSave()
-
-        if let targetID = assistantID {
-            // Look up by ID after renumbering; index is stale.
-            guard let assistant = conversation.messages.first(where: { $0.id == targetID }) else {
-                logger.error("Edit and regenerate failed: Assistant message disappeared after renumbering")
-                return
-            }
-            assistant.promptSnapshot = nil
-
-            // CRITICAL FIX (Bug 1): Inline instead of calling internal method to keep
-            // isRegenerating true throughout the entire operation.
-            let updatedOrder = assistant.order
-
-            let precedingUserMessage = conversation.messages
-                .filter { $0.role == .user && $0.order < updatedOrder }
-                .sortedByOrder
-                .last
-
-            let shouldUseReasoning = await resolvedReasoningMode(
-                for: precedingUserMessage, logContext: "editAndRegenerate")
-
-            guard !Task.isCancelled else {
-                logger.warning("Edit and regenerate cancelled after reasoning evaluation")
-                return
-            }
-
-            assistant.isReasoningMode = shouldUseReasoning
-            conversation.lastUpdated = Date()
-            immediateSave()
-            invalidateMLXConversationSession(reason: "edit_user_message_and_regenerate")
-
-            await streamAssistant(into: assistant, basedOnHistoryUpTo: assistant.order)
+        if requiresTitleRegeneration {
+            conversation.title = String(localized: "New Chat")
+            conversation.hasAutoGeneratedTitle = false
         }
+        conversation.lastUpdated = Date()
+        immediateSave()
+        invalidateMLXConversationSession(reason: "rewind_for_user_message_edit")
+
+        return UserMessageEditRewindResult(
+            restoredText: restoredText,
+            requiresTitleRegeneration: requiresTitleRegeneration
+        )
     }
 
     func deleteMessageAndMaybeTrim(_ message: Message) async {

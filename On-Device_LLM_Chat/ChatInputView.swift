@@ -12,11 +12,14 @@ import SwiftUI
 struct ComposerView: View {
     @Binding var text: String
     let placeholder: String
+    let focusRequest: Int
+    let isEditing: Bool
     let canSend: Bool
     let isGenerating: Bool
     let onSend: () -> Void
     let onStop: () -> Void
     let onClear: () -> Void
+    let onCancelEditing: () -> Void
     let onCamera: () -> Void
     let onPhotosPicker: () -> Void
     let onFileImporter: () -> Void
@@ -32,9 +35,12 @@ struct ComposerView: View {
         SimpleTextComposer(
             text: $text,
             placeholder: placeholder,
+            focusRequest: focusRequest,
+            isEditing: isEditing,
             onSend: onSend,
             onStop: onStop,
             onClear: onClear,
+            onCancelEditing: onCancelEditing,
             canSend: canSend,
             isGenerating: isGenerating,
             onCamera: onCamera,

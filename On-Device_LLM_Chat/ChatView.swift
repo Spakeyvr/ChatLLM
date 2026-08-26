@@ -23,9 +23,8 @@ struct ChatView: View {
     var onNewChat: (() -> Void)? = nil
 
     @State private var inputText: String = ""
-    @State private var editingMessage: Message?
-    @State private var editedText: String = ""
-    @State private var showEditSheet = false
+    @State private var composerFocusRequest = 0
+    @State private var editingSession: MessageEditingSession?
     @State private var shareText: String = ""
     @State private var isSharePresented: Bool = false
 
@@ -66,9 +65,14 @@ struct ChatView: View {
     // Pure computed property — no side effects, no @State mutations during body evaluation.
     // Sorting a typical message list (~10–50 items) is negligible; SwiftUI diffs the result.
     private var sortedMessages: [Message] {
-        viewModel.conversation.messages
+        let messages = viewModel.conversation.messages
             .filter { $0.role != .system }
             .sortedByOrder
+
+        guard let editingSession else {
+            return messages
+        }
+        return messages.filter { $0.order < editingSession.messageOrder }
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
@@ -107,6 +111,12 @@ struct ChatView: View {
         let retry: (() -> Void)?
     }
 
+    private struct MessageEditingSession {
+        let messageID: UUID
+        let messageOrder: Int
+        let previousInputText: String
+    }
+
     static func shouldPresentInAppBrowser(for url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else {
             return false
@@ -126,11 +136,17 @@ struct ChatView: View {
                                 message: msg,
                                 viewModel: viewModel,
                                 onEdit: { message in
-                                    // Defer to allow context menu to dismiss cleanly
                                     menuSafe {
-                                        editingMessage = message
-                                        editedText = message.text
-                                        showEditSheet = true
+                                        guard !viewModel.isGenerating else { return }
+
+                                        let previousInputText = editingSession?.previousInputText ?? inputText
+                                        editingSession = MessageEditingSession(
+                                            messageID: message.id,
+                                            messageOrder: message.order,
+                                            previousInputText: previousInputText
+                                        )
+                                        inputText = message.text
+                                        composerFocusRequest += 1
                                     }
                                 },
                                 onShare: { text in
@@ -243,23 +259,6 @@ struct ChatView: View {
             }
             .background(Color.clear)
         }
-        .sheet(isPresented: $showEditSheet) {
-            EditMessageSheet(
-                editedText: $editedText,
-                isGenerating: viewModel.isGenerating,
-                onSave: {
-                    guard let message = editingMessage else { return }
-                    // Defer to ensure sheet button tap completes
-                    menuSafe {
-                        Task {
-                            await viewModel.editUserMessageAndRegenerate(from: message.id, newText: editedText)
-                            showEditSheet = false
-                        }
-                    }
-                },
-                onCancel: { showEditSheet = false }
-            )
-        }
         .sheet(isPresented: $isSharePresented, onDismiss: {
             shareText = ""
         }) {
@@ -370,6 +369,8 @@ struct ChatView: View {
         ComposerView(
             text: $inputText,
             placeholder: String(localized: "Ask anything"),
+            focusRequest: composerFocusRequest,
+            isEditing: editingSession != nil,
             canSend: selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             isGenerating: viewModel.isGenerating,
             onSend: {
@@ -381,6 +382,7 @@ struct ChatView: View {
             onClear: {
                 inputText = ""
             },
+            onCancelEditing: cancelEditing,
             onCamera: {
                 showCameraCapture = true
             },
@@ -430,6 +432,8 @@ struct ChatView: View {
                 detections = analysis?.objects ?? detections
             }
 
+            guard let shouldRegenerateTitle = commitEditingIfNeeded() else { return }
+
             // Clear immediately for snappy feel, then send
             inputText = ""
             clearSelectedImage()
@@ -439,7 +443,8 @@ struct ChatView: View {
                     text: textToSend.isEmpty ? "Describe what you see" : textToSend,
                     image: image,
                     detections: detections,
-                    analysisResult: analysis
+                    analysisResult: analysis,
+                    regenerateTitle: shouldRegenerateTitle
                 )
             }
             return
@@ -447,6 +452,7 @@ struct ChatView: View {
 
         // Normal text-only message
         guard !viewModel.isGenerating, !textToSend.isEmpty else { return }
+        guard let shouldRegenerateTitle = commitEditingIfNeeded() else { return }
 
         let shouldSearch = forceSearch
         let shouldDisableToolCalls = effectiveDisableToolCalls
@@ -459,9 +465,27 @@ struct ChatView: View {
             await viewModel.send(
                 userText: textToSend,
                 forceSearch: shouldSearch,
-                disableToolCalls: shouldDisableToolCalls
+                disableToolCalls: shouldDisableToolCalls,
+                regenerateTitle: shouldRegenerateTitle
             )
         }
+    }
+
+    private func cancelEditing() {
+        guard let editingSession else { return }
+        inputText = editingSession.previousInputText
+        self.editingSession = nil
+        composerFocusRequest += 1
+    }
+
+    private func commitEditingIfNeeded() -> Bool? {
+        guard let editingSession else { return false }
+        guard let rewind = viewModel.rewindForEditingUserMessage(messageID: editingSession.messageID) else {
+            return nil
+        }
+
+        self.editingSession = nil
+        return rewind.requiresTitleRegeneration
     }
 
     private func scrollToMessage(id: UUID, proxy: ScrollViewProxy, animated: Bool) {

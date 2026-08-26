@@ -30,7 +30,8 @@ extension ChatViewModel {
         text: String,
         image: UIImage,
         detections: [DetectedObject]? = nil,
-        analysisResult: VisionAnalysisResult? = nil
+        analysisResult: VisionAnalysisResult? = nil,
+        regenerateTitle: Bool = false
     ) async {
         logger.debug("sendWithImage called")
 
@@ -49,7 +50,8 @@ extension ChatViewModel {
                 image: image,
                 detections: detections,
                 analysisResult: analysisResult,
-                generationID: generationID
+                generationID: generationID,
+                regenerateTitle: regenerateTitle
             )
         } else {
             await sendWithVisionFallback(
@@ -57,7 +59,8 @@ extension ChatViewModel {
                 image: image,
                 detections: detections,
                 analysisResult: analysisResult,
-                generationID: generationID
+                generationID: generationID,
+                regenerateTitle: regenerateTitle
             )
         }
     }
@@ -67,7 +70,8 @@ extension ChatViewModel {
         image: UIImage,
         detections: [DetectedObject]?,
         analysisResult: VisionAnalysisResult?,
-        generationID: UUID
+        generationID: UUID,
+        regenerateTitle: Bool
     ) async {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: userPrompt,
@@ -76,7 +80,7 @@ extension ChatViewModel {
 
         guard isGenerationActive(generationID) else { return }
 
-        let turn = appendUserMessage(userPrompt)
+        let turn = appendUserMessage(userPrompt, forceAutoNaming: regenerateTitle)
         let userMsg = turn.message
         guard let canonicalImageURL = await attachImage(
             image,
@@ -156,7 +160,8 @@ extension ChatViewModel {
         analysisResult: VisionAnalysisResult?,
         generationID: UUID,
         existingUserMessage: Message? = nil,
-        needsAutoNaming existingNeedsAutoNaming: Bool? = nil
+        needsAutoNaming existingNeedsAutoNaming: Bool? = nil,
+        regenerateTitle: Bool = false
     ) async {
         let enhancedText = buildVisionEnhancedText(
             userPrompt: userPrompt,
@@ -178,7 +183,7 @@ extension ChatViewModel {
             userMsg.text = enhancedText
             needsAutoNaming = existingNeedsAutoNaming ?? false
         } else {
-            let turn = appendUserMessage(enhancedText)
+            let turn = appendUserMessage(enhancedText, forceAutoNaming: regenerateTitle)
             userMsg = turn.message
             needsAutoNaming = turn.needsAutoNaming
             _ = await attachImage(
