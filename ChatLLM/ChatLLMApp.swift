@@ -7,9 +7,33 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
+
+final class ChatLLMAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == BackgroundModelDownloadSession.sessionIdentifier else {
+            completionHandler()
+            return
+        }
+
+        BackgroundModelDownloadSession.shared.handleEventsForBackgroundSession(
+            completionHandler: completionHandler
+        )
+
+        // Recreate the model manager promptly when iOS relaunches the app to
+        // deliver background-session events. It reconnects to the persisted task.
+        _ = ModelBackendBridge.shared
+    }
+}
 
 @main
 struct ChatLLMApp: App {
+    @UIApplicationDelegateAdaptor(ChatLLMAppDelegate.self) private var appDelegate
+
     private static let appSchema = Schema([
         Conversation.self,
         Message.self,

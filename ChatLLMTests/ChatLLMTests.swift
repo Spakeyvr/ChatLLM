@@ -2348,6 +2348,27 @@ struct ChatLLMTests {
         #expect(rejected)
     }
 
+    @Test func modelDownloaderRequestsHuggingFaceBlobMetadata() throws {
+        let url = try #require(ModelDownloader.metadataURL(repoId: "owner/model"))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        #expect(components.path == "/api/models/owner/model")
+        #expect(components.queryItems == [URLQueryItem(name: "blobs", value: "true")])
+    }
+
+    @Test func backgroundModelDownloadDescriptorRoundTrips() throws {
+        let encoded = try #require(BackgroundModelDownloadSession.encodeDescriptor(
+            id: "owner/model/model.safetensors",
+            destinationPath: "/tmp/model.safetensors.download"
+        ))
+        let decoded = try #require(
+            BackgroundModelDownloadSession.decodeDescriptorForTesting(encoded)
+        )
+
+        #expect(decoded.id == "owner/model/model.safetensors")
+        #expect(decoded.destinationPath == "/tmp/model.safetensors.download")
+    }
+
     @Test func modelDownloaderKeepsNestedFilesInsideTargetDirectory() throws {
         let targetDir = URL(fileURLWithPath: "/tmp/models", isDirectory: true)
         let urls = try ModelDownloader.destinationURLs(

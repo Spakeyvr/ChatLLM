@@ -258,7 +258,7 @@ struct OnboardingView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 ProgressView(value: modelManager.downloadProgress)
-                Text("Downloading \(Int(modelManager.downloadProgress * 100))%")
+                Text("Downloading \(Int((modelManager.downloadProgress * 100).rounded()))%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("You can finish onboarding now and keep using the app while this continues.")

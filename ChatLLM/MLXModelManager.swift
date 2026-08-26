@@ -261,6 +261,7 @@ final class MLXModelManager: ObservableObject {
     nonisolated private static let rotorQuantMediaAttentionBlockTokens = 64
     nonisolated private static let memoryConstrainedMaxKVSize = 4096
     private static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
+    private static let activeBackgroundDownloadModelIDKey = "mlx.activeBackgroundDownloadModelID"
 
     /// Model directories left behind by superseded releases. Nothing in
     /// `modelDefinitions` refers to them, so the picker cannot show or delete
@@ -572,6 +573,8 @@ final class MLXModelManager: ObservableObject {
                 self?.refreshModelAvailability()
             }
         }
+
+        restoreBackgroundDownloadIfNeeded()
     }
 
     deinit {
@@ -1268,6 +1271,28 @@ final class MLXModelManager: ObservableObject {
 
     // MARK: - Download
 
+    private func restoreBackgroundDownloadIfNeeded() {
+        guard !Self.isUITestFakeDownloadsEnabled,
+              let modelID = UserDefaults.standard.string(
+                forKey: Self.activeBackgroundDownloadModelIDKey
+              ) else {
+            return
+        }
+
+        guard let model = model(withID: modelID) else {
+            UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
+            return
+        }
+
+        guard !model.isAvailable else {
+            UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
+            return
+        }
+
+        logger.notice("Restoring background model download: id=\(modelID, privacy: .public)")
+        startDownload(for: model)
+    }
+
     func startDownload(for model: MLXModelInfo) {
         guard !isDownloading else { return }
         if let issue = availabilityIssue(for: model) {
@@ -1286,16 +1311,17 @@ final class MLXModelManager: ObservableObject {
             return
         }
 
+        UserDefaults.standard.set(model.id, forKey: Self.activeBackgroundDownloadModelIDKey)
+
         let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
         let targetDir = modelsDir.appendingPathComponent(model.localDirName, isDirectory: true)
-        let tempDir = modelsDir.appendingPathComponent(".\(model.localDirName).download-\(UUID().uuidString)", isDirectory: true)
+        let tempDir = partialDownloadDirectory(for: model, in: modelsDir)
 
         downloaderTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
-                self.cleanupPartialDownloads(for: model, in: modelsDir)
-                try? FileManager.default.removeItem(at: tempDir)
+                self.cleanupLegacyPartialDownloads(for: model, in: modelsDir)
                 try await self.downloader.download(
                     repoId: model.hfRepoId,
                     to: tempDir,
@@ -1316,27 +1342,41 @@ final class MLXModelManager: ObservableObject {
                     self.isDownloading = false
                     self.activeDownloadModelID = nil
                     self.downloadErrorModelID = nil
+                    UserDefaults.standard.removeObject(
+                        forKey: Self.activeBackgroundDownloadModelIDKey
+                    )
                     self.refreshModelAvailability()
                     self.startLoading(modelID: model.id, source: "download_complete")
                 }
                 self.logger.notice("Model downloaded: \(model.displayName, privacy: .public)")
             } catch is CancellationError {
+                BackgroundModelDownloadSession.shared.cancelTransfers(
+                    withIDPrefix: model.hfRepoId + "/"
+                )
                 await MainActor.run {
                     self.isDownloading = false
                     self.activeDownloadModelID = nil
                     self.downloadProgress = 0
                     self.downloadError = nil
                     self.downloadErrorModelID = nil
+                    UserDefaults.standard.removeObject(
+                        forKey: Self.activeBackgroundDownloadModelIDKey
+                    )
                 }
                 self.cleanupPartialDownload(at: tempDir)
             } catch {
+                BackgroundModelDownloadSession.shared.cancelTransfers(
+                    withIDPrefix: model.hfRepoId + "/"
+                )
                 await MainActor.run {
                     self.isDownloading = false
                     self.activeDownloadModelID = nil
                     self.downloadError = error.localizedDescription
                     self.downloadErrorModelID = model.id
+                    UserDefaults.standard.removeObject(
+                        forKey: Self.activeBackgroundDownloadModelIDKey
+                    )
                 }
-                self.cleanupPartialDownload(at: tempDir)
                 self.logger.error("Model download failed: \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
@@ -1351,9 +1391,14 @@ final class MLXModelManager: ObservableObject {
         downloadProgress = 0
         downloadError = nil
         downloadErrorModelID = nil
+        UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
         if let model {
             let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
-            cleanupPartialDownloads(for: model, in: modelsDir)
+            BackgroundModelDownloadSession.shared.cancelTransfers(
+                withIDPrefix: model.hfRepoId + "/"
+            )
+            cleanupPartialDownload(at: partialDownloadDirectory(for: model, in: modelsDir))
+            cleanupLegacyPartialDownloads(for: model, in: modelsDir)
         }
     }
 
@@ -1372,7 +1417,11 @@ final class MLXModelManager: ObservableObject {
         }
     }
 
-    private func cleanupPartialDownloads(for model: MLXModelInfo, in modelsDir: URL) {
+    private func partialDownloadDirectory(for model: MLXModelInfo, in modelsDir: URL) -> URL {
+        modelsDir.appendingPathComponent(".\(model.localDirName).download", isDirectory: true)
+    }
+
+    private func cleanupLegacyPartialDownloads(for model: MLXModelInfo, in modelsDir: URL) {
         let tempPrefix = ".\(model.localDirName).download-"
         let contents = (try? FileManager.default.contentsOfDirectory(at: modelsDir, includingPropertiesForKeys: nil)) ?? []
         for dir in contents where dir.lastPathComponent.hasPrefix(tempPrefix) {
