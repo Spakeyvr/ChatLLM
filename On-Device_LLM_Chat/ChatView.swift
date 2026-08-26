@@ -117,6 +117,11 @@ struct ChatView: View {
         let previousInputText: String
     }
 
+    private struct MessageEditingCommit {
+        let messageID: UUID?
+        let requiresTitleRegeneration: Bool
+    }
+
     static func shouldPresentInAppBrowser(for url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else {
             return false
@@ -432,7 +437,8 @@ struct ChatView: View {
                 detections = analysis?.objects ?? detections
             }
 
-            guard let shouldRegenerateTitle = commitEditingIfNeeded() else { return }
+            let replacementText = textToSend.isEmpty ? "Describe what you see" : textToSend
+            guard let editingCommit = commitEditingIfNeeded(replacementText: replacementText) else { return }
 
             // Clear immediately for snappy feel, then send
             inputText = ""
@@ -440,11 +446,12 @@ struct ChatView: View {
 
             Task {
                 await viewModel.sendWithImage(
-                    text: textToSend.isEmpty ? "Describe what you see" : textToSend,
+                    text: replacementText,
                     image: image,
                     detections: detections,
                     analysisResult: analysis,
-                    regenerateTitle: shouldRegenerateTitle
+                    regenerateTitle: editingCommit.requiresTitleRegeneration,
+                    editedUserMessageID: editingCommit.messageID
                 )
             }
             return
@@ -452,7 +459,7 @@ struct ChatView: View {
 
         // Normal text-only message
         guard !viewModel.isGenerating, !textToSend.isEmpty else { return }
-        guard let shouldRegenerateTitle = commitEditingIfNeeded() else { return }
+        guard let editingCommit = commitEditingIfNeeded(replacementText: textToSend) else { return }
 
         let shouldSearch = forceSearch
         let shouldDisableToolCalls = effectiveDisableToolCalls
@@ -466,7 +473,8 @@ struct ChatView: View {
                 userText: textToSend,
                 forceSearch: shouldSearch,
                 disableToolCalls: shouldDisableToolCalls,
-                regenerateTitle: shouldRegenerateTitle
+                regenerateTitle: editingCommit.requiresTitleRegeneration,
+                editedUserMessageID: editingCommit.messageID
             )
         }
     }
@@ -478,14 +486,22 @@ struct ChatView: View {
         composerFocusRequest += 1
     }
 
-    private func commitEditingIfNeeded() -> Bool? {
-        guard let editingSession else { return false }
-        guard let rewind = viewModel.rewindForEditingUserMessage(messageID: editingSession.messageID) else {
+    private func commitEditingIfNeeded(replacementText: String) -> MessageEditingCommit? {
+        guard let editingSession else {
+            return MessageEditingCommit(messageID: nil, requiresTitleRegeneration: false)
+        }
+        guard let rewind = viewModel.rewindForEditingUserMessage(
+            messageID: editingSession.messageID,
+            replacementText: replacementText
+        ) else {
             return nil
         }
 
         self.editingSession = nil
-        return rewind.requiresTitleRegeneration
+        return MessageEditingCommit(
+            messageID: rewind.messageID,
+            requiresTitleRegeneration: rewind.requiresTitleRegeneration
+        )
     }
 
     private func scrollToMessage(id: UUID, proxy: ScrollViewProxy, animated: Bool) {

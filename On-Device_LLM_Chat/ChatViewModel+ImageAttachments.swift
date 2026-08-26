@@ -31,7 +31,8 @@ extension ChatViewModel {
         image: UIImage,
         detections: [DetectedObject]? = nil,
         analysisResult: VisionAnalysisResult? = nil,
-        regenerateTitle: Bool = false
+        regenerateTitle: Bool = false,
+        editedUserMessageID: UUID? = nil
     ) async {
         logger.debug("sendWithImage called")
 
@@ -51,7 +52,8 @@ extension ChatViewModel {
                 detections: detections,
                 analysisResult: analysisResult,
                 generationID: generationID,
-                regenerateTitle: regenerateTitle
+                regenerateTitle: regenerateTitle,
+                editedUserMessageID: editedUserMessageID
             )
         } else {
             await sendWithVisionFallback(
@@ -60,7 +62,8 @@ extension ChatViewModel {
                 detections: detections,
                 analysisResult: analysisResult,
                 generationID: generationID,
-                regenerateTitle: regenerateTitle
+                regenerateTitle: regenerateTitle,
+                editedUserMessageID: editedUserMessageID
             )
         }
     }
@@ -71,7 +74,8 @@ extension ChatViewModel {
         detections: [DetectedObject]?,
         analysisResult: VisionAnalysisResult?,
         generationID: UUID,
-        regenerateTitle: Bool
+        regenerateTitle: Bool,
+        editedUserMessageID: UUID?
     ) async {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: userPrompt,
@@ -80,7 +84,11 @@ extension ChatViewModel {
 
         guard isGenerationActive(generationID) else { return }
 
-        let turn = appendUserMessage(userPrompt, forceAutoNaming: regenerateTitle)
+        guard let turn = prepareUserMessageForSend(
+            userPrompt,
+            forceAutoNaming: regenerateTitle,
+            replacingMessageID: editedUserMessageID
+        ) else { return }
         let userMsg = turn.message
         guard let canonicalImageURL = await attachImage(
             image,
@@ -161,7 +169,8 @@ extension ChatViewModel {
         generationID: UUID,
         existingUserMessage: Message? = nil,
         needsAutoNaming existingNeedsAutoNaming: Bool? = nil,
-        regenerateTitle: Bool = false
+        regenerateTitle: Bool = false,
+        editedUserMessageID: UUID? = nil
     ) async {
         let enhancedText = buildVisionEnhancedText(
             userPrompt: userPrompt,
@@ -183,7 +192,11 @@ extension ChatViewModel {
             userMsg.text = enhancedText
             needsAutoNaming = existingNeedsAutoNaming ?? false
         } else {
-            let turn = appendUserMessage(enhancedText, forceAutoNaming: regenerateTitle)
+            guard let turn = prepareUserMessageForSend(
+                enhancedText,
+                forceAutoNaming: regenerateTitle,
+                replacingMessageID: editedUserMessageID
+            ) else { return }
             userMsg = turn.message
             needsAutoNaming = turn.needsAutoNaming
             _ = await attachImage(
