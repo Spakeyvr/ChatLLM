@@ -1,31 +1,39 @@
 
 # Core ML / LLM models (never commit these)
+*.mlmodel
 *.mlmodelc
 *.bin
+*.safetensors
+*.gguf
 weights/
-ChatLLM/**/*.mlmodelc/
 
-
-# === NEVER commit large ML models ===
-*.mlmodelc/
-*.mlmodel
-**/*weight.bin
-weights/
-ChatLLM/Qwen*mlmodelc/
-
-
-# === Build artifacts (Xcode / Swift / ML projects) ===
+# Xcode build artifacts and user state
 build/
-**/build/
-.DS_Store
+DerivedData/
+*.xcresult/
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+*.ipa
 *.xcuserstate
-*.xcworkspace/xcuserdata/
 xcuserdata/
+
+# Swift Package Manager build state
+.build/
+.swiftpm/
+
+# Local secrets and signing credentials
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.mobileprovision
+
+# Local tools and operating-system metadata
+.DS_Store
 .Claude/
 .claude/
-
-# Local webhook relay secrets
-Scripts/.env
 
 # Local repo instructions
 AGENTS.md
