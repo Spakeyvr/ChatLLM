@@ -6,54 +6,53 @@
 //
 
 import SwiftUI
-import Combine
 
 // MARK: - Inline thinking indicator shown during streaming
 
 struct InlineThinkingView: View {
     var text: String = "Thinking…"
     let onTap: (() -> Void)?
-    @State private var phase: Int = 0
     @State private var shimmerOffset: CGFloat = -0.4
 
-    private let ticker = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
-
     var body: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 3) {
-            }
-            .onReceive(ticker) { _ in
-                phase = (phase + 1) % 3
-            }
-
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(.gray)
-                .overlay {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .white.opacity(0.85), location: 0.5),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
-                        endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
-                    )
-                    .mask {
-                        Text(text)
-                            .font(.subheadline)
-                    }
-                    .blendMode(.plusLighter)
+        Group {
+            if let onTap {
+                Button(action: onTap) {
+                    thinkingLabel
                 }
-                .onAppear {
-                    shimmerOffset = -0.4
-                    withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                        shimmerOffset = 1.4
-                    }
-                }
+                .buttonStyle(.plain)
+            } else {
+                thinkingLabel
+            }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { onTap?() }
+    }
+
+    private var thinkingLabel: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.gray)
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .white.opacity(0.85), location: 0.5),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
+                    endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
+                )
+                .mask {
+                    Text(text)
+                        .font(.subheadline)
+                }
+                .blendMode(.plusLighter)
+            }
+            .onAppear {
+                shimmerOffset = -0.4
+                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 1.4
+                }
+            }
     }
 }
 

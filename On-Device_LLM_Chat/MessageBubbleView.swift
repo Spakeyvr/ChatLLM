@@ -352,7 +352,7 @@ struct StandardMessageBubble: View {
                 .font(.system(size: messageFontSize))
                 .foregroundStyle(isSystem ? .secondary : .primary)
         } else {
-            if !requiresAdvancedRendering {
+            if isStreaming || !requiresAdvancedRendering {
                 let processedText = LatexProcessor.process(text)
                 Group {
                     if let attributed = try? AttributedString(markdown: processedText) {
@@ -1026,19 +1026,19 @@ struct MessageImageAttachmentView: View {
             await loadImage()
         }
         .sheet(isPresented: $showFullscreen) {
-            if let image = image {
-                FullscreenImageView(
-                    image: image,
-                    detections: attachment.getDetectionResults(),
-                    isPresented: $showFullscreen
-                )
-            }
+            FullscreenAttachmentImageView(
+                attachment: attachment,
+                isPresented: $showFullscreen
+            )
         }
     }
 
     private func loadImage() async {
         isLoading = true
-        image = await attachment.loadImage()
+        image = await DiskBackedImageLoader.loadThumbnail(
+            at: attachment.actualFileURL,
+            maxPixelSize: 720
+        )
         isLoading = false
     }
 }

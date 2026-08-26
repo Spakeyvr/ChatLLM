@@ -228,6 +228,30 @@ struct On_Device_LLM_ChatTests {
         #expect(trailingChunk == nil)
     }
 
+    @Test func wrappedXMLToolCallStreamFilterResumesAfterClosedWrapperWithoutToolEvent() async {
+        let filter = WrappedXMLToolCallStreamFilter()
+
+        let visible = await filter.consume(
+            "Before <tool_call><function=webSearch></function></tool_call>After"
+        )
+        let trailing = await filter.finish()
+
+        #expect(visible == "Before After")
+        #expect(trailing == nil)
+    }
+
+    @Test func wrappedXMLToolCallStreamFilterRecoversTrailingTextAfterMalformedOuterWrapper() async {
+        let filter = WrappedXMLToolCallStreamFilter()
+
+        let visible = await filter.consume(
+            "Before <tool_call><function=webSearch></function>After"
+        )
+        let trailing = await filter.finish()
+
+        #expect(visible == "Before ")
+        #expect(trailing == "After")
+    }
+
     @Test func qwenToolArgumentNormalizationUnwrapsJSONValueStrings() {
         let normalized = MLXModelManager.normalizedToolArguments([
             "query": JSONValue.string("OpenAI latest model")
@@ -305,6 +329,45 @@ struct On_Device_LLM_ChatTests {
         #expect(scope == .none)
     }
 
+    @Test func mlxGenerationCommitRequiresMatchingLoadAndRevision() {
+        let loadID = UUID()
+
+        #expect(MLXInferenceWorker.generationStateIsCurrent(
+            expectedLoadID: loadID,
+            currentLoadID: loadID,
+            expectedStateRevision: 4,
+            currentStateRevision: 4
+        ))
+        #expect(!MLXInferenceWorker.generationStateIsCurrent(
+            expectedLoadID: loadID,
+            currentLoadID: UUID(),
+            expectedStateRevision: 4,
+            currentStateRevision: 4
+        ))
+        #expect(!MLXInferenceWorker.generationStateIsCurrent(
+            expectedLoadID: loadID,
+            currentLoadID: loadID,
+            expectedStateRevision: 4,
+            currentStateRevision: 5
+        ))
+    }
+
+    @Test func mlxVisibleMessageSignatureStoresOnlyFixedSizeContentIdentity() {
+        let first = MLXVisibleMessageSignature(
+            message: Chat.Message(role: .user, content: "A long conversation message")
+        )
+        let same = MLXVisibleMessageSignature(
+            message: Chat.Message(role: .user, content: "A long conversation message")
+        )
+        let changed = MLXVisibleMessageSignature(
+            message: Chat.Message(role: .user, content: "A different conversation message")
+        )
+
+        #expect(first == same)
+        #expect(first != changed)
+        #expect(first.contentFingerprint.count == 32)
+    }
+
     @Test func smolLM3ToolResponsesUseNativeToolRole() {
         let manager = MLXModelManager()
         let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
@@ -363,7 +426,6 @@ struct On_Device_LLM_ChatTests {
         let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: false,
             hasTools: true,
-            hasMedia: false,
             prefersBoundedCache: false,
             memoryConstrained: false
         )
@@ -375,7 +437,6 @@ struct On_Device_LLM_ChatTests {
         let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: true,
             hasTools: true,
-            hasMedia: false,
             prefersBoundedCache: false,
             memoryConstrained: true
         )
@@ -387,7 +448,6 @@ struct On_Device_LLM_ChatTests {
         let cachePolicy = MLXModelManager.cachePolicy(
             isEnabled: true,
             hasTools: false,
-            hasMedia: false,
             prefersBoundedCache: true,
             memoryConstrained: false
         )
@@ -984,6 +1044,30 @@ struct On_Device_LLM_ChatTests {
         #expect(message.generationModelName == nil)
         #expect(message.generationStartedAt == nil)
         #expect(message.generationCompletedAt == nil)
+    }
+
+    @Test func generationCaptureIsDeveloperGatedAndBounded() {
+        let message = On_Device_LLM_Chat.Message(
+            role: .assistant,
+            text: "Visible",
+            order: 1
+        )
+        let oversizedRawText = String(
+            repeating: "x",
+            count: On_Device_LLM_Chat.Message.maximumCapturedRawTextCharacters + 1_000
+        )
+
+        message.completeGenerationCapture(
+            rawText: oversizedRawText,
+            captureRawText: false
+        )
+        #expect(message.rawText == nil)
+
+        message.completeGenerationCapture(
+            rawText: oversizedRawText,
+            captureRawText: true
+        )
+        #expect(message.rawText?.count == On_Device_LLM_Chat.Message.maximumCapturedRawTextCharacters)
     }
 
     @Test func resetForRegenerationPreservesForcedSearchRequirement() {
@@ -1910,16 +1994,16 @@ struct On_Device_LLM_ChatTests {
         #expect(merged == "100")
     }
 
-    @Test func streamingChunkMergeStillCollapsesRealPrefixOverlap() {
+    @Test func streamingChunkMergePreservesIntentionalPrefixOverlap() {
         let merged = ChatViewModel.mergedStreamingChunk(
             currentText: "Hello wor",
             newText: "world"
         )
 
-        #expect(merged == "Hello world")
+        #expect(merged == "Hello worworld")
     }
 
-    @Test func streamingChunkMergeDropsRecentRepeatedPhraseWithoutScanningFullHistory() {
+    @Test func streamingChunkMergePreservesIntentionalRepeatedPhrase() {
         let repeated = "a recently repeated phrase"
         let current = String(repeating: "x", count: 20_000) + repeated
         let merged = ChatViewModel.mergedStreamingChunk(
@@ -1927,12 +2011,29 @@ struct On_Device_LLM_ChatTests {
             newText: repeated
         )
 
-        #expect(merged == nil)
+        #expect(merged == current + repeated)
+    }
+
+    @Test func finalTextCleaningPreservesCamelCaseAndCodeIdentifiers() {
+        let input = "Use toFixed(2), autoFocus, isEnabled, and beginIndex exactly as written in this code example."
+
+        let cleaned = ChatViewModel.cleanGlitchedText(input)
+
+        #expect(cleaned.contains("toFixed(2)"))
+        #expect(cleaned.contains("autoFocus"))
+        #expect(cleaned.contains("isEnabled"))
+        #expect(cleaned.contains("beginIndex"))
     }
 
     @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
         #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("A formula: $x^2$"))
+    }
+
+    @Test func blockMarkdownUsesAdvancedRenderer() {
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("## Heading"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("- First\n- Second"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("> Quoted text"))
     }
 
     @Test func webSearchBridgeReturnsRecoverableErrorForMissingQueryArgument() async throws {

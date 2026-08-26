@@ -320,7 +320,7 @@ extension ChatViewModel {
         let cleanedText: String
         if finalize {
             let noSearchTags = stripSearchTags(fullText)
-            cleanedText = cleanGlitchedText(noSearchTags)
+            cleanedText = Self.cleanGlitchedText(noSearchTags)
         } else {
             cleanedText = fullText
         }
@@ -357,7 +357,9 @@ extension ChatViewModel {
                     let r = visiblePortion.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !r.isEmpty {
                         message.reasoning = r
-                        message.updateReasoningSteps()
+                        if finalize {
+                            message.updateReasoningSteps()
+                        }
                     }
                     return
                 }
@@ -386,7 +388,6 @@ extension ChatViewModel {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                         if !provisionalReasoning.isEmpty {
                             message.reasoning = provisionalReasoning
-                            message.updateReasoningSteps()
                         }
                         message.text = ""
                         return
@@ -397,8 +398,12 @@ extension ChatViewModel {
             // Always update reasoning if present
             if let reasoning = parsed.reasoning {
                 message.reasoning = reasoning
-                // Parse reasoning into structured steps for step-by-step UI
-                message.updateReasoningSteps()
+                // Structured steps are persisted once. Re-parsing and JSON
+                // encoding the entire reasoning buffer on every streamed frame
+                // creates quadratic work and unstable step identities.
+                if finalize {
+                    message.updateReasoningSteps()
+                }
             }
 
             // Only update final answer (and visible text) when we actually have one

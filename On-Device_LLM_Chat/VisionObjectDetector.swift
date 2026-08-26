@@ -10,33 +10,35 @@ import Foundation
 import Vision
 import UIKit
 import Combine
+import OSLog
 
 /// Pure Vision Framework object detector
 /// Uses multiple Apple Vision APIs to detect objects without external ML models
-final class VisionObjectDetector: ObservableObject {
+/// Nonisolated detection methods only read immutable configuration; UI-facing
+/// published state is explicitly MainActor-isolated.
+final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
+    nonisolated private static let logger = Logger(
+        subsystem: "Nevio.On-Device-LLM-Chat",
+        category: "VisionObjectDetector"
+    )
+
     @MainActor @Published var isProcessing = false
     @MainActor @Published var lastError: String?
     
     // Detection thresholds
-    private var confidenceThreshold: Float {
+    nonisolated private var confidenceThreshold: Float {
         let value = UserDefaults.standard.object(forKey: "visionConfidenceThreshold") as? Double ?? 0.5
         return Float(value)
     }
     
-    private let maxDetections: Int = 50
-    
-    init() {
-        print("VisionObjectDetector initialized - using pure Apple Vision Framework")
-    }
+    nonisolated private let maxDetections: Int = 50
     
     // MARK: - Main Detection Method
     
     /// Detect objects in an image using Vision Framework APIs
-    func detectObjects(in image: UIImage) async throws -> [DetectedObject] {
-        print("Starting Vision Framework object detection...")
-        
+    nonisolated func detectObjects(in image: UIImage) async throws -> [DetectedObject] {
         guard let cgImage = image.cgImage else {
-            print("Error: Could not get CGImage from UIImage")
+            Self.logger.error("Could not get CGImage for Vision object detection")
             throw VisionDetectorError.invalidImage
         }
         
@@ -57,26 +59,22 @@ final class VisionObjectDetector: ObservableObject {
         let sortedDetections = filteredDetections.sorted { $0.confidence > $1.confidence }
         let finalDetections = Array(sortedDetections.prefix(maxDetections))
         
-        print("Vision Framework detected \(finalDetections.count) objects")
         return finalDetections
     }
     
     // MARK: - Individual Detection Methods
     
     /// Detect animals (cats, dogs) using VNRecognizeAnimalsRequest
-    private func detectAnimals(cgImage: CGImage) async -> [DetectedObject] {
+    nonisolated private func detectAnimals(cgImage: CGImage) async -> [DetectedObject] {
         await withCheckedContinuation { continuation in
-            print("Running animal detection...")
-            
             let request = VNRecognizeAnimalsRequest { request, error in
                 if let error = error {
-                    print("Error: Animal detection failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision animal detection failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: [])
                     return
                 }
                 
                 guard let observations = request.results as? [VNRecognizedObjectObservation] else {
-                    print("Warning: No animal observations")
                     continuation.resume(returning: [])
                     return
                 }
@@ -94,7 +92,6 @@ final class VisionObjectDetector: ObservableObject {
                     )
                 }
                 
-                print("Detected \(detections.count) animal(s)")
                 continuation.resume(returning: detections)
             }
             
@@ -102,7 +99,7 @@ final class VisionObjectDetector: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Animal detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision animal request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: [])
             }
         }
@@ -110,7 +107,7 @@ final class VisionObjectDetector: ObservableObject {
     
     // MARK: - Non-Maximum Suppression
     
-    private func applyNMS(to detections: [DetectedObject]) -> [DetectedObject] {
+    nonisolated private func applyNMS(to detections: [DetectedObject]) -> [DetectedObject] {
         var detectionsByClass: [String: [DetectedObject]] = [:]
         for detection in detections {
             detectionsByClass[detection.label, default: []].append(detection)
@@ -126,7 +123,7 @@ final class VisionObjectDetector: ObservableObject {
         return finalDetections
     }
     
-    private func nmsForClass(_ detections: [DetectedObject]) -> [DetectedObject] {
+    nonisolated private func nmsForClass(_ detections: [DetectedObject]) -> [DetectedObject] {
         let sorted = detections.sorted { $0.confidence > $1.confidence }
         var keep: [DetectedObject] = []
         var suppressed = Set<UUID>()
@@ -150,7 +147,7 @@ final class VisionObjectDetector: ObservableObject {
         return keep
     }
     
-    private func calculateIoU(_ box1: CGRect, _ box2: CGRect) -> Float {
+    nonisolated private func calculateIoU(_ box1: CGRect, _ box2: CGRect) -> Float {
         let intersection = box1.intersection(box2)
         guard !intersection.isNull else { return 0.0 }
         
@@ -165,7 +162,7 @@ final class VisionObjectDetector: ObservableObject {
     
     // MARK: - Utility
     
-    var isModelLoaded: Bool {
+    nonisolated var isModelLoaded: Bool {
         // Vision Framework is always available - no external model needed
         true
     }
@@ -184,7 +181,7 @@ final class VisionObjectDetector: ObservableObject {
 
 // MARK: - Error Types
 
-enum VisionDetectorError: LocalizedError {
+nonisolated enum VisionDetectorError: LocalizedError {
     case invalidImage
     case processingFailed(String)
     

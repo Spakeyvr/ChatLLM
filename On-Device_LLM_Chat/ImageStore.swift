@@ -325,6 +325,55 @@ actor ImageStore {
 }
 
 enum DiskBackedImageLoader {
+    private static let thumbnailCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 24
+        cache.totalCostLimit = 24 * 1_048_576
+        return cache
+    }()
+
+    static func loadThumbnail(at url: URL, maxPixelSize: Int) async -> UIImage? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        let constrainedPixelSize = max(64, maxPixelSize)
+        let cacheKey = "\(url.standardizedFileURL.path)#\(constrainedPixelSize)" as NSString
+        if let cached = thumbnailCache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        let thumbnail = await Task.detached(priority: .userInitiated) {
+            autoreleasepool { () -> UIImage? in
+                let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else {
+                    return nil
+                }
+                let thumbnailOptions: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: constrainedPixelSize,
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+                    source,
+                    0,
+                    thumbnailOptions as CFDictionary
+                ) else {
+                    return nil
+                }
+                return UIImage(cgImage: cgImage)
+            }
+        }.value
+
+        if let thumbnail, let cgImage = thumbnail.cgImage {
+            thumbnailCache.setObject(
+                thumbnail,
+                forKey: cacheKey,
+                cost: cgImage.bytesPerRow * cgImage.height
+            )
+        }
+        return thumbnail
+    }
+
     static func loadImage(at url: URL) async -> UIImage? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 

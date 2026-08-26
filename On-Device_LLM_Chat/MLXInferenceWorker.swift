@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import CryptoKit
 import MLX
 import MLXNN
 import MLXLMCommon
@@ -55,13 +56,16 @@ nonisolated enum MLXMemoryDiagnostics {
 
 nonisolated struct MLXVisibleMessageSignature: Equatable, Sendable {
     let role: Chat.Message.Role
-    let content: String
+    /// Fixed-size content identity used only for prefix reuse checks. Keeping
+    /// the original text here duplicates the complete conversation alongside
+    /// the SwiftData message graph for every warm session.
+    let contentFingerprint: [UInt8]
     let imageIdentifiers: [String]
     let videoIdentifiers: [String]
 
     init(message: Chat.Message) {
         self.role = message.role
-        self.content = message.content
+        self.contentFingerprint = Array(SHA256.hash(data: Data(message.content.utf8)))
         self.imageIdentifiers = message.images.map(Self.imageIdentifier(for:))
         self.videoIdentifiers = message.videos.map(Self.videoIdentifier(for:))
     }
@@ -165,6 +169,10 @@ actor MLXInferenceWorker {
     private let logger: Logger
     private var loadedModel: MLXLoadedModelState?
     private var sessions: [MLXSessionKey: SessionState] = [:]
+    /// Incremented before every operation that invalidates model/session state.
+    /// A generation captures this value before its first suspension and may only
+    /// publish cached state if the value still matches when generation ends.
+    private var stateRevision: UInt64 = 0
     private let maxPersistentSessions = 2
 
     init(subsystem: String, deviceSupportProfile: MLXDeviceSupportProfile) {
@@ -173,6 +181,7 @@ actor MLXInferenceWorker {
     }
 
     func setLoadedModel(_ state: MLXLoadedModelState) async {
+        stateRevision &+= 1
         let previousReservationTicket = loadedModel?.reservationTicket
         loadedModel = state
         await discardSessions(keys: Array(sessions.keys))
@@ -206,6 +215,7 @@ actor MLXInferenceWorker {
         if let expectedLoadID, loadedModel?.loadID != expectedLoadID {
             return false
         }
+        stateRevision &+= 1
         let reservationTicket = loadedModel?.reservationTicket
         loadedModel = nil
         await discardSessions(keys: Array(sessions.keys))
@@ -216,6 +226,9 @@ actor MLXInferenceWorker {
     }
 
     func invalidateConversation(_ conversationID: UUID, reason: String) async {
+        // Bump even when no persistent session exists yet: an in-flight
+        // generation may otherwise install one after this method returns.
+        stateRevision &+= 1
         let keysToRemove = sessions.keys.filter { $0.conversationID == conversationID }
         guard !keysToRemove.isEmpty else { return }
         await discardSessions(keys: keysToRemove)
@@ -225,6 +238,9 @@ actor MLXInferenceWorker {
     }
 
     func invalidateAll(reason: String) async {
+        // Bump even when the cache is currently empty so in-flight generations
+        // cannot repopulate it with state that predates this invalidation.
+        stateRevision &+= 1
         guard !sessions.isEmpty else { return }
         await discardSessions(keys: Array(sessions.keys))
         logger.notice("MLX invalidated all sessions: reason=\(reason, privacy: .public)")
@@ -239,6 +255,7 @@ actor MLXInferenceWorker {
         guard let loadedModel, loadedModel.model.id == request.model.id else {
             throw MLXModelManager.GenerationError.modelNotLoaded
         }
+        let generationStateRevision = stateRevision
         guard let latestUserMessage = request.messages.last else {
             throw MLXModelManager.GenerationError.invalidChatHistory
         }
@@ -260,7 +277,8 @@ actor MLXInferenceWorker {
         try await releasePersistentSessions(
             scope: persistentSessionReleaseScope,
             conversationID: request.conversationID,
-            expectedLoadID: loadedModel.loadID
+            expectedLoadID: loadedModel.loadID,
+            expectedStateRevision: generationStateRevision
         )
 
         let reusableSession: ChatSession?
@@ -512,8 +530,18 @@ actor MLXInferenceWorker {
                 try await iterateStream()
             }
         } catch {
-            let failedSession = sessions.removeValue(forKey: request.sessionKey)?.session
-                ?? reusableSession
+            let generationStillOwnsState = Self.generationStateIsCurrent(
+                expectedLoadID: loadedModel.loadID,
+                currentLoadID: self.loadedModel?.loadID,
+                expectedStateRevision: generationStateRevision,
+                currentStateRevision: stateRevision
+            )
+            // Never remove a session installed after this generation was
+            // invalidated. The local session can still be cleared to release
+            // any disposable KV state it owns.
+            let failedSession = generationStillOwnsState
+                ? (sessions.removeValue(forKey: request.sessionKey)?.session ?? reusableSession)
+                : reusableSession
             await failedSession?.clear()
             Memory.clearCache()
             throw error
@@ -554,26 +582,47 @@ actor MLXInferenceWorker {
             )
         )
         if let reusableSession, !request.sessionKey.includesMedia {
-            sessions[request.sessionKey] = SessionState(
-                key: request.sessionKey,
-                session: reusableSession,
-                cacheConfiguration: requestedCacheConfiguration,
-                visibleHistory: visibleHistory,
-                latestPerformance: performanceSample,
-                lastAccessed: finishedAt
-            )
-            await evictPersistentSessionsIfNeeded()
+            if Self.generationStateIsCurrent(
+                expectedLoadID: loadedModel.loadID,
+                currentLoadID: self.loadedModel?.loadID,
+                expectedStateRevision: generationStateRevision,
+                currentStateRevision: stateRevision
+            ) {
+                sessions[request.sessionKey] = SessionState(
+                    key: request.sessionKey,
+                    session: reusableSession,
+                    cacheConfiguration: requestedCacheConfiguration,
+                    visibleHistory: visibleHistory,
+                    latestPerformance: performanceSample,
+                    lastAccessed: finishedAt
+                )
+                await evictPersistentSessionsIfNeeded()
+            } else {
+                await reusableSession.clear()
+                Memory.clearCache()
+                logger.notice(
+                    "MLX discarded stale generation session: conversation=\(request.conversationID.uuidString, privacy: .public)"
+                )
+            }
         }
 
         logger.notice(
             "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(performanceSample.kvBenchmarkMetadata.effectiveMaxKVSize ?? -1, privacy: .public)"
         )
 
-        self.loadedModel = loadedModel
         return MLXInferenceResponse(
             toolInvocationCount: toolInvocationCount,
             performanceSample: performanceSample
         )
+    }
+
+    nonisolated static func generationStateIsCurrent(
+        expectedLoadID: UUID,
+        currentLoadID: UUID?,
+        expectedStateRevision: UInt64,
+        currentStateRevision: UInt64
+    ) -> Bool {
+        currentLoadID == expectedLoadID && currentStateRevision == expectedStateRevision
     }
 
     private func makeActiveInferenceTicket(from loadedModel: MLXLoadedModelState) -> MLX.WiredMemoryTicket? {
@@ -597,7 +646,8 @@ actor MLXInferenceWorker {
     private func releasePersistentSessions(
         scope: MLXPersistentSessionReleaseScope,
         conversationID: UUID,
-        expectedLoadID: UUID
+        expectedLoadID: UUID,
+        expectedStateRevision: UInt64
     ) async throws {
         let keysToRemove: [MLXSessionKey]
         switch scope {
@@ -616,7 +666,12 @@ actor MLXInferenceWorker {
             await session.clear()
         }
 
-        guard loadedModel?.loadID == expectedLoadID else {
+        guard Self.generationStateIsCurrent(
+            expectedLoadID: expectedLoadID,
+            currentLoadID: loadedModel?.loadID,
+            expectedStateRevision: expectedStateRevision,
+            currentStateRevision: stateRevision
+        ) else {
             throw MLXModelManager.GenerationError.modelNotLoaded
         }
 

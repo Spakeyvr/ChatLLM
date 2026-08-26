@@ -371,6 +371,8 @@ final class Message {
 // MARK: - Performance Extensions
 
 extension Message {
+    nonisolated static let maximumCapturedRawTextCharacters = 32_768
+
     var developerRawText: String {
         if let rawText, !rawText.isEmpty {
             return rawText
@@ -410,8 +412,14 @@ extension Message {
         streamingReasoningPhase = isReasoningMode ? .initialThinking : nil
     }
 
-    func completeGenerationCapture(rawText: String, completedAt: Date = Date()) {
-        self.rawText = rawText
+    func completeGenerationCapture(
+        rawText: String,
+        captureRawText: Bool,
+        completedAt: Date = Date()
+    ) {
+        self.rawText = captureRawText
+            ? String(rawText.prefix(Self.maximumCapturedRawTextCharacters))
+            : nil
         generationCompletedAt = completedAt
     }
 

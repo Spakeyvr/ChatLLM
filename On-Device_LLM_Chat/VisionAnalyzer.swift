@@ -11,11 +11,12 @@ import Foundation
 import Vision
 import UIKit
 import Combine
+import OSLog
 
 // MARK: - Analysis Results
 
 /// Represents a detected object in the image
-struct DetectedObject: Identifiable, Codable, Sendable {
+nonisolated struct DetectedObject: Identifiable, Codable, Sendable {
     let id: UUID
     let label: String
     let confidence: Float
@@ -38,7 +39,7 @@ struct DetectedObject: Identifiable, Codable, Sendable {
 }
 
 /// Text recognized by OCR
-struct RecognizedText: Identifiable, Codable, Sendable {
+nonisolated struct RecognizedText: Identifiable, Codable, Sendable {
     let id: UUID
     let text: String
     let confidence: Float
@@ -57,7 +58,7 @@ struct RecognizedText: Identifiable, Codable, Sendable {
 }
 
 /// Face detection with quality assessment
-struct DetectedFace: Codable, Sendable {
+nonisolated struct DetectedFace: Codable, Sendable {
     let id: UUID
     let boundingBox: CGRect // Normalized 0-1
     let confidence: Float
@@ -78,7 +79,7 @@ struct DetectedFace: Codable, Sendable {
     }
 }
 
-struct FaceLandmarks: Codable, Sendable {
+nonisolated struct FaceLandmarks: Codable, Sendable {
     let leftEye: CGPoint?
     let rightEye: CGPoint?
     let nose: CGPoint?
@@ -86,7 +87,7 @@ struct FaceLandmarks: Codable, Sendable {
 }
 
 /// Body pose detection
-struct BodyPose: Codable, Sendable {
+nonisolated struct BodyPose: Codable, Sendable {
     let id: UUID
     let confidence: Float
     let joints: [String: CGPoint] // Normalized 0-1
@@ -103,7 +104,7 @@ struct BodyPose: Codable, Sendable {
 }
 
 /// Barcode/QR code
-struct Barcode: Codable, Sendable {
+nonisolated struct Barcode: Codable, Sendable {
     let id: UUID
     let type: String
     let payload: String
@@ -118,7 +119,7 @@ struct Barcode: Codable, Sendable {
 }
 
 /// Hand pose detection
-struct HandPose: Codable, Sendable {
+nonisolated struct HandPose: Codable, Sendable {
     let id: UUID
     let confidence: Float
     let chirality: String // "left" or "right"
@@ -133,7 +134,7 @@ struct HandPose: Codable, Sendable {
 }
 
 /// Photo quality assessment
-struct PhotoQuality: Codable, Sendable {
+nonisolated struct PhotoQuality: Codable, Sendable {
     let overallQuality: Float
     let faceCount: Int
     let issues: [String]
@@ -160,7 +161,7 @@ struct PhotoQuality: Codable, Sendable {
 
 // MARK: - Complete Analysis Result
 
-struct VisionAnalysisResult: Codable, Sendable {
+nonisolated struct VisionAnalysisResult: Codable, Sendable {
     let objects: [DetectedObject]
     let textBlocks: [RecognizedText]
     let faces: [DetectedFace]?
@@ -394,7 +395,7 @@ struct VisionAnalysisResult: Codable, Sendable {
 
 // MARK: - Analysis Options
 
-struct AnalysisOptions: Sendable {
+nonisolated struct AnalysisOptions: Sendable {
     var detectObjects: Bool = true
     var recognizeText: Bool = true
     var detectFaces: Bool = true
@@ -458,7 +459,7 @@ struct AnalysisOptions: Sendable {
 
 // Pre-compiled regexes for sanitizeTextForSafety (compiled once at app launch)
 // swiftlint:disable force_try
-private let _sanitizeRegexes: [(NSRegularExpression, String)] = [
+nonisolated private let _sanitizeRegexes: [(NSRegularExpression, String)] = [
     (try! NSRegularExpression(pattern: #"\bhuge ass\b"#, options: .caseInsensitive), "huge"),
     (try! NSRegularExpression(pattern: #"\bbig ass\b"#,  options: .caseInsensitive), "big"),
     (try! NSRegularExpression(pattern: #"\basses\b"#,    options: .caseInsensitive), "butts"),
@@ -486,35 +487,23 @@ private let _sanitizeRegexes: [(NSRegularExpression, String)] = [
 // MARK: - Vision Analyzer
 
 final class VisionAnalyzer: ObservableObject {
+    nonisolated private static let logger = Logger(
+        subsystem: "Nevio.On-Device-LLM-Chat",
+        category: "VisionAnalyzer"
+    )
+
     @MainActor @Published var isProcessing = false
     @MainActor @Published var lastError: String?
     @MainActor @Published var lastResult: VisionAnalysisResult?
     
     private let objectDetector = VisionObjectDetector()
     
-    init() {
-        print("VisionAnalyzer initialized with pure Apple Vision Framework - no external models required")
-    }
-    
     // MARK: - Main Analysis Method
     
     /// Comprehensive image analysis using Vision framework
     func analyze(image: UIImage, options: AnalysisOptions? = nil) async throws -> VisionAnalysisResult {
         let options = options ?? .all
-        print("\n" + String(repeating: "=", count: 60))
-        print("VISION ANALYZER: Starting comprehensive analysis")
-        print(String(repeating: "=", count: 60))
-        print("Options:")
-        print("  • Objects: \(options.detectObjects)")
-        print("  • Text: \(options.recognizeText)")
-        print("  • Faces: \(options.detectFaces)")
-        print("  • Body Pose: \(options.detectBodyPose)")
-        print("  • Barcodes: \(options.detectBarcodes)")
-        print("  • Hands: \(options.detectHands)")
-        print("  • Quality: \(options.assessQuality)")
-        print("  • Scene: \(options.classifyScene)")   // --- NEW
-        print("  • Saliency: \(options.getSaliency)") // --- NEW
-        print(String(repeating: "=", count: 60) + "\n")
+        Self.logger.debug("Starting Vision analysis")
         
         await MainActor.run { isProcessing = true }
         defer { Task { @MainActor in isProcessing = false } }
@@ -523,97 +512,86 @@ final class VisionAnalyzer: ObservableObject {
             throw VisionError.invalidImage
         }
         
-        // Run all analyses in parallel for maximum performance
-        async let objectsTask = options.detectObjects ? detectObjects(image: image) : []
-        async let textTask = options.recognizeText ? recognizeText(cgImage: cgImage, options: options) : []
-        async let facesTask = options.detectFaces ? detectFaces(cgImage: cgImage) : nil
-        async let posesTask = options.detectBodyPose ? detectBodyPoses(cgImage: cgImage) : nil
-        async let barcodesTask = options.detectBarcodes ? detectBarcodes(cgImage: cgImage) : nil
-        async let handsTask = options.detectHands ? detectHands(cgImage: cgImage) : nil
-        // --- NEWLY ADDED ---
-        async let sceneTask = options.classifyScene ? classifyScene(cgImage: cgImage) : nil
-        async let saliencyTask = options.getSaliency ? getSaliencyRect(cgImage: cgImage) : nil
-        // --- END NEW ---
-        
-        let results = await (
-            objectsTask,
-            textTask,
-            facesTask,
-            posesTask,
-            barcodesTask,
-            handsTask,
-            sceneTask,    // --- NEW
-            saliencyTask  // --- NEW
-        )
-        let photoQuality = options.assessQuality ? assessPhotoQuality(faces: results.2) : nil
-        
-        let result = VisionAnalysisResult(
-            objects: results.0,
-            textBlocks: results.1,
-            faces: results.2,
-            bodyPoses: results.3,
-            barcodes: results.4,
-            handPoses: results.5,
-            photoQuality: photoQuality,
-            sceneLabels: results.6, // --- NEW
-            saliencyRect: results.7 // --- NEW
-        )
+        let objectDetector = self.objectDetector
+        let result = await Task.detached(priority: .userInitiated) {
+            await Self.performSequentialAnalysis(
+                cgImage: cgImage,
+                options: options,
+                objectDetector: objectDetector
+            )
+        }.value
         
         await MainActor.run {
             lastResult = result
             lastError = nil
         }
         
-        print("\n" + String(repeating: "=", count: 60))
-        print("VISION ANALYZER: Analysis complete")
-        print(String(repeating: "=", count: 60))
-        print("Results:")
-        print("  • Objects: \(results.0.count)")
-        print("  • Text blocks: \(results.1.count)")
-        print("  • Faces: \(results.2?.count ?? 0)")
-        print("  • Body poses: \(results.3?.count ?? 0)")
-        print("  • Barcodes: \(results.4?.count ?? 0)")
-        print("  • Hands: \(results.5?.count ?? 0)")
-        print("  • Quality assessed: \(photoQuality != nil ? "Yes" : "No")")
-        print("  • Scene Labels: \(results.6?.count ?? 0)") // --- NEW
-        print("  • Saliency Rect: \(results.7 != nil ? "Yes" : "No")") // --- NEW
-        print(String(repeating: "=", count: 60) + "\n")
+        Self.logger.debug(
+            "Vision analysis complete: objects=\(result.objects.count, privacy: .public) text_blocks=\(result.textBlocks.count, privacy: .public) faces=\(result.faces?.count ?? 0, privacy: .public)"
+        )
         
         return result
+    }
+
+    nonisolated private static func performSequentialAnalysis(
+        cgImage: CGImage,
+        options: AnalysisOptions,
+        objectDetector: VisionObjectDetector
+    ) async -> VisionAnalysisResult {
+        let objects = options.detectObjects
+            ? await detectObjects(cgImage: cgImage, objectDetector: objectDetector)
+            : []
+        let textBlocks = options.recognizeText
+            ? await recognizeText(cgImage: cgImage, options: options)
+            : []
+        let faces = options.detectFaces ? await detectFaces(cgImage: cgImage) : nil
+        let bodyPoses = options.detectBodyPose ? await detectBodyPoses(cgImage: cgImage) : nil
+        let barcodes = options.detectBarcodes ? await detectBarcodes(cgImage: cgImage) : nil
+        let handPoses = options.detectHands ? await detectHands(cgImage: cgImage) : nil
+        let sceneLabels = options.classifyScene ? await classifyScene(cgImage: cgImage) : nil
+        let saliencyRect = options.getSaliency ? await getSaliencyRect(cgImage: cgImage) : nil
+        let photoQuality = options.assessQuality ? assessPhotoQuality(faces: faces) : nil
+
+        return VisionAnalysisResult(
+            objects: objects,
+            textBlocks: textBlocks,
+            faces: faces,
+            bodyPoses: bodyPoses,
+            barcodes: barcodes,
+            handPoses: handPoses,
+            photoQuality: photoQuality,
+            sceneLabels: sceneLabels,
+            saliencyRect: saliencyRect
+        )
     }
     
     // MARK: - Individual Detection Methods
     
-    private func detectObjects(image: UIImage) async -> [DetectedObject] {
+    nonisolated private static func detectObjects(
+        cgImage: CGImage,
+        objectDetector: VisionObjectDetector
+    ) async -> [DetectedObject] {
         do {
-            print("Running Vision Framework object detection...")
-            let objects = try await objectDetector.detectObjects(in: image)
-            print("Vision Framework detected \(objects.count) objects")
-            return objects
+            return try await objectDetector.detectObjects(in: UIImage(cgImage: cgImage))
         } catch {
-            print("Warning: Vision Framework detection failed: \(error.localizedDescription)")
+            Self.logger.error("Vision object detection failed: \((error as NSError).localizedDescription, privacy: .public)")
             return []
         }
     }
     
-    private func recognizeText(cgImage: CGImage, options: AnalysisOptions) async -> [RecognizedText] {
+    nonisolated private static func recognizeText(cgImage: CGImage, options: AnalysisOptions) async -> [RecognizedText] {
         await withCheckedContinuation { continuation in
-            print("Running OCR text recognition...")
-            
             let request = VNRecognizeTextRequest { request, error in
                 if let error = error {
-                    print("Error: OCR failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision OCR failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: [])
                     return
                 }
                 
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    print("Warning: No text observations")
                     continuation.resume(returning: [])
                     return
                 }
-                
-                print("Processing \(observations.count) text observations...")
                 
                 var recognizedTexts: [RecognizedText] = []
                 
@@ -648,7 +626,6 @@ final class VisionAnalyzer: ObservableObject {
                     return first.boundingBox.minX < second.boundingBox.minX
                 }
                 
-                print("OCR found \(recognizedTexts.count) text blocks")
                 continuation.resume(returning: recognizedTexts)
             }
             
@@ -668,25 +645,22 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: OCR request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision OCR request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: [])
             }
         }
     }
     
-    private func detectFaces(cgImage: CGImage) async -> [DetectedFace]? {
+    nonisolated private static func detectFaces(cgImage: CGImage) async -> [DetectedFace]? {
         await withCheckedContinuation { continuation in
-            print("Running face detection with quality assessment...")
-            
             let request = VNDetectFaceCaptureQualityRequest { request, error in
                 if let error = error {
-                    print("Error: Face detection failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision face detection failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNFaceObservation], !observations.isEmpty else {
-                    print("Warning: No faces detected")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -711,7 +685,6 @@ final class VisionAnalyzer: ObservableObject {
                     )
                 }
                 
-                print("Detected \(faces.count) face(s)")
                 continuation.resume(returning: faces)
             }
             
@@ -719,76 +692,67 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Face detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision face request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
     }
     
-    private func detectBodyPoses(cgImage: CGImage) async -> [BodyPose]? {
+    nonisolated private static func detectBodyPoses(cgImage: CGImage) async -> [BodyPose]? {
         await withCheckedContinuation { continuation in
-            print("Running body pose detection...")
-            
             let request = VNDetectHumanBodyPoseRequest { [continuation] request, error in
-                Task { @MainActor in
-                    if let error = error {
-                        print("Error: Body pose detection failed: \(error.localizedDescription)")
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    
-                    guard let observations = request.results as? [VNHumanBodyPoseObservation], !observations.isEmpty else {
-                        print("Warning: No body poses detected")
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    
-                    let poses = observations.compactMap { observation -> BodyPose? in
-                        guard let recognizedPoints = try? observation.recognizedPoints(.all) else {
-                            return nil
-                        }
-                        
-                        var joints: [String: CGPoint] = [:]
-                        for (jointName, point) in recognizedPoints where point.confidence > 0.5 {
-                            joints[jointName.rawValue.rawValue] = point.location
-                        }
-                        
-                        guard !joints.isEmpty else { return nil }
-                        
-                        return BodyPose(
-                            confidence: observation.confidence,
-                            joints: joints
-                        )
-                    }
-                    
-                    print("Detected \(poses.count) body pose(s)")
-                    continuation.resume(returning: poses.isEmpty ? nil : poses)
+                if let error = error {
+                    Self.logger.error("Vision body-pose detection failed: \((error as NSError).localizedDescription, privacy: .public)")
+                    continuation.resume(returning: nil)
+                    return
                 }
+
+                guard let observations = request.results as? [VNHumanBodyPoseObservation], !observations.isEmpty else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let poses = observations.compactMap { observation -> BodyPose? in
+                    guard let recognizedPoints = try? observation.recognizedPoints(.all) else {
+                        return nil
+                    }
+
+                    var joints: [String: CGPoint] = [:]
+                    for (jointName, point) in recognizedPoints where point.confidence > 0.5 {
+                        joints[jointName.rawValue.rawValue] = point.location
+                    }
+
+                    guard !joints.isEmpty else { return nil }
+
+                    return BodyPose(
+                        confidence: observation.confidence,
+                        joints: joints
+                    )
+                }
+
+                continuation.resume(returning: poses.isEmpty ? nil : poses)
             }
             
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Body pose detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision body-pose request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
     }
     
-    private func detectBarcodes(cgImage: CGImage) async -> [Barcode]? {
+    nonisolated private static func detectBarcodes(cgImage: CGImage) async -> [Barcode]? {
         await withCheckedContinuation { continuation in
-            print("Running barcode detection...")
-            
             let request = VNDetectBarcodesRequest { request, error in
                 if let error = error {
-                    print("Error: Barcode detection failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision barcode detection failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNBarcodeObservation], !observations.isEmpty else {
-                    print("Warning: No barcodes detected")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -803,7 +767,6 @@ final class VisionAnalyzer: ObservableObject {
                     )
                 }
                 
-                print("Detected \(barcodes.count) barcode(s)")
                 continuation.resume(returning: barcodes.isEmpty ? nil : barcodes)
             }
             
@@ -811,68 +774,61 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Barcode detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision barcode request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
     }
     
-    private func detectHands(cgImage: CGImage) async -> [HandPose]? {
+    nonisolated private static func detectHands(cgImage: CGImage) async -> [HandPose]? {
         await withCheckedContinuation { continuation in
-            print("Running hand pose detection...")
-            
             let request = VNDetectHumanHandPoseRequest { [continuation] request, error in
-                Task { @MainActor in
-                    if let error = error {
-                        print("Error: Hand detection failed: \(error.localizedDescription)")
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    
-                    guard let observations = request.results as? [VNHumanHandPoseObservation], !observations.isEmpty else {
-                        print("Warning: No hands detected")
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    
-                    let hands = observations.compactMap { observation -> HandPose? in
-                        guard let recognizedPoints = try? observation.recognizedPoints(.all) else {
-                            return nil
-                        }
-                        
-                        var fingerPoints: [String: CGPoint] = [:]
-                        for (pointName, point) in recognizedPoints where point.confidence > 0.5 {
-                            fingerPoints[pointName.rawValue.rawValue] = point.location
-                        }
-                        
-                        guard !fingerPoints.isEmpty else { return nil }
-                        
-                        // Determine chirality (left/right hand)
-                        let chirality = observation.chirality == .left ? "left" : "right"
-                        
-                        return HandPose(
-                            confidence: observation.confidence,
-                            chirality: chirality,
-                            fingerPoints: fingerPoints
-                        )
-                    }
-                    
-                    print("Detected \(hands.count) hand(s)")
-                    continuation.resume(returning: hands.isEmpty ? nil : hands)
+                if let error = error {
+                    Self.logger.error("Vision hand-pose detection failed: \((error as NSError).localizedDescription, privacy: .public)")
+                    continuation.resume(returning: nil)
+                    return
                 }
+
+                guard let observations = request.results as? [VNHumanHandPoseObservation], !observations.isEmpty else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let hands = observations.compactMap { observation -> HandPose? in
+                    guard let recognizedPoints = try? observation.recognizedPoints(.all) else {
+                        return nil
+                    }
+
+                    var fingerPoints: [String: CGPoint] = [:]
+                    for (pointName, point) in recognizedPoints where point.confidence > 0.5 {
+                        fingerPoints[pointName.rawValue.rawValue] = point.location
+                    }
+
+                    guard !fingerPoints.isEmpty else { return nil }
+
+                    let chirality = observation.chirality == .left ? "left" : "right"
+
+                    return HandPose(
+                        confidence: observation.confidence,
+                        chirality: chirality,
+                        fingerPoints: fingerPoints
+                    )
+                }
+
+                continuation.resume(returning: hands.isEmpty ? nil : hands)
             }
             
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Hand detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision hand-pose request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
     }
     
-    private func assessPhotoQuality(faces: [DetectedFace]?) -> PhotoQuality? {
+    nonisolated private static func assessPhotoQuality(faces: [DetectedFace]?) -> PhotoQuality? {
         // Photo quality is based on face detection quality
         guard let faces, !faces.isEmpty else {
             return nil
@@ -890,8 +846,6 @@ final class VisionAnalyzer: ObservableObject {
             issues.append("slightly blurry")
         }
         
-        print("Photo quality assessed: \(String(format: "%.0f%%", avgQuality * 100))")
-        
         return PhotoQuality(
             overallQuality: avgQuality,
             faceCount: faces.count,
@@ -900,20 +854,17 @@ final class VisionAnalyzer: ObservableObject {
     }
     
     // --- NEW: Scene Classification ("Vibe Check") ---
-    private func classifyScene(cgImage: CGImage) async -> [String]? {
+    nonisolated private static func classifyScene(cgImage: CGImage) async -> [String]? {
         await withCheckedContinuation { continuation in
-            print("Running scene classification...")
-            
             // This uses Apple's built-in taxonomy—super efficient
             let request = VNClassifyImageRequest { request, error in
                 if let error = error {
-                    print("Error: Scene classification failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision scene classification failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 guard let observations = request.results as? [VNClassificationObservation] else {
-                    print("Warning: No scene observations")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -924,7 +875,6 @@ final class VisionAnalyzer: ObservableObject {
                     .prefix(3)
                     .map { $0.identifier.components(separatedBy: ", ").first ?? $0.identifier } // Clean up labels like "Office, Cubicle"
                 
-                print("Scene classified: \(labels)")
                 continuation.resume(returning: labels.isEmpty ? nil : labels)
             }
             
@@ -932,21 +882,19 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Scene classification request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision scene-classification request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
     }
     
     // --- NEW: Saliency ("Main Character") ---
-    private func getSaliencyRect(cgImage: CGImage) async -> CGRect? {
+    nonisolated private static func getSaliencyRect(cgImage: CGImage) async -> CGRect? {
         // Returns the bounding box of the "most interesting" part of the image
         await withCheckedContinuation { continuation in
-            print("Running saliency (attention) detection...")
-            
             let request = VNGenerateAttentionBasedSaliencyImageRequest { request, error in
                 if let error = error {
-                    print("Error: Saliency detection failed: \(error.localizedDescription)")
+                    Self.logger.error("Vision saliency detection failed: \((error as NSError).localizedDescription, privacy: .public)")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -954,13 +902,11 @@ final class VisionAnalyzer: ObservableObject {
                 guard let observation = request.results?.first as? VNSaliencyImageObservation,
                       let salientObjects = observation.salientObjects,
                       let primary = salientObjects.first else {
-                    print("Warning: No salient objects found")
                     continuation.resume(returning: nil)
                     return
                 }
                 
                 // This is the CGRect (0-1) of the main subject
-                print("Saliency rect found: \(primary.boundingBox)")
                 continuation.resume(returning: primary.boundingBox)
             }
             
@@ -968,7 +914,7 @@ final class VisionAnalyzer: ObservableObject {
             do {
                 try handler.perform([request])
             } catch {
-                print("Error: Saliency detection request failed: \(error.localizedDescription)")
+                Self.logger.error("Vision saliency request failed: \((error as NSError).localizedDescription, privacy: .public)")
                 continuation.resume(returning: nil)
             }
         }
@@ -1002,7 +948,7 @@ final class VisionAnalyzer: ObservableObject {
 
 // MARK: - Error Types
 
-enum VisionError: LocalizedError {
+nonisolated enum VisionError: LocalizedError {
     case invalidImage
     case analysisFailed
     case noResults

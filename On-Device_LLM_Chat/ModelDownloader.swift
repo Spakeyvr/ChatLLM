@@ -81,7 +81,12 @@ actor ModelDownloader {
             // for repositories dominated by a single multi-gigabyte weights file.
             // The delegate reports bytes as they arrive instead.
             let bytesSoFar = totalWritten
-            let progressDelegate = DownloadProgressDelegate { [weak self] written, expected in
+            let minimumDelegateByteDelta = totalExpected > 0
+                ? max(1, Int64(Double(totalExpected) * Self.minProgressInterval))
+                : max(1, file.size / 100)
+            let progressDelegate = DownloadProgressDelegate(
+                minimumByteDelta: minimumDelegateByteDelta
+            ) { [weak self] written, expected in
                 guard let self else { return }
                 Task { @Sendable in
                     await self.reportInFlightProgress(
@@ -265,8 +270,15 @@ actor ModelDownloader {
     /// unchecked conformance is safe despite the `NSObject` base.
     private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         private let onUpdate: @Sendable (_ totalBytesWritten: Int64, _ totalBytesExpected: Int64) -> Void
+        private let minimumByteDelta: Int64
+        private let progressLock = NSLock()
+        private var lastForwardedBytes: Int64 = 0
 
-        init(onUpdate: @escaping @Sendable (Int64, Int64) -> Void) {
+        init(
+            minimumByteDelta: Int64,
+            onUpdate: @escaping @Sendable (Int64, Int64) -> Void
+        ) {
+            self.minimumByteDelta = max(1, minimumByteDelta)
             self.onUpdate = onUpdate
             super.init()
         }
@@ -278,6 +290,14 @@ actor ModelDownloader {
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
+            progressLock.lock()
+            let shouldForward = totalBytesWritten - lastForwardedBytes >= minimumByteDelta
+            if shouldForward {
+                lastForwardedBytes = totalBytesWritten
+            }
+            progressLock.unlock()
+
+            guard shouldForward else { return }
             onUpdate(totalBytesWritten, totalBytesExpectedToWrite)
         }
 

@@ -3,6 +3,37 @@ import UIKit
 
 // MARK: - Fullscreen Image View
 
+struct FullscreenAttachmentImageView: View {
+    let attachment: MessageAttachment
+    @Binding var isPresented: Bool
+
+    @State private var image: UIImage?
+    @State private var finishedLoading = false
+
+    var body: some View {
+        Group {
+            if let image {
+                FullscreenImageView(
+                    image: image,
+                    detections: attachment.getDetectionResults(),
+                    isPresented: $isPresented
+                )
+            } else if finishedLoading {
+                ContentUnavailableView(
+                    "Image unavailable",
+                    systemImage: "photo.badge.exclamationmark"
+                )
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            image = await attachment.loadImage()
+            finishedLoading = true
+        }
+    }
+}
+
 struct FullscreenImageView: View {
     let image: UIImage
     let detections: [DetectedObject]?

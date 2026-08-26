@@ -70,7 +70,9 @@ enum RichTextFeatureDetector {
     // Pre-compiled patterns (compiled once at app launch, avoiding per-call regex recompilation)
     private static let compiledPatterns: [NSRegularExpression] = {
         let patterns = [
-            // Block patterns
+            // Block patterns require the bundled renderer. SwiftUI Text can
+            // display inline AttributedString styles, but it does not preserve
+            // the visual hierarchy and layout of these block structures.
             #"(?m)^\s{0,3}#{1,6}\s+\S"#,
             #"(?m)^\s{0,3}(?:[-*+]\s+\S|\d+\.\s+\S)"#,
             #"(?m)^\s{0,3}>\s+\S"#,

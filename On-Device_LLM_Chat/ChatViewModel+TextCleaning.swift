@@ -10,10 +10,6 @@ import Foundation
 // MARK: - Cached regexes (compiled once at startup)
 private let _answerTagRegex = try? NSRegularExpression(pattern: #"<answer>([\s\S]*?)</answer>"#, options: [.caseInsensitive])
 private let _leadingMarkdownRegex = try? NSRegularExpression(pattern: #"(?s)^\s*(\*\*|\*|[-]{2,}|#{1,6})\s*\n+"#, options: [])
-private let _wordBoundaryRegexes: [(NSRegularExpression, String)] = [
-    ("to([A-Z])", "to $1"), ("be([A-Z])", "be $1"), ("is([A-Z])", "is $1"),
-    ("as([A-Z])", "as $1"), ("in([A-Z])", "in $1"), ("of([A-Z])", "of $1"),
-].compactMap { (p, r) in (try? NSRegularExpression(pattern: p, options: [])).map { ($0, r) } }
 private let _typoFixRegexes: [(NSRegularExpression, String)] = [
     (#"(?i)\bios\b"#, "iOS"),
     (#"(?i)(?<![\/\.])\bsecurityreleases\b"#, "security releases"),
@@ -25,7 +21,7 @@ extension ChatViewModel {
     // MARK: - Text Cleaning
 
     /// Cleans glitched/repetitive text patterns from LLM output
-    func cleanGlitchedText(_ text: String) -> String {
+    static func cleanGlitchedText(_ text: String) -> String {
         // IMPORTANT: Don't clean very short responses (like "29." or "Yes.")
         // as the cleaning logic can accidentally mangle them
         guard text.count > 50 else { return text }
@@ -49,29 +45,15 @@ extension ChatViewModel {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = re.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
             if result != cleaned {
-                print("Removed leading Markdown artifact")
                 cleaned = result
             }
         }
-
-        // Fix missing-space glitches like "appears toThe"
-        for (regex, replacement) in _wordBoundaryRegexes {
-            let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
-            let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
-            if result != cleaned {
-                print("Fixed word boundary glitch")
-                cleaned = result
-            }
-        }
-
-        // NOTE: Removed risky connector-word spacing fix that caused inside-word splits like "F or".
 
         // Conservative normalizations for frequent LLM typos; skips URLs.
         for (regex, replacement) in _typoFixRegexes {
             let range = NSRange(cleaned.startIndex..<cleaned.endIndex, in: cleaned)
             let result = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: replacement)
             if result != cleaned {
-                print("Normalized common typo pattern")
                 cleaned = result
             }
         }
@@ -90,9 +72,8 @@ extension ChatViewModel {
                       let nextEnd = cleaned.index(nextIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
                       nextEnd <= cleaned.endIndex else { break }
                 if cleaned[prevIdx..<prevEnd] == cleaned[nextIdx..<nextEnd] {
-                    print("Cleaning repetition (window \(windowSize))")
                     cleaned.removeSubrange(prevIdx..<prevEnd)
-                    return cleanGlitchedText(cleaned)
+                    return Self.cleanGlitchedText(cleaned)
                 }
                 prevIdx = cleaned.index(after: prevIdx)
                 nextIdx = cleaned.index(after: nextIdx)
@@ -108,7 +89,6 @@ extension ChatViewModel {
             if i + 1 < words.count {
                 let nextWord = words[i + 1]
                 if word.count < 4 && word.count > 0 && nextWord.count > word.count && nextWord.hasPrefix(word) {
-                    print("Fixing mid-word glitch")
                     fixedWords.append(nextWord)
                     i += 2
                     continue

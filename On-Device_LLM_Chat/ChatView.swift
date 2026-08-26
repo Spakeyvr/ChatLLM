@@ -50,7 +50,6 @@ struct ChatView: View {
     @State private var detectedObjects: [DetectedObject]?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var fullImageAnalysis: VisionAnalysisResult?
-    @State private var capturedCameraImage: UIImage?
 
     // Error handling states
     @State private var errorAlert: ErrorAlert?
@@ -287,16 +286,6 @@ struct ChatView: View {
                 await MainActor.run { selectedPhotoItem = nil }
             }
         }
-        .onChange(of: showCameraCapture) { _, isPresented in
-            // When camera sheet is dismissed with a captured image, downscale then run Vision analysis.
-            // Camera images can be 12 MP+; downscaling here prevents OOM overlap with the MLX model.
-            guard !isPresented, let image = capturedCameraImage else { return }
-            capturedCameraImage = nil
-            Task {
-                let scaled = await downscaleForPipeline(image)
-                await prepareSelectedImage(scaled)
-            }
-        }
         .alert(item: $errorAlert) { alert in
             if let retry = alert.retry {
                 return Alert(
@@ -367,7 +356,11 @@ struct ChatView: View {
                 .ignoresSafeArea()
         }
         .sheet(isPresented: $showCameraCapture) {
-            CameraCapturePicker(image: $capturedCameraImage, isPresented: $showCameraCapture)
+            CameraCapturePicker(isPresented: $showCameraCapture) { image in
+                Task {
+                    await prepareSelectedImage(image)
+                }
+            }
                 .ignoresSafeArea()
         }
     }
@@ -626,32 +619,7 @@ struct ChatView: View {
 
     // MARK: - Image Downscaling
 
-    // Pre-scale any image to a pixel budget before the MLX pipeline sees it.
-    // Using scale=1.0 ensures we get exactly targetSize pixels, not targetSize×screenScale.
-    // The original large UIImage goes out of scope inside Task.detached so ARC releases it
-    // before generation starts, preventing the OOM overlap with the ~2.5 GB MLX model.
-    private func downscaleForPipeline(_ image: UIImage) async -> UIImage {
-        let pixelWidth  = image.size.width  * image.scale
-        let pixelHeight = image.size.height * image.scale
-        let maxSide     = max(pixelWidth, pixelHeight)
-        let maxPixels: CGFloat = 1200
-        guard maxSide > maxPixels else { return image }
-        let ratio      = maxPixels / maxSide
-        let targetSize = CGSize(width:  (pixelWidth  * ratio).rounded(),
-                                height: (pixelHeight * ratio).rounded())
-        return await Task.detached(priority: .userInitiated) {
-            autoreleasepool {
-                let format       = UIGraphicsImageRendererFormat()
-                format.scale     = 1.0
-                let renderer     = UIGraphicsImageRenderer(size: targetSize, format: format)
-                return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: targetSize)) }
-            }
-        }.value
-    }
-
-    // Load a PhotosPickerItem and return a downscaled UIImage.
-    // raw is local to this function — ARC releases the full-resolution bitmap
-    // as soon as downscaleForPipeline returns, well before the pipeline starts.
+    // Load a PhotosPickerItem directly through ImageIO at the pipeline budget.
     private func loadAndDownscaleImage(from item: PhotosPickerItem) async -> UIImage? {
         if let thumbnail = try? await loadThumbnailImage(from: item, maxPixelSize: 1_200) {
             return thumbnail
@@ -709,8 +677,8 @@ struct ChatView: View {
 // MARK: - Camera Capture Picker
 
 private struct CameraCapturePicker: UIViewControllerRepresentable {
-    @Binding var image: UIImage?
     @Binding var isPresented: Bool
+    let onCapture: @MainActor (UIImage) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -729,10 +697,31 @@ private struct CameraCapturePicker: UIViewControllerRepresentable {
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let img = info[.originalImage] as? UIImage {
-                parent.image = img
+            guard let image = info[.originalImage] as? UIImage else {
+                parent.isPresented = false
+                return
             }
             parent.isPresented = false
+
+            // UIImagePickerController only exposes a UIImage for camera stills.
+            // Prepare a bounded thumbnail before handing it to chat state, so
+            // the original capture is never retained by the SwiftUI view tree.
+            Task { @MainActor in
+                let pixelWidth = image.size.width * image.scale
+                let pixelHeight = image.size.height * image.scale
+                let maxSide = max(pixelWidth, pixelHeight)
+                guard maxSide > 1_200 else {
+                    parent.onCapture(image)
+                    return
+                }
+                let ratio = 1_200 / maxSide
+                let targetSize = CGSize(
+                    width: (pixelWidth * ratio).rounded(),
+                    height: (pixelHeight * ratio).rounded()
+                )
+                let thumbnail = await image.byPreparingThumbnail(ofSize: targetSize)
+                parent.onCapture(thumbnail ?? image)
+            }
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {

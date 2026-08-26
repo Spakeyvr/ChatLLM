@@ -9,6 +9,7 @@
 import Foundation
 import SwiftData
 import UIKit
+import OSLog
 
 extension ChatViewModel {
 
@@ -31,7 +32,7 @@ extension ChatViewModel {
         detections: [DetectedObject]? = nil,
         analysisResult: VisionAnalysisResult? = nil
     ) async {
-        print("sendWithImage called")
+        logger.debug("sendWithImage called")
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
@@ -108,7 +109,7 @@ extension ChatViewModel {
         )
 
         if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && isGenerationActive(generationID) {
-            print("Warning: Native image generation failed before output; falling back to Vision analysis context")
+            logger.warning("Native image generation failed before output; falling back to Vision analysis context")
 
             let cachedAttachmentAnalysis = userMsg.attachments
                 .first(where: { $0.type == .image })?
@@ -215,7 +216,7 @@ extension ChatViewModel {
             storeImageAnalysis(analysisResult, detections: detections, on: attachment)
             return attachment.actualFileURL
         } catch {
-            print("Warning: Failed to attach image: \(error)")
+            logger.error("Failed to attach image: \((error as NSError).localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -266,13 +267,13 @@ extension ChatViewModel {
         options.useAccurateOCR = true
 
         if let canonicalImageURL {
-            print("Vision fallback source: canonical attachment (\(canonicalImageURL.lastPathComponent))")
+            logger.debug("Vision fallback source: canonical attachment \(canonicalImageURL.lastPathComponent, privacy: .public)")
             if let canonicalImage = await loadImageFromDisk(canonicalImageURL) {
                 return try? await analyzer.analyze(image: canonicalImage, options: options)
             }
-            print("Warning: Failed to load canonical attachment for fallback analysis, using in-memory image")
+            logger.warning("Failed to load canonical attachment for fallback analysis; using the prepared in-memory image")
         } else {
-            print("Warning: No canonical attachment URL for fallback analysis, using in-memory image")
+            logger.warning("No canonical attachment URL for fallback analysis; using the prepared in-memory image")
         }
 
         return try? await analyzer.analyze(image: fallbackImage, options: options)
@@ -381,7 +382,7 @@ extension ChatViewModel {
         do {
             try await ImageStore.shared.delete(url: canonicalURL)
         } catch {
-            print("Failed to delete attachment file: \(error)")
+            logger.error("Failed to delete attachment file: \((error as NSError).localizedDescription, privacy: .public)")
         }
         await ImageStore.shared.deleteInferenceVariant(for: canonicalURL)
         invalidateMLXConversationSession(reason: "attachment_deleted")

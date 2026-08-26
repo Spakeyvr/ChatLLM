@@ -215,6 +215,7 @@ final class MLXModelManager: ObservableObject {
     private var toolTemplateInspectionCache: [String: ToolTemplateInspection] = [:]
     private var packageMetadataCache: [String: ModelPackageMetadata] = [:]
     private var promptTokenCountCache: [PromptTokenCountCacheKey: Int] = [:]
+    private var promptTokenCountCacheOrder: [PromptTokenCountCacheKey] = []
     private var activeLoadID: UUID?
     private var installedWorkerLoadID: UUID?
     private var deferredPrewarmModelID: String?
@@ -222,7 +223,6 @@ final class MLXModelManager: ObservableObject {
     private var prewarmInFlightModelID: String?
     private var tuningTask: Task<Void, Never>?
     private var hasSeenMemoryWarningSinceCurrentLoad = false
-    private var memoryMaintenanceTimer: Timer?
     private let deviceSupportProfile: MLXDeviceSupportProfile
     private let inferenceWorker: MLXInferenceWorker
     private var simulatedDownloadedModelIDs: Set<String> = []
@@ -250,7 +250,7 @@ final class MLXModelManager: ObservableObject {
         }
         return max(minimumAdaptivePrefillStepSize, min(tuned, bucket))
     }
-    nonisolated private static let memoryMaintenanceInterval: TimeInterval = 3
+    nonisolated private static let maximumPromptTokenCountCacheEntries = 256
     nonisolated private static let tuningStartupDelayNanoseconds: UInt64 = 1_000_000_000
     nonisolated private static let rotorQuantKeyBits = 3
     nonisolated private static let rotorQuantValueBits = 2
@@ -607,10 +607,19 @@ final class MLXModelManager: ObservableObject {
             fingerprint: Self.promptTokenCountFingerprint(role: role, content: content)
         )
         if let cachedCount = promptTokenCountCache[cacheKey] {
+            if let existingIndex = promptTokenCountCacheOrder.firstIndex(of: cacheKey) {
+                promptTokenCountCacheOrder.remove(at: existingIndex)
+            }
+            promptTokenCountCacheOrder.append(cacheKey)
             return cachedCount
         }
         let tokenCount = await container.encode(content).count
         promptTokenCountCache[cacheKey] = tokenCount
+        promptTokenCountCacheOrder.append(cacheKey)
+        if promptTokenCountCacheOrder.count > Self.maximumPromptTokenCountCacheEntries {
+            let evictedKey = promptTokenCountCacheOrder.removeFirst()
+            promptTokenCountCache.removeValue(forKey: evictedKey)
+        }
         return tokenCount
     }
 
@@ -725,10 +734,14 @@ final class MLXModelManager: ObservableObject {
         container: ModelContainer,
         targetTokenCount: Int = 2_048
     ) async -> UserInput {
-        var prompt = " hello"
-        var tokenCount = await container.encode(prompt).count
+        var prompt = ""
+        var tokenCount = 0
         while tokenCount < targetTokenCount {
-            prompt += prompt
+            // Approach the target in bounded increments. Doubling the whole
+            // prompt could make the tuning workload nearly twice as large as
+            // requested on tokenizers with roughly linear segmentation.
+            let remaining = targetTokenCount - tokenCount
+            prompt += String(repeating: " hello", count: min(128, remaining))
             tokenCount = await container.encode(prompt).count
         }
         return UserInput(
@@ -805,13 +818,8 @@ final class MLXModelManager: ObservableObject {
         )
     }
 
-    private func supportsRotorQuant(for model: MLXModelInfo?) -> Bool {
-        _ = model
-        return true
-    }
-
-    private func shouldPreferRotorQuant(for model: MLXModelInfo?) -> Bool {
-        UserDefaults.standard.mlxEnableRotorQuant && supportsRotorQuant(for: model)
+    private var shouldPreferRotorQuant: Bool {
+        UserDefaults.standard.mlxEnableRotorQuant
     }
 
     private func defaultGenerationConfigurationForCurrentDevice(
@@ -819,7 +827,7 @@ final class MLXModelManager: ObservableObject {
     ) -> GenerationConfiguration {
         Self.generationConfiguration(
             isEnabled: UserDefaults.standard.mlxEnableRotorQuant,
-            preferRotorQuant: shouldPreferRotorQuant(for: model),
+            preferRotorQuant: shouldPreferRotorQuant,
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
@@ -1107,7 +1115,6 @@ final class MLXModelManager: ObservableObject {
         if activeLoadID != nil {
             activeLoadID = nil
         }
-        stopMemoryMaintenanceTimer()
         if tearDownModel {
             tearDownCurrentModel(reason: "cancelCurrentLoad(\(reason))")
         }
@@ -1215,10 +1222,9 @@ final class MLXModelManager: ObservableObject {
                     self.pendingModelToLoad = nil
                     self.activeLoadID = nil
                     self.applySteadyStateMemoryCachePolicy()
-                    self.startMemoryMaintenanceTimer()
                     self.loadTask = nil
                 }
-                print("MLX model loaded: \(model.displayName)")
+                self.logger.notice("MLX model loaded: \(model.displayName, privacy: .public)")
                 self.logger.notice("MLX container load finished: id=\(model.id, privacy: .public)")
                 MLXMemoryDiagnostics.log(self.logger, "load.finished")
                 await MainActor.run {
@@ -1254,7 +1260,7 @@ final class MLXModelManager: ObservableObject {
                     self.loadError = "Failed to load model: \(error.localizedDescription)"
                 }
                 self.tearDownCurrentModel(reason: "load failure for \(model.id)")
-                print("Error: MLX model load error: \(error)")
+                self.logger.error("MLX model load error: \((error as NSError).localizedDescription, privacy: .public)")
                 self.logger.error("MLX container load failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1313,7 +1319,7 @@ final class MLXModelManager: ObservableObject {
                     self.refreshModelAvailability()
                     self.startLoading(modelID: model.id, source: "download_complete")
                 }
-                print("Model downloaded: \(model.displayName)")
+                self.logger.notice("Model downloaded: \(model.displayName, privacy: .public)")
             } catch is CancellationError {
                 await MainActor.run {
                     self.isDownloading = false
@@ -1331,7 +1337,7 @@ final class MLXModelManager: ObservableObject {
                     self.downloadErrorModelID = model.id
                 }
                 self.cleanupPartialDownload(at: tempDir)
-                print("Error: Download error: \(error)")
+                self.logger.error("Model download failed: \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
     }
@@ -1359,9 +1365,9 @@ final class MLXModelManager: ObservableObject {
             guard fm.fileExists(atPath: dir.path) else { continue }
             do {
                 try fm.removeItem(at: dir)
-                print("Removed obsolete model '\(name)' from Documents/Models/")
+                logger.notice("Removed obsolete model '\(name, privacy: .public)' from Documents/Models/")
             } catch {
-                print("Could not remove obsolete model '\(name)': \(error.localizedDescription)")
+                logger.error("Could not remove obsolete model '\(name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -1452,7 +1458,7 @@ final class MLXModelManager: ObservableObject {
     /// pass and triggers EXC_BAD_ACCESS.
     private func prewarmModelShaders(for model: MLXModelInfo, reason: String) async {
         #if targetEnvironment(simulator)
-        print("Warning: Skipping LM shader pre-warm on simulator")
+        logger.notice("Skipping LM shader pre-warm on simulator")
         return
         #else
         guard let container else { return }
@@ -1466,7 +1472,7 @@ final class MLXModelManager: ObservableObject {
         prewarmInFlightModelID = model.id
         logger.notice("MLX prewarm start: id=\(model.id, privacy: .public) reason=\(reason, privacy: .public)")
         MLXMemoryDiagnostics.log(logger, "prewarm.start")
-        print("Pre-warming LM Metal shaders...")
+        logger.notice("Pre-warming LM Metal shaders")
         // Free every cached Metal buffer before shader compilation so the compilation
         // spike has the maximum possible headroom on top of the ~3 GB model weights.
         prepareMemoryForPrewarm()
@@ -1484,7 +1490,7 @@ final class MLXModelManager: ObservableObject {
             cleanupMemoryAfterPrewarm()
             deferredPrewarmModelID = nil
             prewarmInFlightModelID = nil
-            print("LM Metal shaders pre-warmed")
+            logger.notice("LM Metal shaders pre-warmed")
             logger.notice("MLX prewarm finished: id=\(model.id, privacy: .public)")
             MLXMemoryDiagnostics.log(logger, "prewarm.finished")
         } catch is CancellationError {
@@ -1494,7 +1500,7 @@ final class MLXModelManager: ObservableObject {
         } catch {
             cleanupMemoryAfterPrewarm()
             prewarmInFlightModelID = nil
-            print("Warning: Shader pre-warm failed (non-fatal): \(error.localizedDescription)")
+            logger.warning("Shader pre-warm failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             logger.error("MLX prewarm failed: id=\(model.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
         #endif
@@ -1525,7 +1531,7 @@ final class MLXModelManager: ObservableObject {
         let rotorQuantRequested = UserDefaults.standard.mlxEnableRotorQuant
         let generationConfiguration = Self.generationConfiguration(
             isEnabled: rotorQuantRequested,
-            preferRotorQuant: shouldPreferRotorQuant(for: currentModel),
+            preferRotorQuant: shouldPreferRotorQuant,
             hasTools: !tools.isEmpty,
             hasMedia: includesMedia,
             memoryConstrained: memoryConstrained,
@@ -1650,10 +1656,10 @@ final class MLXModelManager: ObservableObject {
         do {
             try FileManager.default.removeItem(at: dir)
             refreshModelAvailability()
-            print("Deleted model '\(model.localDirName)' from Documents/Models/")
+            logger.notice("Deleted model '\(model.localDirName, privacy: .public)' from Documents/Models/")
         } catch let error as NSError where error.code == NSFileNoSuchFileError {
             refreshModelAvailability()
-            print("Model '\(model.localDirName)' not found in Documents/Models/ - nothing to delete.")
+            logger.debug("Model '\(model.localDirName, privacy: .public)' was not installed; nothing to delete")
         }
     }
 
@@ -1664,27 +1670,25 @@ final class MLXModelManager: ObservableObject {
     func unloadAllModels() {
         cancelCurrentLoad(reason: "unloadAllModels", tearDownModel: false)
         tearDownCurrentModel(reason: "unloadAllModels")
-        print("Unloaded all MLX models")
+        logger.notice("Unloaded all MLX models")
     }
 
     func printModelLocations() {
         for model in availableModels {
             if let url = modelDirectoryURL(for: model) {
-                print("Model file \(model.name): \(url.path) - available: \(model.isAvailable)")
+                logger.debug("Model file \(model.name, privacy: .public): \(url.path, privacy: .private) available=\(model.isAvailable, privacy: .public)")
             } else {
-                print("Model file \(model.name): not found in Documents/Models/ - available: \(model.isAvailable)")
+                logger.debug("Model file \(model.name, privacy: .public) not found; available=\(model.isAvailable, privacy: .public)")
             }
         }
     }
 
     func printModelInputOutputInfo() {
         guard let current = currentModel else {
-            print("Warning: No model loaded")
+            logger.notice("No MLX model loaded")
             return
         }
-        print("Current model: \(current.displayName)")
-        print("   Context length: \(current.contextLength) tokens")
-        print("   Reasoning: \(current.supportsReasoning)")
+        logger.notice("Current model: \(current.displayName, privacy: .public) context=\(current.contextLength, privacy: .public) reasoning=\(current.supportsReasoning, privacy: .public)")
     }
 
     // MARK: - Errors
@@ -1739,7 +1743,6 @@ final class MLXModelManager: ObservableObject {
         let cachePolicy = cachePolicy(
             isEnabled: isEnabled && preferRotorQuant,
             hasTools: hasTools,
-            hasMedia: hasMedia,
             prefersBoundedCache: prefersBoundedCache,
             memoryConstrained: memoryConstrained
         )
@@ -1761,7 +1764,6 @@ final class MLXModelManager: ObservableObject {
     nonisolated internal static func cachePolicy(
         isEnabled: Bool,
         hasTools: Bool,
-        hasMedia: Bool,
         prefersBoundedCache: Bool,
         memoryConstrained: Bool
     ) -> MLXCachePolicy {
@@ -1773,23 +1775,6 @@ final class MLXModelManager: ObservableObject {
         }
 
         return isEnabled ? .persistentRotorQuant : .persistentSimple
-    }
-
-    nonisolated internal static func effectiveMaxKVSize(
-        isEnabled: Bool,
-        preferRotorQuant: Bool,
-        hasTools: Bool,
-        hasMedia: Bool,
-        prefersBoundedCache: Bool,
-        memoryConstrained: Bool
-    ) -> Int? {
-        cachePolicy(
-            isEnabled: isEnabled,
-            hasTools: hasTools,
-            hasMedia: hasMedia,
-            prefersBoundedCache: prefersBoundedCache,
-            memoryConstrained: memoryConstrained
-        ).maxKVSize
     }
 
     nonisolated internal static func cachePolicy(for parameters: GenerateParameters) -> MLXCachePolicy {
@@ -2025,14 +2010,14 @@ final class MLXModelManager: ObservableObject {
         let inspection = toolTemplateInspection(for: model)
         switch inspection.support {
         case .supported:
-            print("MLX tool template support confirmed for \(model.displayName)")
+            logger.notice("MLX tool template support confirmed for \(model.displayName, privacy: .public)")
             if let preferredToolCallFormat = inspection.preferredToolCallFormat {
                 logger.notice(
                     "MLX tool template inspection: id=\(model.id, privacy: .public) format=\(preferredToolCallFormat.rawValue, privacy: .public) wrapped_xml=\(inspection.usesWrappedXMLToolCalls, privacy: .public)"
                 )
             }
         case .unsupported(let message):
-            print("Warning: MLX tool template support unavailable: \(message)")
+            logger.warning("MLX tool template support unavailable: \(message, privacy: .public)")
         }
     }
 
@@ -2239,12 +2224,12 @@ final class MLXModelManager: ObservableObject {
         if container != nil || currentModel != nil || deferredPrewarmModelID != nil || deferredTuningModelID != nil || prewarmInFlightModelID != nil {
             logger.notice("MLX model teardown: reason=\(reason, privacy: .public)")
         }
-        stopMemoryMaintenanceTimer()
         container = nil
         currentModel = nil
         let workerLoadID = installedWorkerLoadID
         installedWorkerLoadID = nil
         promptTokenCountCache.removeAll(keepingCapacity: false)
+        promptTokenCountCacheOrder.removeAll(keepingCapacity: false)
         deferredPrewarmModelID = nil
         deferredTuningModelID = nil
         prewarmInFlightModelID = nil
@@ -2271,27 +2256,4 @@ final class MLXModelManager: ObservableObject {
         URLCache.shared.removeAllCachedResponses()
     }
 
-    private func startMemoryMaintenanceTimer() {
-        stopMemoryMaintenanceTimer()
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.memoryMaintenanceInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.performPeriodicMemoryMaintenance()
-            }
-        }
-        timer.tolerance = 1
-        memoryMaintenanceTimer = timer
-    }
-
-    private func stopMemoryMaintenanceTimer() {
-        memoryMaintenanceTimer?.invalidate()
-        memoryMaintenanceTimer = nil
-    }
-
-    private func performPeriodicMemoryMaintenance() {
-        guard currentModel != nil || isLoading else {
-            stopMemoryMaintenanceTimer()
-            return
-        }
-        applySteadyStateMemoryCachePolicy()
-    }
 }

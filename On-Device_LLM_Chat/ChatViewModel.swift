@@ -245,7 +245,7 @@ final class ChatViewModel: ObservableObject {
                 self.saveCount = 0
                 self.lastSaveTime = Date()
             } catch {
-                print("Error: Failed to save context: \(error.localizedDescription)")
+                self.logger.error("Failed to save context: \((error as NSError).localizedDescription, privacy: .public)")
                 // Retry once more immediately on failure
                 try? self.context.save()
             }
@@ -270,7 +270,7 @@ final class ChatViewModel: ObservableObject {
         do {
             try context.save()
         } catch {
-            print("Error: Failed to immediately save context: \(error)")
+            logger.error("Failed to immediately save context: \((error as NSError).localizedDescription, privacy: .public)")
         }
     }
 
@@ -446,10 +446,11 @@ final class ChatViewModel: ObservableObject {
     // MARK: - OCR
 
     func extractOCR(from image: UIImage) async -> String {
-        await withTaskCancellationHandler {
+        let logger = self.logger
+        return await withTaskCancellationHandler {
             await Task.detached(priority: .userInitiated) { () -> String in
                 guard let cg = image.cgImage else {
-                    print("Failed to get CGImage from UIImage")
+                    logger.error("Failed to get CGImage from UIImage")
                     return ""
                 }
 
@@ -466,7 +467,7 @@ final class ChatViewModel: ObservableObject {
                 do {
                     try handler.perform([request])
                     guard let results = request.results, !results.isEmpty else {
-                        print("No text recognition results found")
+                        logger.debug("No text recognition results found")
                         return ""
                     }
 
@@ -477,15 +478,15 @@ final class ChatViewModel: ObservableObject {
                     }
 
                     let extractedText = texts.joined(separator: "\n")
-                    print("OCR extracted \(texts.count) text segments")
+                    logger.debug("OCR extracted \(texts.count, privacy: .public) text segments")
                     return extractedText
                 } catch {
-                    print("OCR processing failed: \(error)")
+                    logger.error("OCR processing failed: \((error as NSError).localizedDescription, privacy: .public)")
                     return ""
                 }
             }.value
         } onCancel: {
-            print("OCR task was cancelled")
+            logger.debug("OCR task was cancelled")
         }
     }
 
@@ -500,7 +501,7 @@ final class ChatViewModel: ObservableObject {
             }
             return true
         } catch is GenerationTimeoutError {
-            print("Warning: waitForStreamToFinish timed out; cancelling task")
+            logger.warning("waitForStreamToFinish timed out; cancelling task")
             task.cancel()
             // Give cancellation a brief window to propagate before we force-reset.
             if (try? await withTimeout(.seconds(1)) {
@@ -510,7 +511,7 @@ final class ChatViewModel: ObservableObject {
             }
             return false
         } catch {
-            print("Warning: waitForStreamToFinish saw unexpected error: \(error.localizedDescription)")
+            logger.warning("waitForStreamToFinish saw unexpected error: \((error as NSError).localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -683,7 +684,7 @@ final class ChatViewModel: ObservableObject {
         allowNativeImages: Bool = true,
         generationID: UUID? = nil
     ) async -> StreamOutcome {
-        print("streamAssistant: Starting (order: \(order), messageID: \(assistantMessage.id))")
+        logger.debug("streamAssistant starting: order=\(order, privacy: .public) message_id=\(assistantMessage.id.uuidString, privacy: .public)")
 
         let lifecycleID: UUID
         let ownsLifecycle: Bool
@@ -703,7 +704,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         guard isGenerationActive(lifecycleID) else {
-            print("Warning: streamAssistant: Task cancelled before starting")
+            logger.debug("streamAssistant cancelled before starting")
             return .cancelled
         }
 
@@ -1043,7 +1044,12 @@ final class ChatViewModel: ObservableObject {
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                         liveTarget.generationError = timeout.localizedDescription
                         if result.wroteAny {
-                            liveTarget.completeGenerationCapture(rawText: result.cumulativeText)
+                            liveTarget.completeGenerationCapture(
+                                rawText: result.cumulativeText,
+                                captureRawText: UserDefaults.standard.bool(
+                                    forKey: AppSettingsKeys.developerModeEnabled
+                                )
+                            )
                         }
                         liveTarget.markAsComplete()
                         conversation.lastUpdated = Date()
@@ -1082,7 +1088,12 @@ final class ChatViewModel: ObservableObject {
                let finalTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                 syncLiveSearchInvocations(into: finalTarget, from: preparation.webSearchBridge)
                 updateMessageWithReasoningContent(finalTarget, fullText: result.cumulativeText, finalize: true)
-                finalTarget.completeGenerationCapture(rawText: result.cumulativeText)
+                finalTarget.completeGenerationCapture(
+                    rawText: result.cumulativeText,
+                    captureRawText: UserDefaults.standard.bool(
+                        forKey: AppSettingsKeys.developerModeEnabled
+                    )
+                )
                 conversation.lastUpdated = Date()
                 scheduleCoalescedSave()
             }
@@ -1091,10 +1102,9 @@ final class ChatViewModel: ObservableObject {
                 "streamAssistant raw output: chars=\(result.cumulativeText.count, privacy: .public) wrote_any=\(result.wroteAny, privacy: .public)"
             )
         } catch is CancellationError {
-            print("Warning: streaming Task: Cancelled")
+            logger.debug("streamAssistant generation cancelled")
             result.outcome = .cancelled
         } catch {
-            print("Error: streaming Task: Error - \(error)")
             logger.error(
                 "streamAssistant generation error: question_preview_chars=\(preparation.questionLogPreview.count, privacy: .public) partial_chars=\(result.cumulativeText.count, privacy: .public) error=\((error as NSError).localizedDescription, privacy: .public)"
             )
@@ -1107,7 +1117,12 @@ final class ChatViewModel: ObservableObject {
                     liveTarget.text = ""
                 }
                 if !result.cumulativeText.isEmpty {
-                    liveTarget.completeGenerationCapture(rawText: result.cumulativeText)
+                    liveTarget.completeGenerationCapture(
+                        rawText: result.cumulativeText,
+                        captureRawText: UserDefaults.standard.bool(
+                            forKey: AppSettingsKeys.developerModeEnabled
+                        )
+                    )
                 }
                 liveTarget.markAsComplete()
                 result.wroteAny = true
@@ -1191,60 +1206,16 @@ final class ChatViewModel: ObservableObject {
     }
 
     internal static func mergedStreamingChunk(currentText: String, newText: String) -> String? {
-        if !currentText.isEmpty &&
-            newText.hasPrefix(currentText) &&
-            newText.count > currentText.count {
-            return newText
-        }
-        if !newText.isEmpty && newText.count > 10 && currentText.hasPrefix(newText) {
-            return nil
-        }
+        guard !newText.isEmpty else { return nil }
 
-        // Providers occasionally repeat a recently emitted phrase. Search only a
-        // bounded tail: scanning the entire accumulated response for every chunk
-        // makes long generations quadratic in output length.
-        if newText.count > 10 && newText.count <= 4_096 {
-            let searchLength = min(currentText.count, max(512, min(4_096, newText.count * 2)))
-            if currentText.suffix(searchLength).contains(newText) {
-                return nil
-            }
-        }
-
-        var overlapLength = 0
-        if !currentText.isEmpty {
-            let maxCheckLength = min(100, min(currentText.count, newText.count))
-            for length in stride(from: maxCheckLength, through: 3, by: -1) {
-                if currentText.suffix(length) == newText.prefix(length) {
-                    overlapLength = length
-                    break
-                }
-            }
-        }
-
-        let delta = String(newText.dropFirst(overlapLength))
-        if !delta.isEmpty {
-            return currentText + delta
-        }
-        if overlapLength == 0 && !newText.isEmpty {
-            return currentText + newText
-        }
-
-        return nil
+        // Both backend adapters expose deltas: Foundation Models converts its
+        // cumulative partials in OnDeviceLLMGenerator, while MLX emits chunks.
+        // Content-based de-duplication here cannot distinguish a provider retry
+        // from intentional repetition in code, tables, lists, or prose.
+        return currentText + newText
     }
 
     private func appendStreamingChunk(_ newText: String, into result: inout StreamConsumptionResult) -> Bool {
-        if !result.cumulativeText.isEmpty && newText.count > 50 {
-            let combinedTest = result.cumulativeText + newText
-            let checkLength = min(newText.count, 200)
-            if combinedTest.count >= checkLength * 2 {
-                let recentSection = String(combinedTest.suffix(checkLength))
-                let earlierSection = String(combinedTest.dropLast(checkLength).suffix(checkLength))
-                if recentSection.lowercased() == earlierSection.lowercased() {
-                    return false
-                }
-            }
-        }
-
         if let mergedText = Self.mergedStreamingChunk(
             currentText: result.cumulativeText,
             newText: newText
