@@ -22,23 +22,23 @@
 			containerPortal = 3DAC543E2EAC24740054484A /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3DAC54452EAC24740054484A;
-			remoteInfo = "ChatLLM";
+			remoteInfo = ChatLLM;
 		};
 		3DAC54602EAC24760054484A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3DAC543E2EAC24740054484A /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3DAC54452EAC24740054484A;
-			remoteInfo = "ChatLLM";
+			remoteInfo = ChatLLM;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		3D11527E2EAFB66200FC2980 /* ChatLLM.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "ChatLLM.icon"; sourceTree = "<group>"; };
+		3D11527E2EAFB66200FC2980 /* ChatLLM.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = ChatLLM.icon; sourceTree = "<group>"; };
 		3D1B7FCF2F928C5F00EA41C7 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
-		3DAC54462EAC24740054484A /* ChatLLM.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ChatLLM.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3DAC54552EAC24760054484A /* ChatLLMTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChatLLMTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChatLLMUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC54462EAC24740054484A /* ChatLLM.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChatLLM.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC54552EAC24760054484A /* ChatLLMTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChatLLMTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChatLLMUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -57,17 +57,17 @@
 			exceptions = (
 				E5FD88882F548912004FD5CC /* Exceptions for "ChatLLM" folder in "ChatLLM" target */,
 			);
-			path = "ChatLLM";
+			path = ChatLLM;
 			sourceTree = "<group>";
 		};
 		3DAC54582EAC24760054484A /* ChatLLMTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "ChatLLMTests";
+			path = ChatLLMTests;
 			sourceTree = "<group>";
 		};
 		3DAC54622EAC24760054484A /* ChatLLMUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "ChatLLMUITests";
+			path = ChatLLMUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -151,7 +151,7 @@
 			fileSystemSynchronizedGroups = (
 				3DAC54482EAC24740054484A /* ChatLLM */,
 			);
-			name = "ChatLLM";
+			name = ChatLLM;
 			packageProductDependencies = (
 				3D1342302EF6F07600AB678F /* Tokenizers */,
 				E52029162F572460005824D2 /* MLXEmbedders */,
@@ -159,7 +159,7 @@
 				E520291A2F572460005824D2 /* MLXLMCommon */,
 				E520291C2F572460005824D2 /* MLXVLM */,
 			);
-			productName = "ChatLLM";
+			productName = ChatLLM;
 			productReference = 3DAC54462EAC24740054484A /* ChatLLM.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -179,11 +179,11 @@
 			fileSystemSynchronizedGroups = (
 				3DAC54582EAC24760054484A /* ChatLLMTests */,
 			);
-			name = "ChatLLMTests";
+			name = ChatLLMTests;
 			packageProductDependencies = (
 				3DD829752EB154F000D2EE7F /* AsyncAlgorithms */,
 			);
-			productName = "ChatLLMTests";
+			productName = ChatLLMTests;
 			productReference = 3DAC54552EAC24760054484A /* ChatLLMTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
@@ -203,10 +203,10 @@
 			fileSystemSynchronizedGroups = (
 				3DAC54622EAC24760054484A /* ChatLLMUITests */,
 			);
-			name = "ChatLLMUITests";
+			name = ChatLLMUITests;
 			packageProductDependencies = (
 			);
-			productName = "ChatLLMUITests";
+			productName = ChatLLMUITests;
 			productReference = 3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
@@ -453,10 +453,10 @@
 		3DAC546A2EAC24760054484A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM";
+				ASSETCATALOG_COMPILER_APPICON_NAME = ChatLLM;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = "ChatLLM/ChatLLM.entitlements";
+				CODE_SIGN_ENTITLEMENTS = ChatLLM/ChatLLM.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COREML_CODEGEN_LANGU = "";
@@ -480,8 +480,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.17;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLM";
+				MARKETING_VERSION = 0.18;
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
@@ -502,10 +502,10 @@
 		3DAC546B2EAC24760054484A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "ChatLLM";
+				ASSETCATALOG_COMPILER_APPICON_NAME = ChatLLM;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = "ChatLLM/ChatLLM.entitlements";
+				CODE_SIGN_ENTITLEMENTS = ChatLLM/ChatLLM.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COREML_CODEGEN_LANGU = "";
@@ -529,8 +529,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.17;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLM";
+				MARKETING_VERSION = 0.18;
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
@@ -557,7 +557,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMTests";
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLMTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -581,7 +581,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMTests";
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLMTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -603,7 +603,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLMUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -614,7 +614,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "ChatLLM";
+				TEST_TARGET_NAME = ChatLLM;
 			};
 			name = Debug;
 		};
@@ -625,7 +625,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Nevio.ChatLLMUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = Nevio.ChatLLMUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -636,7 +636,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "ChatLLM";
+				TEST_TARGET_NAME = ChatLLM;
 			};
 			name = Release;
 		};
