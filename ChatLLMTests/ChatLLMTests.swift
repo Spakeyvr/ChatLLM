@@ -25,6 +25,26 @@ struct ChatLLMTests {
         #expect(ThoughtDurationFormatter.string(for: 3_960) == "1 hour and 6 minutes")
     }
 
+    @Test func reasoningTextSanitizerRemovesAllThinkingTagsAndExtraGaps() {
+        let sanitized = ReasoningTextSanitizer.string(from: """
+        First reasoning block.
+
+        </think>
+
+        <thinking>
+        Second reasoning block.
+        </thinking>
+        """)
+
+        #expect(sanitized == """
+        First reasoning block.
+
+        Second reasoning block.
+        """)
+        #expect(!sanitized.contains("</think>"))
+        #expect(!sanitized.contains("<thinking>"))
+    }
+
     @Test func webSearchBridgeStoresInvocationFromDirectExecution() async throws {
         let bridge = try makeSearchBridge()
 
@@ -1485,26 +1505,32 @@ struct ChatLLMTests {
             )
         ]
         message.streamingReasoningPhase = .postToolReasoning
+        message.postToolReasoningStartCloseTagCount = 1
 
         viewModel.updateMessageWithReasoningContent(
             message,
             fullText: """
-            I should verify the release notes.
+            The user wants a surprising fact, so I should search for something interesting.
             </think>
 
-            I should cross-check whether 6.2 is stable or still in beta.
+            The first results are broad lists. I need to inspect them and decide whether another search is useful.
+
+            This is still reasoning even though it does not start with a canned phrase.
             """,
             finalize: false
         )
 
         #expect(message.reasoning == """
-        I should verify the release notes.
+        The user wants a surprising fact, so I should search for something interesting.
 
-        I should cross-check whether 6.2 is stable or still in beta.
+        The first results are broad lists. I need to inspect them and decide whether another search is useful.
+
+        This is still reasoning even though it does not start with a canned phrase.
         """)
         #expect(message.finalAnswer == nil)
         #expect(message.text.isEmpty)
         #expect(message.streamingReasoningPhase == .postToolReasoning)
+        #expect(!message.reasoning!.contains("</think>"))
     }
 
     @Test func streamingReasoningUpdateShowsAnswerAfterPostSearchReasoningTurnsIntoAnswer() throws {
@@ -1528,6 +1554,7 @@ struct ChatLLMTests {
             )
         ]
         message.streamingReasoningPhase = .postToolReasoning
+        message.postToolReasoningStartCloseTagCount = 1
 
         viewModel.updateMessageWithReasoningContent(
             message,
@@ -1535,15 +1562,23 @@ struct ChatLLMTests {
             I should verify the release notes.
             </think>
 
+            The search results need one more pass before I can answer confidently.
+            </think>
+
             Based on the search, Swift 6.2 is the latest stable release.
             """,
             finalize: false
         )
 
-        #expect(message.reasoning == "I should verify the release notes.")
+        #expect(message.reasoning == """
+        I should verify the release notes.
+
+        The search results need one more pass before I can answer confidently.
+        """)
         #expect(message.finalAnswer == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.text == "Based on the search, Swift 6.2 is the latest stable release.")
         #expect(message.streamingReasoningPhase == .finalAnswer)
+        #expect(!message.reasoning!.contains("</think>"))
     }
 
     @Test func buildPromptExcludesHistoricalReasoningFromContext() throws {

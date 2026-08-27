@@ -1120,6 +1120,9 @@ final class ChatViewModel: ObservableObject {
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }),
                        liveTarget.isReasoningMode {
                         liveTarget.streamingReasoningPhase = .postToolReasoning
+                        liveTarget.postToolReasoningStartCloseTagCount = Self.reasoningCloseTagCount(
+                            in: result.cumulativeText
+                        )
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
                     }
                 case .searchActivityChanged:

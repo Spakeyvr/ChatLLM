@@ -556,9 +556,11 @@ struct SourcesButton: View {
         Button {
             showSources = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 if !previewSources.isEmpty {
                     faviconStack
+                        .offset(x: -2)
+                        .padding(.trailing, 2)
                 }
 
                 Text("Sources")
@@ -581,7 +583,7 @@ struct SourcesButton: View {
             ForEach(Array(previewSources.enumerated()), id: \.element.id) { index, source in
                 SourceButtonFavicon(source: source, size: faviconSize)
                     .offset(x: CGFloat(index) * overlapOffset)
-                    .zIndex(Double(previewSources.count - index))
+                    .zIndex(Double(index))
             }
         }
         .frame(

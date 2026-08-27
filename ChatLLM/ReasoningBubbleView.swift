@@ -153,8 +153,12 @@ struct StepByStepReasoningSheet: View {
         return items
     }
 
+    private var sanitizedReasoning: String {
+        ReasoningTextSanitizer.string(from: reasoning)
+    }
+
     private var reasoningChunks: [(index: Int, text: String)] {
-        let trimmed = reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = sanitizedReasoning
         guard !trimmed.isEmpty else { return [] }
         let chunks = trimmed
             .components(separatedBy: "\n\n")
@@ -191,10 +195,10 @@ struct StepByStepReasoningSheet: View {
                                 }
                             }
                         }
-                    } else if !reasoning.isEmpty {
+                    } else if !sanitizedReasoning.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             RichMarkdownView(
-                                text: reasoning,
+                                text: sanitizedReasoning,
                                 fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
                                 forceAdvancedRenderer: true
                             )

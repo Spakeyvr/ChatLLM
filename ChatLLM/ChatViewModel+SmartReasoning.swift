@@ -207,17 +207,13 @@ extension ChatViewModel {
         }()
 
         guard let closeRange = lastCloseRange else {
-            let reasoningOnly = trimmedText
-                .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
-                .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let reasoningOnly = ReasoningTextSanitizer.string(from: trimmedText)
             return (reasoningOnly.isEmpty ? nil : reasoningOnly, nil)
         }
 
-        let beforeClose = String(trimmedText[..<closeRange.lowerBound])
-            .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let beforeClose = ReasoningTextSanitizer.string(
+            from: String(trimmedText[..<closeRange.lowerBound])
+        )
         let afterClose = String(trimmedText[closeRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
 
         let paragraphs = afterClose
@@ -243,6 +239,25 @@ extension ChatViewModel {
         }
 
         return (reasoning.isEmpty ? nil : reasoning, answer.isEmpty ? nil : answer)
+    }
+
+    internal static func reasoningCloseTagCount(in text: String) -> Int {
+        let normalized = text.lowercased()
+        return occurrenceCount(of: "</think>", in: normalized) +
+            occurrenceCount(of: "</thinking>", in: normalized)
+    }
+
+    private static func occurrenceCount(of needle: String, in text: String) -> Int {
+        guard !needle.isEmpty else { return 0 }
+        var count = 0
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: needle, range: searchStart..<text.endIndex) {
+            count += 1
+            searchStart = range.upperBound
+        }
+
+        return count
     }
 
     private func parseReasoningResponseForSearchSession(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
@@ -271,40 +286,6 @@ extension ChatViewModel {
         }
 
         return false
-    }
-
-    private static func looksLikeAnswerStartDuringStreaming(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        let normalized = trimmed.lowercased()
-        if looksLikeReasoningContinuation(trimmed) {
-            return false
-        }
-
-        if normalized.hasPrefix("final answer:") ||
-            normalized.hasPrefix("based on") ||
-            normalized.hasPrefix("according to") ||
-            normalized.hasPrefix("the answer is") ||
-            normalized.hasPrefix("in summary") ||
-            normalized.hasPrefix("here's") ||
-            normalized.hasPrefix("here is") {
-            return true
-        }
-
-        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("1. ") || trimmed.hasPrefix("• ") {
-            return true
-        }
-
-        if trimmed.contains("\n\n") {
-            return true
-        }
-
-        if normalized.hasPrefix("i ") || normalized.hasPrefix("i'm ") || normalized.hasPrefix("i’ve ") || normalized.hasPrefix("i've ") {
-            return false
-        }
-
-        return trimmed.count >= 48
     }
 
     // made internal so it can be called from extensions in other files
@@ -375,24 +356,21 @@ extension ChatViewModel {
             if isMLX && hasLiveSearches && !finalize {
                 let phase = message.streamingReasoningPhase ?? .initialThinking
                 if phase == .postToolReasoning {
-                    if let answer = parsed.finalAnswer,
-                       Self.looksLikeAnswerStartDuringStreaming(answer) {
-                        message.completeReasoningCapture()
-                        message.streamingReasoningPhase = .finalAnswer
-                    } else {
-                        let provisionalReasoning = (
-                            parsed.reasoning ??
-                            visiblePortion
-                                .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
-                                .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
-                        )
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let closeTagCount = Self.reasoningCloseTagCount(in: visiblePortion)
+                    let boundaryCount = message.postToolReasoningStartCloseTagCount ?? closeTagCount
+                    if closeTagCount <= boundaryCount {
+                        let provisionalReasoning = ReasoningTextSanitizer.string(from: visiblePortion)
                         if !provisionalReasoning.isEmpty {
                             message.reasoning = provisionalReasoning
                         }
                         message.text = ""
+                        message.finalAnswer = sourcesBlock.isEmpty ? nil : sourcesBlock
                         return
                     }
+
+                    message.completeReasoningCapture()
+                    message.streamingReasoningPhase = .finalAnswer
+                    message.postToolReasoningStartCloseTagCount = nil
                 }
             }
 
@@ -415,6 +393,7 @@ extension ChatViewModel {
                 message.text = answer // Keep raw visible text for non-reasoning fallbacks
                 message.completeReasoningCapture()
                 message.streamingReasoningPhase = .finalAnswer
+                message.postToolReasoningStartCloseTagCount = nil
             } else {
                 // While only reasoning is present, keep the visible text empty or last known final answer
                 if parsed.reasoning == nil && visiblePortion.contains("<thinking>") {

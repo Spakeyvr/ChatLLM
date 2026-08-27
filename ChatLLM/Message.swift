@@ -96,6 +96,7 @@ final class Message {
     var reasoningCompletedAt: Date?
     @Transient var generationError: String?  // ephemeral; not persisted
     @Transient var streamingReasoningPhase: ReasoningStreamPhase?
+    @Transient var postToolReasoningStartCloseTagCount: Int?
 
     // All web search invocations stored as JSON for SwiftData compatibility
     var searchInvocationsJSON: String?
@@ -424,6 +425,7 @@ extension Message {
         reasoningStartedAt = isReasoningMode ? startedAt : nil
         reasoningCompletedAt = nil
         streamingReasoningPhase = isReasoningMode ? .initialThinking : nil
+        postToolReasoningStartCloseTagCount = nil
     }
 
     func completeReasoningCapture(completedAt: Date = Date()) {
@@ -511,6 +513,7 @@ extension Message {
             self.reasoningStartedAt = nil
             self.reasoningCompletedAt = nil
             self.streamingReasoningPhase = nil
+            self.postToolReasoningStartCloseTagCount = nil
             self.searchInvocations = nil
             self.requiresWebSearch = preservedRequiresWebSearch
             self.searchQuery = preservedForcedSearchQuery
@@ -545,6 +548,23 @@ enum ThoughtDurationFormatter {
 
     nonisolated private static func unit(_ value: Int, singular: String, plural: String) -> String {
         "\(value) \(value == 1 ? singular : plural)"
+    }
+}
+
+enum ReasoningTextSanitizer {
+    nonisolated static func string(from text: String) -> String {
+        let stripped = text
+            .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
+        return stripped
+            .replacingOccurrences(
+                of: #"\n[ \t]*\n(?:[ \t]*\n)+"#,
+                with: "\n\n",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

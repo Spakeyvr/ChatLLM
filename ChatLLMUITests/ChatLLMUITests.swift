@@ -157,6 +157,10 @@ final class ChatLLMUITests: XCTestCase {
 
         thoughtSummary.tap()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertEqual(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "</think>")).count,
+            0
+        )
     }
 
     @MainActor
