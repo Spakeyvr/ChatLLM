@@ -156,11 +156,41 @@ final class ChatLLMUITests: XCTestCase {
         XCTAssertTrue(app.buttons["message.sources"].exists)
 
         thoughtSummary.tap()
-        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Reasoning"].waitForExistence(timeout: 5))
         XCTAssertEqual(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "</think>")).count,
             0
         )
+    }
+
+    @MainActor
+    func testReasoningSheetRendersContentExposedByExpansion() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-long-reasoning-demo"
+        ]
+        app.launch()
+
+        let thoughtSummary = app.buttons["message.thought"]
+        XCTAssertTrue(thoughtSummary.waitForExistence(timeout: 5))
+        thoughtSummary.tap()
+
+        let reasoningNavigationBar = app.navigationBars["Reasoning"]
+        XCTAssertTrue(reasoningNavigationBar.waitForExistence(timeout: 5))
+        let start = reasoningNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08))
+        start.press(forDuration: 0.1, thenDragTo: end)
+
+        let newlyExposedText = app.staticTexts.matching(
+            NSPredicate(
+                format: "label CONTAINS %@",
+                "This newly exposed reasoning must appear immediately when the sheet expands."
+            )
+        ).firstMatch
+        XCTAssertTrue(newlyExposedText.waitForExistence(timeout: 5))
+        XCTAssertTrue(newlyExposedText.isHittable)
     }
 
     @MainActor

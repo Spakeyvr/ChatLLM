@@ -12,24 +12,53 @@ import SwiftUI
 struct InlineThinkingView: View {
     var text: String = "Thinking…"
     let onTap: (() -> Void)?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shimmerOffset: CGFloat = -0.4
 
     var body: some View {
         Group {
             if let onTap {
                 Button(action: onTap) {
-                    thinkingLabel
+                    thinkingLabel(animatesGlow: false)
                 }
                 .buttonStyle(.plain)
             } else {
-                thinkingLabel
+                thinkingLabel(animatesGlow: true)
             }
         }
     }
 
-    private var thinkingLabel: some View {
+    @ViewBuilder
+    private func thinkingLabel(animatesGlow: Bool) -> some View {
         Text(text)
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            .overlay {
+                if animatesGlow && !reduceMotion {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .white.opacity(0.85), location: 0.5),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
+                        endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
+                    )
+                    .mask {
+                        Text(text)
+                            .font(.subheadline)
+                    }
+                    .blendMode(.plusLighter)
+                    .accessibilityHidden(true)
+                }
+            }
+            .onAppear {
+                guard animatesGlow, !reduceMotion else { return }
+                shimmerOffset = -0.4
+                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 1.4
+                }
+            }
     }
 }
 
@@ -108,6 +137,7 @@ struct StepByStepReasoningSheet: View {
     let searchInvocations: [SearchInvocation]?
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
+    @State private var selectedDetent: PresentationDetent = .medium
 
     private enum TimelineItem: Identifiable {
         case reasoningChunk(Int, String)
@@ -220,10 +250,10 @@ struct StepByStepReasoningSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle("Activity")
+            .navigationTitle("Reasoning")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
         .sheet(item: $selectedInvocation) { invocation in
             SourcesSheetView(

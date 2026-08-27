@@ -425,6 +425,19 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Public controls
 
     func cancelGeneration() {
+        cancelGeneration(at: Date())
+    }
+
+    internal func cancelGeneration(at cancelledAt: Date) {
+        if let streamingMessageID,
+           let streamingMessage = conversation.messages.first(where: { $0.id == streamingMessageID }),
+           streamingMessage.reasoningStartedAt != nil,
+           streamingMessage.reasoningCompletedAt == nil {
+            streamingMessage.completeReasoningCapture(completedAt: cancelledAt)
+            conversation.lastUpdated = cancelledAt
+            immediateSave()
+        }
+
         activeGenerationID = nil
         isGenerating = false
         streamingMessageID = nil

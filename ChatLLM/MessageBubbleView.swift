@@ -559,7 +559,7 @@ struct SourcesButton: View {
             HStack(spacing: 10) {
                 if !previewSources.isEmpty {
                     faviconStack
-                        .offset(x: -2)
+                        .offset(x: -4)
                         .padding(.trailing, 2)
                 }
 

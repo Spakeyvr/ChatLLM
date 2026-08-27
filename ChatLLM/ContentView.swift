@@ -169,6 +169,20 @@ struct ContentView: View {
         }
 
         let includesReasoning = !arguments.contains("-ui-test-web-search-without-reasoning")
+        let usesLongReasoning = arguments.contains("-ui-test-long-reasoning-demo")
+        let demoReasoning = usesLongReasoning
+            ? """
+            I need current platform information, so I should check primary sources.
+            The first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API.
+            I should compare the terminology used by both sources before drawing a conclusion.
+            This newly exposed reasoning must appear immediately when the sheet expands.
+            I should also verify that the terminology is consistent across the documentation.
+            That comparison rules out a naming mismatch between the two sources.
+            The implementation details now line up with the platform overview.
+            No additional search is needed before forming the final response.
+            Finally, I can summarize the verified platform change concisely.
+            """
+            : "I need current platform information, so I should check primary sources.\n\n</think>\n\nThe first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API.\n\n</think>"
 
         let conversation = Conversation(title: "Web Search Preview", reasoningMode: true)
         let userMessage = Message(
@@ -185,7 +199,7 @@ struct ContentView: View {
             conversation: conversation,
             isFinal: true,
             reasoning: includesReasoning
-                ? "I need current platform information, so I should check primary sources.\n\n</think>\n\nThe first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API.\n\n</think>"
+                ? demoReasoning
                 : " \n ",
             finalAnswer: "SwiftUI now has a native `WebView` and an observable `WebPage` model.\n\n**The key change is native SwiftUI integration.**\n\nApps can embed and control web content without wrapping `WKWebView` themselves, while Apple’s documentation and release coverage agree on the core API shape.",
             isReasoningMode: true,
