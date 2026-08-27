@@ -377,6 +377,7 @@ extension ChatViewModel {
                 if phase == .postToolReasoning {
                     if let answer = parsed.finalAnswer,
                        Self.looksLikeAnswerStartDuringStreaming(answer) {
+                        message.completeReasoningCapture()
                         message.streamingReasoningPhase = .finalAnswer
                     } else {
                         let provisionalReasoning = (
@@ -412,6 +413,7 @@ extension ChatViewModel {
                 let stored = sourcesBlock + answer
                 message.finalAnswer = stored
                 message.text = answer // Keep raw visible text for non-reasoning fallbacks
+                message.completeReasoningCapture()
                 message.streamingReasoningPhase = .finalAnswer
             } else {
                 // While only reasoning is present, keep the visible text empty or last known final answer

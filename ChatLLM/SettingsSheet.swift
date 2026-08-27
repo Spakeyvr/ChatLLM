@@ -1,6 +1,13 @@
 import SwiftUI
 
 struct SettingsSheet: View {
+    private enum WebSearchKeyStatus: Equatable {
+        case idle
+        case checking
+        case valid
+        case invalid(String)
+    }
+
     static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX text and image chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Tool and low-memory turns use safer uncompressed or bounded caches.")
     static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX text and image chats. Tool and low-memory turns use safer cache modes.")
     static let mlxRotorQuantExperimentalTitle = String(localized: "RotorQuant Experimental")
@@ -18,6 +25,7 @@ struct SettingsSheet: View {
     private let showCharacterCount = true
 
     @State private var areChatPreferencesFocused = false
+    @State private var webSearchKeyStatus: WebSearchKeyStatus = .idle
 
     enum PendingAction: Identifiable {
         case deleteAll
@@ -183,26 +191,56 @@ struct SettingsSheet: View {
 
                     SecureField(String(localized: "Enter your Tavily API key"), text: $settings.tavilyApiKey)
                         .textContentType(.password)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel(String(localized: "Tavily API Key"))
+                        .onChange(of: settings.tavilyApiKey) {
+                            webSearchKeyStatus = .idle
+                        }
 
-                    if !settings.tavilyApiKey.isEmpty {
+                    HStack {
                         Button {
                             openTavilySignUp()
                         } label: {
-                            Label(String(localized: "Change Key"), systemImage: "key.fill")
-                                .foregroundStyle(.secondary)
+                            Label(
+                                settings.tavilyApiKey.isEmpty
+                                    ? String(localized: "Get API Key")
+                                    : String(localized: "Manage Key"),
+                                systemImage: "arrow.up.right"
+                            )
                         }
-                        .buttonStyle(.plain)
-                    } else {
+                        .buttonStyle(.borderless)
+
+                        Spacer()
+
                         Button {
-                            openTavilySignUp()
+                            validateTavilyKey()
                         } label: {
-                            Label(String(localized: "Get API Key"), systemImage: "arrow.up.right")
-                                .foregroundStyle(.blue)
+                            if webSearchKeyStatus == .checking {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(String(localized: "Test Key"))
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            settings.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            webSearchKeyStatus == .checking
+                        )
+                    }
+
+                    switch webSearchKeyStatus {
+                    case .idle, .checking:
+                        EmptyView()
+                    case .valid:
+                        Label(String(localized: "Key is valid"), systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    case .invalid(let message):
+                        Label(message, systemImage: "exclamationmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
 
@@ -659,6 +697,22 @@ struct SettingsSheet: View {
     @ViewBuilder
     private func appearanceOption(localized: String, icon: String, tag: String) -> some View {
         Label(localized, systemImage: icon).tag(tag)
+    }
+
+    private func validateTavilyKey() {
+        let key = settings.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        webSearchKeyStatus = .checking
+
+        Task {
+            do {
+                let service = try TavilySearchService(apiKey: key)
+                try await service.validateAPIKey()
+                webSearchKeyStatus = .valid
+            } catch {
+                webSearchKeyStatus = .invalid(error.localizedDescription)
+            }
+        }
     }
 
 }

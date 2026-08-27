@@ -12,7 +12,6 @@ import SwiftUI
 struct InlineThinkingView: View {
     var text: String = "Thinking…"
     let onTap: (() -> Void)?
-    @State private var shimmerOffset: CGFloat = -0.4
 
     var body: some View {
         Group {
@@ -30,29 +29,7 @@ struct InlineThinkingView: View {
     private var thinkingLabel: some View {
         Text(text)
             .font(.subheadline)
-            .foregroundStyle(.gray)
-            .overlay {
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .white.opacity(0.85), location: 0.5),
-                        .init(color: .clear, location: 1),
-                    ],
-                    startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
-                    endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
-                )
-                .mask {
-                    Text(text)
-                        .font(.subheadline)
-                }
-                .blendMode(.plusLighter)
-            }
-            .onAppear {
-                shimmerOffset = -0.4
-                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                    shimmerOffset = 1.4
-                }
-            }
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -128,9 +105,7 @@ struct CoTStepView: View {
 
 struct StepByStepReasoningSheet: View {
     let reasoning: String
-    let reasoningSteps: [ReasoningStep]?
     let searchInvocations: [SearchInvocation]?
-    @Environment(\.dismiss) private var dismiss
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
 
@@ -208,7 +183,9 @@ struct StepByStepReasoningSheet: View {
                                     )
                                 case .search(let invocation):
                                     SearchStepCard(invocation: invocation) {
-                                        selectedInvocation = invocation
+                                        if !invocation.displaySources.isEmpty {
+                                            selectedInvocation = invocation
+                                        }
                                     }
                                     .padding(.bottom, index == timelineItems.count - 1 ? 0 : 20)
                                 }
@@ -239,16 +216,15 @@ struct StepByStepReasoningSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle("Step-by-Step Reasoning")
+            .navigationTitle("Activity")
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .sheet(item: $selectedInvocation) { invocation in
             SourcesSheetView(
-                sourcesText: invocation.userVisibleResults,
-                title: String(localized: "Search Results"),
-                searchQuery: invocation.query
+                invocations: [invocation],
+                title: String(localized: "Search Results")
             )
         }
     }
@@ -344,44 +320,66 @@ struct SearchStepCard: View {
     let invocation: SearchInvocation
     let onTap: () -> Void
 
-    private var resultSnippet: String {
-        let visibleResults = invocation.userVisibleResults
-        let lines = visibleResults.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        let count = lines.filter {
-            $0.hasPrefix("Title:") ||
-            $0.hasPrefix("- ") ||
-            $0.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil
-        }.count
-        if count > 0 {
-            return "\(count) result\(count == 1 ? "" : "s") found"
+    private var statusTitle: String {
+        switch invocation.status {
+        case .searching: "Searching the web"
+        case .completed: "Searched the web"
+        case .failed: "Web search failed"
         }
-        let preview = visibleResults.prefix(60)
-        return preview.count < visibleResults.count ? "\(preview)…" : String(preview)
+    }
+
+    private var statusDetail: String {
+        switch invocation.status {
+        case .searching:
+            return "Waiting for results…"
+        case .completed:
+            let count = invocation.sourceCount
+            let duration = invocation.durationMilliseconds.map { " · \($0) ms" } ?? ""
+            return "\(count) source\(count == 1 ? "" : "s")\(duration)"
+        case .failed:
+            return invocation.errorDescription ?? "Search could not be completed."
+        }
+    }
+
+    private var statusIcon: String {
+        switch invocation.status {
+        case .searching: "magnifyingglass"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch invocation.status {
+        case .searching: .secondary
+        case .completed: .green
+        case .failed: .red
+        }
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "magnifyingglass")
+                Image(systemName: statusIcon)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(statusColor)
                     .frame(width: 18, height: 18)
                     .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("Searched the web")
+                        Text(statusTitle)
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
 
                         Spacer(minLength: 0)
 
-                        Text("Open")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        if !invocation.displaySources.isEmpty {
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
 
                     Text(invocation.query)
@@ -390,7 +388,7 @@ struct SearchStepCard: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
 
-                    Text(resultSnippet)
+                    Text(statusDetail)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -408,6 +406,7 @@ struct SearchStepCard: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(invocation.displaySources.isEmpty)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .contentShape(Rectangle())
     }

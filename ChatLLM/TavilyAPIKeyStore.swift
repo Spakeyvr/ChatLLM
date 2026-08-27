@@ -11,7 +11,8 @@ import os.log
 
 enum TavilyAPIKeyStore {
     static let userDefaultsKey = "tavilyApiKey"
-    static let service = "com.yourapp.tavily"
+    static let service = "\(Bundle.main.bundleIdentifier ?? "Nevio.ChatLLM").web-search"
+    private static let legacyService = "com.yourapp.tavily"
     static let account = "TavilyAPIKey"
     static let didChangeNotification = Notification.Name("TavilyKeyChanged")
 
@@ -57,7 +58,18 @@ enum TavilyAPIKeyStore {
             account: account
         )
 
-        return getKeychainValue(service: service, account: account)
+        if let current = getKeychainValue(service: service, account: account) {
+            return current
+        }
+
+        guard service == Self.service,
+              let legacy = getKeychainValue(service: legacyService, account: account) else {
+            return nil
+        }
+        if saveKeychainValue(legacy, service: service, account: account) {
+            deleteKeychainValue(service: legacyService, account: account)
+        }
+        return legacy
     }
 
     static func save(
@@ -89,6 +101,9 @@ enum TavilyAPIKeyStore {
         postNotification: Bool = true
     ) {
         deleteKeychainValue(service: service, account: account)
+        if service == Self.service {
+            deleteKeychainValue(service: legacyService, account: account)
+        }
         userDefaults.removeObject(forKey: userDefaultsKey)
 
         if postNotification {

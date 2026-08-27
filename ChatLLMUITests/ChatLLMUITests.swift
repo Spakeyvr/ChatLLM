@@ -128,6 +128,38 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testSearchOnlyResponseShowsSourcesWithoutThoughtSummary() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-web-search-without-reasoning"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["message.thought"].exists)
+    }
+
+    @MainActor
+    func testReasonedResponseShowsTappableThoughtDuration() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo"
+        ]
+        app.launch()
+
+        let thoughtSummary = app.buttons["message.thought"]
+        XCTAssertTrue(thoughtSummary.waitForExistence(timeout: 5))
+        XCTAssertEqual(thoughtSummary.label, "Thought for 1 minute and 8 seconds")
+        XCTAssertTrue(app.buttons["message.sources"].exists)
+
+        thoughtSummary.tap()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = XCUIApplication()

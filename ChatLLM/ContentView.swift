@@ -143,6 +143,12 @@ struct ContentView: View {
     // MARK: - Lifecycle handlers (split out for type-checking simplicity)
     
     private func handleOnAppear() {
+        if let demoConversation = seedWebSearchDemoIfNeeded() {
+            selection = demoConversation
+            preferredCompactColumn = .detail
+            return
+        }
+
         // Clean up old chats if auto-delete is enabled
         performAutoDeleteIfNeeded()
         scheduleAttachmentStorageCleanup()
@@ -153,6 +159,112 @@ struct ContentView: View {
            let first = conversations.first {
             selection = first
         }
+    }
+
+    private func seedWebSearchDemoIfNeeded() -> Conversation? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-ui-test-web-search-demo") else { return nil }
+        if let existing = conversations.first(where: { $0.title == "Web Search Preview" }) {
+            return existing
+        }
+
+        let includesReasoning = !arguments.contains("-ui-test-web-search-without-reasoning")
+
+        let conversation = Conversation(title: "Web Search Preview", reasoningMode: true)
+        let userMessage = Message(
+            role: .user,
+            text: "What changed in SwiftUI web views this year?",
+            order: 0,
+            conversation: conversation,
+            isFinal: true
+        )
+        let assistantMessage = Message(
+            role: .assistant,
+            text: "",
+            order: 1,
+            conversation: conversation,
+            isFinal: true,
+            reasoning: includesReasoning
+                ? "I need current platform information, so I should check primary sources.\n\nThe first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API."
+                : " \n ",
+            finalAnswer: "SwiftUI now has a native `WebView` and an observable `WebPage` model, so apps can embed and control web content without wrapping `WKWebView` themselves. Apple’s documentation and release coverage agree on the core API shape.",
+            isReasoningMode: true,
+            generationBackend: "Preview",
+            generationModelName: "UI Fixture"
+        )
+
+        let firstResponse = WebSearchResponse(
+            query: "SwiftUI WebView iOS 26 changes",
+            sources: [
+                WebSearchSource(
+                    title: "WebKit for SwiftUI",
+                    url: "https://developer.apple.com/documentation/webkit/webkit-for-swiftui",
+                    snippet: "Apple documents the SwiftUI-native WebView and WebPage APIs for displaying and controlling web content.",
+                    score: 0.97,
+                    publishedDate: "June 2026"
+                ),
+                WebSearchSource(
+                    title: "What’s new in WebKit and Safari",
+                    url: "https://webkit.org/blog/",
+                    snippet: "WebKit release notes cover new platform capabilities and behavior across Safari and embedded web views.",
+                    score: 0.89
+                ),
+                WebSearchSource(
+                    title: "SwiftUI updates",
+                    url: "https://developer.apple.com/swiftui/whats-new/",
+                    snippet: "Apple’s SwiftUI overview highlights the newest framework APIs and platform integrations.",
+                    score: 0.84
+                )
+            ],
+            responseTimeSeconds: 0.42
+        )
+        let secondResponse = WebSearchResponse(
+            query: "Apple WebPage WebView SwiftUI documentation",
+            sources: [
+                WebSearchSource(
+                    title: "WebView",
+                    url: "https://developer.apple.com/documentation/webkit/webview-swift.struct",
+                    snippet: "A SwiftUI view that displays web content managed by a WebPage instance.",
+                    score: 0.99
+                ),
+                WebSearchSource(
+                    title: "WebPage",
+                    url: "https://developer.apple.com/documentation/webkit/webpage",
+                    snippet: "An observable object that manages navigation, page state, and interactions for web content.",
+                    score: 0.98
+                )
+            ],
+            responseTimeSeconds: 0.31
+        )
+        let now = Date()
+        if includesReasoning {
+            assistantMessage.reasoningStartedAt = now.addingTimeInterval(-68)
+            assistantMessage.reasoningCompletedAt = now
+        }
+        assistantMessage.searchInvocations = [
+            SearchInvocation(
+                query: firstResponse.query,
+                results: firstResponse.modelFacingText(),
+                response: firstResponse,
+                status: .completed,
+                anchorStepNumber: 1,
+                timestamp: now.addingTimeInterval(-1.1),
+                completedAt: now.addingTimeInterval(-0.68)
+            ),
+            SearchInvocation(
+                query: secondResponse.query,
+                results: secondResponse.modelFacingText(),
+                response: secondResponse,
+                status: .completed,
+                anchorStepNumber: 2,
+                timestamp: now.addingTimeInterval(-0.55),
+                completedAt: now.addingTimeInterval(-0.24)
+            )
+        ]
+        conversation.messages = [userMessage, assistantMessage]
+        modelContext.insert(conversation)
+        try? modelContext.save()
+        return conversation
     }
     
     private func handleSelectionChange(_ oldSelection: Conversation?, _ newSelection: Conversation?) {

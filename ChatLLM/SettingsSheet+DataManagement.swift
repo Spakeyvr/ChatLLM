@@ -110,7 +110,7 @@ extension SettingsSheet {
     }
 
     func openTavilySignUp() {
-        let tavilyURL = "https://tavily.com/"
+        let tavilyURL = "https://app.tavily.com/"
 
         guard let url = URL(string: tavilyURL) else {
             print("Invalid Tavily URL")

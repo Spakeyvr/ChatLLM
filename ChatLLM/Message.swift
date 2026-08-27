@@ -92,6 +92,8 @@ final class Message {
     var generationModelName: String?
     var generationStartedAt: Date?
     var generationCompletedAt: Date?
+    var reasoningStartedAt: Date?
+    var reasoningCompletedAt: Date?
     @Transient var generationError: String?  // ephemeral; not persisted
     @Transient var streamingReasoningPhase: ReasoningStreamPhase?
 
@@ -309,7 +311,9 @@ final class Message {
         generationBackend: String? = nil,
         generationModelName: String? = nil,
         generationStartedAt: Date? = nil,
-        generationCompletedAt: Date? = nil
+        generationCompletedAt: Date? = nil,
+        reasoningStartedAt: Date? = nil,
+        reasoningCompletedAt: Date? = nil
     ) {
         self.id = id
         self.order = order
@@ -328,6 +332,8 @@ final class Message {
         self.generationModelName = generationModelName
         self.generationStartedAt = generationStartedAt
         self.generationCompletedAt = generationCompletedAt
+        self.reasoningStartedAt = reasoningStartedAt
+        self.reasoningCompletedAt = reasoningCompletedAt
         self.conversation = conversation
         self.attachments = attachments
         self.reasoningSteps = reasoningSteps
@@ -389,6 +395,12 @@ extension Message {
         return duration > 0 ? duration : nil
     }
 
+    var reasoningDuration: TimeInterval? {
+        guard let reasoningStartedAt, let reasoningCompletedAt else { return nil }
+        let duration = reasoningCompletedAt.timeIntervalSince(reasoningStartedAt)
+        return duration > 0 ? duration : nil
+    }
+
     var estimatedOutputTokenCount: Int? {
         let raw = developerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
@@ -409,7 +421,16 @@ extension Message {
         generationModelName = modelName
         generationStartedAt = startedAt
         generationCompletedAt = nil
+        reasoningStartedAt = isReasoningMode ? startedAt : nil
+        reasoningCompletedAt = nil
         streamingReasoningPhase = isReasoningMode ? .initialThinking : nil
+    }
+
+    func completeReasoningCapture(completedAt: Date = Date()) {
+        guard isReasoningMode,
+              reasoningStartedAt != nil,
+              reasoningCompletedAt == nil else { return }
+        reasoningCompletedAt = completedAt
     }
 
     func completeGenerationCapture(
@@ -421,6 +442,9 @@ extension Message {
             ? String(rawText.prefix(Self.maximumCapturedRawTextCharacters))
             : nil
         generationCompletedAt = completedAt
+        if !(reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+            completeReasoningCapture(completedAt: completedAt)
+        }
     }
 
     /// Efficient bulk text update for streaming with conditional invalidation
@@ -467,6 +491,8 @@ extension Message {
             self.generationModelName != nil ||
             self.generationStartedAt != nil ||
             self.generationCompletedAt != nil ||
+            self.reasoningStartedAt != nil ||
+            self.reasoningCompletedAt != nil ||
             self.searchInvocations != nil ||
             self.searchQuery != nil
 
@@ -482,11 +508,43 @@ extension Message {
             self.generationModelName = nil
             self.generationStartedAt = nil
             self.generationCompletedAt = nil
+            self.reasoningStartedAt = nil
+            self.reasoningCompletedAt = nil
             self.streamingReasoningPhase = nil
             self.searchInvocations = nil
             self.requiresWebSearch = preservedRequiresWebSearch
             self.searchQuery = preservedForcedSearchQuery
         }
+    }
+}
+
+enum ThoughtDurationFormatter {
+    nonisolated static func string(for duration: TimeInterval) -> String {
+        let totalSeconds = max(1, Int(duration.rounded()))
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            let hourText = unit(hours, singular: "hour", plural: "hours")
+            if minutes > 0 {
+                return "\(hourText) and \(unit(minutes, singular: "minute", plural: "minutes"))"
+            }
+            guard seconds > 0 else { return hourText }
+            return "\(hourText) and \(unit(seconds, singular: "second", plural: "seconds"))"
+        }
+
+        if minutes > 0 {
+            let minuteText = unit(minutes, singular: "minute", plural: "minutes")
+            guard seconds > 0 else { return minuteText }
+            return "\(minuteText) and \(unit(seconds, singular: "second", plural: "seconds"))"
+        }
+
+        return unit(seconds, singular: "second", plural: "seconds")
+    }
+
+    nonisolated private static func unit(_ value: Int, singular: String, plural: String) -> String {
+        "\(value) \(value == 1 ? singular : plural)"
     }
 }
 

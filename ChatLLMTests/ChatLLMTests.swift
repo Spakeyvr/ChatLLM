@@ -16,6 +16,15 @@ import SwiftData
 @Suite(.serialized)
 struct ChatLLMTests {
 
+    @Test func thoughtDurationFormatterUsesNaturalUnits() {
+        #expect(ThoughtDurationFormatter.string(for: 8) == "8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 60) == "1 minute")
+        #expect(ThoughtDurationFormatter.string(for: 68) == "1 minute and 8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 3_600) == "1 hour")
+        #expect(ThoughtDurationFormatter.string(for: 3_608) == "1 hour and 8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 3_960) == "1 hour and 6 minutes")
+    }
+
     @Test func webSearchBridgeStoresInvocationFromDirectExecution() async throws {
         let bridge = try makeSearchBridge()
 
@@ -34,8 +43,8 @@ struct ChatLLMTests {
 
         let result = try await service.search(query: "latest swift release")
 
-        #expect(result.contains("Published: 2026-02-28"))
-        #expect(result.contains("Swift 6.2 adds more concurrency fixes."))
+        #expect(result.sources.first?.publishedDate == "2026-02-28")
+        #expect(result.sources.first?.snippet == "Swift 6.2 adds more concurrency fixes.")
     }
 
     @Test func searchInvocationUserVisibleResultsStripsInternalWebSearchEnvelope() {
@@ -96,13 +105,15 @@ struct ChatLLMTests {
         let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(payload["api_key"] == nil)
         #expect(payload["query"] as? String == "latest swift release")
-        #expect(payload["max_results"] as? Int == 2)
-        #expect(payload["topic"] as? String == "news")
-        #expect(payload["time_range"] as? String == "week")
-        #expect(payload["search_depth"] as? String == "basic")
+        #expect(payload["max_results"] as? Int == 4)
+        #expect(payload["topic"] == nil)
+        #expect(payload["time_range"] == nil)
+        #expect(payload["search_depth"] == nil)
         #expect(payload["auto_parameters"] as? Bool == true)
-        #expect(payload["include_answer"] as? String == "basic")
+        #expect(payload["include_answer"] as? Bool == false)
         #expect(payload["include_raw_content"] as? Bool == false)
+        #expect(payload["include_favicon"] as? Bool == true)
+        #expect(payload["include_usage"] as? Bool == true)
     }
 
     @Test func tavilySearchServiceKeepsCompactShapeForExactMatchQueries() async throws {
@@ -112,10 +123,59 @@ struct ChatLLMTests {
 
         let body = try #require(MockTavilyURLProtocol.lastRequestBody)
         let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(payload["search_depth"] as? String == "basic")
+        #expect(payload["search_depth"] == nil)
         #expect(payload["exact_match"] == nil)
         #expect(payload["chunks_per_source"] == nil)
-        #expect(payload["include_answer"] as? String == "basic")
+        #expect(payload["include_answer"] as? Bool == false)
+    }
+
+    @Test func webSearchBridgePersistsStructuredSourcesAndLifecycle() async throws {
+        let bridge = try makeSearchBridge()
+
+        _ = try await bridge.executeSearch(query: "latest swift release")
+
+        let invocation = try #require(bridge.allInvocations.first)
+        #expect(invocation.status == .completed)
+        #expect(invocation.completedAt != nil)
+        #expect(invocation.response?.provider == "Tavily")
+        #expect(invocation.displaySources.first?.domainName == "example.com")
+        #expect(invocation.sourceCount == 1)
+    }
+
+    @Test func modelFacingSearchTextAlwaysClosesUntrustedEnvelope() {
+        let response = WebSearchResponse(
+            query: "test query",
+            sources: [
+                WebSearchSource(
+                    title: "Long result",
+                    url: "https://example.com",
+                    snippet: String(repeating: "long content ", count: 200)
+                )
+            ]
+        )
+
+        let text = response.modelFacingText(maxSnippetCharacters: 80)
+
+        #expect(text.hasSuffix("UNTRUSTED_WEB_RESULTS_END"))
+        #expect(text.contains("long content"))
+        #expect(text.count < 500)
+    }
+
+    @Test func legacySearchInvocationParsesNumberedSources() throws {
+        let invocation = SearchInvocation(query: "legacy", results: """
+        UNTRUSTED_WEB_RESULTS_BEGIN
+        Sources:
+        [1] Example source
+        https://example.com/story
+        Published: 2026-08-27
+        A readable excerpt.
+        UNTRUSTED_WEB_RESULTS_END
+        """)
+
+        let source = try #require(invocation.displaySources.first)
+        #expect(source.title == "Example source")
+        #expect(source.domainName == "example.com")
+        #expect(source.snippet == "A readable excerpt.")
     }
 
     @Test func tavilySearchServiceMapsUnauthorizedResponsesToInvalidAPIKey() async throws {

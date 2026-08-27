@@ -66,6 +66,10 @@ struct ChatLLMApp: App {
         TavilyAPIKeyStore.clear(postNotification: false)
         clearSwiftDataStoreIfNeeded()
         clearAttachmentStorageIfNeeded()
+
+        if arguments.contains("-ui-test-web-search-demo") {
+            UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+        }
     }
 
     private static func makeModelConfiguration() -> ModelConfiguration {

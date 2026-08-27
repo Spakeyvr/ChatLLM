@@ -120,29 +120,15 @@ struct MessageCellView: View {
         !viewModel.isGenerating && !isCurrentlyStreaming && hasContent && message.isFinal
     }
 
-    private var combinedSourcesText: String? {
-        let directSources = extractSourcesFromMessage()
-        if let directSources, !directSources.isEmpty {
-            return directSources
-        }
+    private var sourceInvocations: [SearchInvocation] {
+        let stored = (message.searchInvocations ?? []).filter { !$0.displaySources.isEmpty }
+        if !stored.isEmpty { return stored }
 
-        let invocationSources = (message.searchInvocations ?? [])
-            .map(\.userVisibleResults)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        guard !invocationSources.isEmpty else { return nil }
-        return invocationSources.joined(separator: "\n\n")
-    }
-
-    private var sourcesQuery: String? {
-        if let query = message.searchQuery, !query.isEmpty {
-            return query
-        }
-
-        let invocations = message.searchInvocations ?? []
-        guard invocations.count == 1 else { return nil }
-        return invocations[0].query
+        guard let legacyText = extractSourcesFromMessage(), !legacyText.isEmpty else { return [] }
+        return [SearchInvocation(
+            query: message.searchQuery?.isEmpty == false ? message.searchQuery! : String(localized: "Saved web search"),
+            results: legacyText
+        )]
     }
 
     var body: some View {
@@ -197,8 +183,7 @@ struct MessageCellView: View {
                     isStreamingForThisMessage: isCurrentlyStreaming,
                     canAct: canAct,
                     isFinal: message.isFinal,
-                    sourcesText: combinedSourcesText,
-                    sourcesQuery: sourcesQuery,
+                    sourceInvocations: sourceInvocations,
                     onStop: { viewModel.cancelGeneration() },
                     onTryAgain: {
                         viewModel.scheduleRegeneration(messageID: message.id, instruction: nil)
@@ -408,7 +393,8 @@ struct ReasoningMessageBubble: View {
     // which runs on every streamed frame otherwise.
     private var parsedContent: (reasoning: String?, finalAnswer: String?) {
         // If already parsed, return stored values
-        if let reasoning = message.reasoning, !reasoning.isEmpty {
+        if let reasoning = message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !reasoning.isEmpty {
             return (reasoning, message.finalAnswer)
         }
         // If not parsed but contains thinking tags, parse on-demand.
@@ -452,6 +438,20 @@ struct ReasoningMessageBubble: View {
         let parsed = parsedContent
         let reasoningText = parsed.reasoning
         let hasReasoningContent = !(reasoningText?.isEmpty ?? true)
+        let hasCompletedReasoning = hasReasoningContent && (
+            message.isFinal ||
+            message.reasoningCompletedAt != nil ||
+            message.streamingReasoningPhase == .finalAnswer
+        )
+        let reasoningStatusText: String? = {
+            if hasCompletedReasoning {
+                if let duration = message.reasoningDuration ?? message.generationDuration {
+                    return "Thought for \(ThoughtDurationFormatter.string(for: duration))"
+                }
+                return "Thought"
+            }
+            return isCurrentlyStreaming ? "Thinking…" : nil
+        }()
 
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
@@ -460,18 +460,18 @@ struct ReasoningMessageBubble: View {
                 let finalText = split.visible
                 let inlineSourcesText = split.sources
 
-                // Show "Thinking…" text during entire streaming phase; tappable once sheet has content
-                if isCurrentlyStreaming {
+                if let reasoningStatusText {
                     InlineThinkingView(
+                        text: reasoningStatusText,
                         onTap: hasReasoningContent ? { showReasoningSheet = true } : nil
                     )
+                    .accessibilityIdentifier("message.thought")
                 }
 
                 // Final answer section — only shown when there is content to display
                 let hasFinalSection = !finalText.isEmpty || message.generationError != nil ||
                     (message.searchInvocations?.isEmpty == false && message.isFinal) ||
-                    (message.isFinal && inlineSourcesText != nil) ||
-                    (hasReasoningContent && message.isFinal)
+                    (message.isFinal && inlineSourcesText != nil)
                 if hasFinalSection {
                     VStack(alignment: .leading, spacing: 8) {
                         if !finalText.isEmpty {
@@ -496,24 +496,6 @@ struct ReasoningMessageBubble: View {
                             ErrorCalloutView(text: errorText, topPadding: finalText.isEmpty ? 0 : 6)
                         }
 
-                        HStack(spacing: 12) {
-                            // View Reasoning button — opens step-by-step sheet
-                            if hasReasoningContent && message.isFinal {
-                                Button {
-                                    showReasoningSheet = true
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "brain.head.profile")
-                                        Text("View Reasoning")
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(.thinMaterial, in: Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -539,7 +521,6 @@ struct ReasoningMessageBubble: View {
         .sheet(isPresented: $showReasoningSheet) {
             StepByStepReasoningSheet(
                 reasoning: reasoningText ?? "",
-                reasoningSteps: message.reasoningSteps,
                 searchInvocations: message.searchInvocations
             )
         }
@@ -550,65 +531,137 @@ struct ReasoningMessageBubble: View {
 
 struct SourcesButton: View {
     @Binding var showSources: Bool
+    let invocations: [SearchInvocation]
+
+    @ScaledMetric(relativeTo: .subheadline) private var faviconSize: CGFloat = 20
+
+    private var previewSources: [WebSearchSource] {
+        var seenDomains: Set<String> = []
+        var sources: [WebSearchSource] = []
+
+        for source in invocations.flatMap(\.displaySources) {
+            guard seenDomains.insert(source.domainName).inserted else { continue }
+            sources.append(source)
+            if sources.count == 3 { break }
+        }
+
+        return sources
+    }
+
+    private var totalSourceCount: Int {
+        invocations.reduce(0) { $0 + $1.sourceCount }
+    }
 
     var body: some View {
         Button {
             showSources = true
         } label: {
-            Image(systemName: "doc.text.magnifyingglass")
-                .foregroundStyle(.primary)
+            HStack(spacing: 8) {
+                if !previewSources.isEmpty {
+                    faviconStack
+                }
+
+                Text("Sources")
+                    .font(.subheadline.weight(.medium))
+            }
+            .foregroundStyle(.primary)
+            .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Show sources")
+        .accessibilityLabel("Sources")
+        .accessibilityValue("\(totalSourceCount) sources")
+        .accessibilityHint("Shows the sources used for this response")
+        .accessibilityIdentifier("message.sources")
+    }
+
+    private var faviconStack: some View {
+        let overlapOffset = faviconSize * 0.62
+
+        return ZStack(alignment: .leading) {
+            ForEach(Array(previewSources.enumerated()), id: \.element.id) { index, source in
+                SourceButtonFavicon(source: source, size: faviconSize)
+                    .offset(x: CGFloat(index) * overlapOffset)
+                    .zIndex(Double(previewSources.count - index))
+            }
+        }
+        .frame(
+            width: faviconSize + CGFloat(max(0, previewSources.count - 1)) * overlapOffset,
+            height: faviconSize
+        )
+        .accessibilityHidden(true)
     }
 }
 
-// MARK: - Sheet that renders the <sources> content
+private struct SourceButtonFavicon: View {
+    let source: WebSearchSource
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let faviconURL = source.faviconURL.flatMap(URL.init(string:)) {
+                AsyncImage(url: faviconURL) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    fallback
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+        .background(.background, in: Circle())
+        .overlay {
+            Circle()
+                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+        }
+        .compositingGroup()
+        .clipShape(Circle())
+    }
+
+    private var fallback: some View {
+        Text(String(source.domainName.prefix(1)).uppercased())
+            .font(.system(size: size * 0.46, weight: .bold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+// MARK: - Structured web sources
 
 struct SourcesSheetView: View {
-    let sourcesText: String
+    let invocations: [SearchInvocation]
     let title: String
-    let searchQuery: String?  // The user's search query, if search was used
-    @State private var activeURL: URL?   // Local in-sheet browser state
+
+    @State private var selectedInvocationID: UUID?
+    @State private var activeURL: URL?
+    @State private var selectedDetent: PresentationDetent = .large
+
+    private var availableInvocations: [SearchInvocation] {
+        invocations.filter { !$0.displaySources.isEmpty }
+    }
+
+    private var selectedInvocation: SearchInvocation? {
+        availableInvocations.first(where: { $0.id == selectedInvocationID }) ?? availableInvocations.first
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Show search query at the top if available
-                    if let query = searchQuery, !query.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label {
-                                Text("Showing results for:")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            } icon: {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundStyle(.primary)
-                            }
-
-                            Text(query)
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.primary)
-                                .padding(.leading, 28) // Align with label text
-                        }
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                                .strokeBorder(.secondary.opacity(0.2), lineWidth: 1)
-                        }
+                VStack(alignment: .leading, spacing: 18) {
+                    if availableInvocations.count > 1 {
+                        queryPicker
                     }
 
-                    // Sources content
-                    VStack(alignment: .leading, spacing: 12) {
-                        RichMarkdownView(
-                            text: sourcesText,
-                            fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
-                            forceAdvancedRenderer: true
+                    if let selectedInvocation {
+                        queryCard(selectedInvocation)
+                        SourceListView(sources: selectedInvocation.displaySources) { source in
+                            activeURL = source.resolvedURL
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "No Sources",
+                            systemImage: "doc.text.magnifyingglass",
+                            description: Text("This search did not return a readable source.")
                         )
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding()
@@ -616,17 +669,179 @@ struct SourcesSheetView: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
         }
-        .presentationDetents([.medium, .large])
+        .foregroundStyle(.primary)
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
-        // Intercept links inside this sheet and present SafariView immediately
-        .environment(\.openURL, OpenURLAction { url in
-            activeURL = url
-            return .handled
-        })
+        .onAppear { selectDefaults() }
         .sheet(item: $activeURL) { url in
             SafariView(url: url)
                 .ignoresSafeArea()
         }
+    }
+
+    private var queryPicker: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(Array(availableInvocations.enumerated()), id: \.element.id) { index, invocation in
+                    Button {
+                        selectedInvocationID = invocation.id
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "magnifyingglass")
+                            Text(invocation.query)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: 190, alignment: .leading)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedInvocationID == invocation.id
+                                ? Color.accentColor.opacity(0.16)
+                                : Color.secondary.opacity(0.08),
+                            in: Capsule()
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(invocation.query)
+                    .accessibilityAddTraits(selectedInvocationID == invocation.id ? .isSelected : [])
+                    .accessibilityIdentifier("sources.query.\(index)")
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func queryCard(_ invocation: SearchInvocation) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("Search query", systemImage: "text.magnifyingglass")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(invocation.query)
+                .font(.body.weight(.medium))
+                .textSelection(.enabled)
+            Text("\(invocation.sourceCount) source\(invocation.sourceCount == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium))
+    }
+
+    private func selectDefaults() {
+        guard selectedInvocationID == nil else { return }
+        selectedInvocationID = availableInvocations.first?.id
+    }
+}
+
+private struct SourceListView: View {
+    let sources: [WebSearchSource]
+    let onOpen: (WebSearchSource) -> Void
+
+    private var lastSourceID: UUID? { sources.last?.id }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sources")
+                .font(.headline)
+
+            LazyVStack(spacing: 0) {
+                ForEach(sources) { source in
+                    VStack(spacing: 0) {
+                        SourceListRow(source: source) {
+                            onOpen(source)
+                        }
+
+                        if source.id != lastSourceID {
+                            Divider()
+                                .padding(.leading, 52)
+                        }
+                    }
+                }
+            }
+            .background(
+                Color.secondary.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.1))
+            }
+        }
+    }
+}
+
+private struct SourceListRow: View {
+    let source: WebSearchSource
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                SourceIcon(source: source, size: 30)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(source.title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+
+                    Text(source.domainName)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(source.resolvedURL == nil)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(source.title), \(source.domainName)")
+        .accessibilityHint("Opens the website")
+    }
+}
+
+private struct SourceIcon: View {
+    let source: WebSearchSource
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let faviconURL = source.faviconURL.flatMap(URL.init(string:)) {
+                AsyncImage(url: faviconURL) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    fallback
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: size * 0.25))
+        .compositingGroup()
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.25))
+    }
+
+    private var fallback: some View {
+        Text(String(source.domainName.prefix(1)).uppercased())
+            .font(.system(size: size * 0.48, weight: .bold))
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -833,8 +1048,7 @@ struct AssistantActionsBar: View {
     var isStreamingForThisMessage: Bool
     var canAct: Bool
     var isFinal: Bool
-    var sourcesText: String?
-    var sourcesQuery: String?
+    var sourceInvocations: [SearchInvocation]
     var onStop: () -> Void
     var onTryAgain: () -> Void
     var onConcise: () -> Void
@@ -870,17 +1084,6 @@ struct AssistantActionsBar: View {
                 .accessibilityLabel(String(localized: "Regenerate"))
             }
 
-            if let sourcesText, !sourcesText.isEmpty {
-                SourcesButton(showSources: $showSources)
-                    .sheet(isPresented: $showSources) {
-                        SourcesSheetView(
-                            sourcesText: sourcesText,
-                            title: String(localized: "Sources"),
-                            searchQuery: sourcesQuery
-                        )
-                    }
-            }
-
             if developerModeEnabled {
                 Button(action: onDeveloper) {
                     Image(systemName: "hammer")
@@ -889,6 +1092,16 @@ struct AssistantActionsBar: View {
                 .buttonStyle(.plain)
                 .disabled(!canAct)
                 .accessibilityLabel(String(localized: "Developer"))
+            }
+
+            if !sourceInvocations.isEmpty {
+                SourcesButton(showSources: $showSources, invocations: sourceInvocations)
+                    .sheet(isPresented: $showSources) {
+                        SourcesSheetView(
+                            invocations: sourceInvocations,
+                            title: String(localized: "Sources")
+                        )
+                    }
             }
 
             Spacer()

@@ -681,6 +681,7 @@ final class ChatViewModel: ObservableObject {
     private enum StreamEvent: @unchecked Sendable {
         case text(String)
         case toolCall(MLXToolCall)
+        case searchActivityChanged
     }
 
     nonisolated private final class StreamEventIterator: @unchecked Sendable {
@@ -1121,6 +1122,12 @@ final class ChatViewModel: ObservableObject {
                         liveTarget.streamingReasoningPhase = .postToolReasoning
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
                     }
+                case .searchActivityChanged:
+                    if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
+                        syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
+                        conversation.lastUpdated = Date()
+                        scheduleCoalescedSave()
+                    }
                 }
             }
 
@@ -1196,7 +1203,11 @@ final class ChatViewModel: ObservableObject {
             return TaskBackedAsyncThrowingStream.make { continuation in
                 let logger = self.logger
                 let questionLogPreview = preparation.questionLogPreview
+                preparation.webSearchBridge?.setInvocationObserver {
+                    continuation.yield(.searchActivityChanged)
+                }
                 return Task.detached(priority: .userInitiated) {
+                    defer { preparation.webSearchBridge?.setInvocationObserver(nil) }
                     do {
                         let generationResult = try await manager.generateTextStream(
                             conversationID: conversationID,
@@ -1221,7 +1232,11 @@ final class ChatViewModel: ObservableObject {
         case .foundation(let prompt, let tools):
             logger.notice("streamAssistant entering Foundation Models generation path")
             return TaskBackedAsyncThrowingStream.make { continuation in
-                Task { @MainActor in
+                preparation.webSearchBridge?.setInvocationObserver {
+                    continuation.yield(.searchActivityChanged)
+                }
+                return Task { @MainActor in
+                    defer { preparation.webSearchBridge?.setInvocationObserver(nil) }
                     await Self.fmGate.acquire()
                     let gateLease = FoundationModelsGateLease(gate: Self.fmGate)
                     await withTaskCancellationHandler {
@@ -1293,10 +1308,14 @@ final class ChatViewModel: ObservableObject {
         )
         target.searchInvocations = storedInvocations
 
-        let combinedResults = storedInvocations
+        let legacyResults = storedInvocations
+            .filter { $0.response == nil && $0.succeeded }
             .map { Self.escapeSourcesPayload($0.userVisibleResults) }
+            .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        let sourcesBlock = "<sources>\n\(combinedResults)\n</sources>\n\n"
+        guard !legacyResults.isEmpty else { return storedInvocations }
+
+        let sourcesBlock = "<sources>\n\(legacyResults)\n</sources>\n\n"
         if target.isReasoningMode {
             let existing = target.finalAnswer ?? ""
             if !existing.contains("<sources>") {

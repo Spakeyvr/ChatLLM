@@ -156,6 +156,11 @@ struct OnboardingView: View {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityIdentifier("onboarding.tavily.key")
 
+            Link(destination: URL(string: "https://app.tavily.com/")!) {
+                Label("Get a Tavily API key", systemImage: "arrow.up.right")
+            }
+            .font(.subheadline.weight(.semibold))
+
             Label("Your key is stored in Keychain and sent to Tavily only to authenticate web searches.", systemImage: "lock.shield")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
