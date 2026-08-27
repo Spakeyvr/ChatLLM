@@ -53,7 +53,7 @@ private struct NativeMarkdownText: View {
         let processedText = LatexProcessor.process(text)
 
         Group {
-            if let attributed = try? AttributedString(markdown: processedText) {
+            if let attributed = NativeMarkdownParser.attributedString(from: processedText) {
                 Text(attributed)
                     .font(.system(size: fontSize))
                     .foregroundStyle(textTone == .secondary ? .secondary : .primary)
@@ -63,6 +63,15 @@ private struct NativeMarkdownText: View {
                     .foregroundStyle(textTone == .secondary ? .secondary : .primary)
             }
         }
+    }
+}
+
+enum NativeMarkdownParser {
+    static func attributedString(from markdown: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        return try? AttributedString(markdown: markdown, options: options)
     }
 }
 

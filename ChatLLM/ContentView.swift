@@ -187,7 +187,7 @@ struct ContentView: View {
             reasoning: includesReasoning
                 ? "I need current platform information, so I should check primary sources.\n\n</think>\n\nThe first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API.\n\n</think>"
                 : " \n ",
-            finalAnswer: "SwiftUI now has a native `WebView` and an observable `WebPage` model, so apps can embed and control web content without wrapping `WKWebView` themselves. Apple’s documentation and release coverage agree on the core API shape.",
+            finalAnswer: "SwiftUI now has a native `WebView` and an observable `WebPage` model.\n\n**The key change is native SwiftUI integration.**\n\nApps can embed and control web content without wrapping `WKWebView` themselves, while Apple’s documentation and release coverage agree on the core API shape.",
             isReasoningMode: true,
             generationBackend: "Preview",
             generationModelName: "UI Fixture"

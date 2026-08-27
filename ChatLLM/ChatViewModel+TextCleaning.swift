@@ -80,27 +80,8 @@ extension ChatViewModel {
             }
         }
 
-        // Fix mid-word cuts like "I can'I can't"
-        let words = cleaned.components(separatedBy: .whitespaces)
-        var fixedWords: [String] = []
-        var i = 0
-        while i < words.count {
-            let word = words[i]
-            if i + 1 < words.count {
-                let nextWord = words[i + 1]
-                if word.count < 4 && word.count > 0 && nextWord.count > word.count && nextWord.hasPrefix(word) {
-                    fixedWords.append(nextWord)
-                    i += 2
-                    continue
-                }
-            }
-            fixedWords.append(word)
-            i += 1
-        }
-        let result = fixedWords.joined(separator: " ")
-
         // Strip Unicode whitespace artifacts that can appear in web/tool-injected content
-        let normalized = result
+        let normalized = cleaned
             .replacingOccurrences(of: "\u{00A0}", with: " ")   // NBSP -> space
             .replacingOccurrences(of: "\u{200B}", with: "")    // Zero-width space
             .replacingOccurrences(of: "\u{00AD}", with: "")    // Soft hyphen

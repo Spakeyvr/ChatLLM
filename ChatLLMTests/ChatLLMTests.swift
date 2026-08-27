@@ -2374,6 +2374,32 @@ struct ChatLLMTests {
         #expect(cleaned.contains("beginIndex"))
     }
 
+    @Test func finalTextCleaningPreservesMarkdownParagraphBoundaries() {
+        let input = """
+        Here's a surprising fact:
+
+        **Some wasps turn caterpillars into zombies!**
+
+        These wasps attach their eggs to a caterpillar and inject venom.
+
+        It's basically nature's ultimate horror movie.
+
+        Did I surprise you? 😁
+        """
+
+        #expect(ChatViewModel.cleanGlitchedText(input) == input)
+    }
+
+    @Test func nativeMarkdownParserPreservesParagraphWhitespaceAndInlineFormatting() throws {
+        let parsed = try #require(NativeMarkdownParser.attributedString(from: """
+        First paragraph.
+
+        **Second paragraph.**
+        """))
+
+        #expect(String(parsed.characters) == "First paragraph.\n\nSecond paragraph.")
+    }
+
     @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
         #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("A formula: $x^2$"))
