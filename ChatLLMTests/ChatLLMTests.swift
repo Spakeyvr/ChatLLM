@@ -102,6 +102,58 @@ struct ChatLLMTests {
 
         #expect(result.sources.first?.publishedDate == "2026-02-28")
         #expect(result.sources.first?.snippet == "Swift 6.2 adds more concurrency fixes.")
+        #expect(result.responseTimeSeconds == 1.67)
+    }
+
+    @Test func tavilySearchResponseAcceptsNumericAndStringResponseTimes() throws {
+        let stringResponse = try JSONDecoder().decode(TavilySearchResponse.self, from: Data("""
+        {"query":"swift","results":[],"response_time":"1.67"}
+        """.utf8))
+        let numericResponse = try JSONDecoder().decode(TavilySearchResponse.self, from: Data("""
+        {"query":"swift","results":[],"response_time":1.67}
+        """.utf8))
+
+        #expect(stringResponse.responseTime == 1.67)
+        #expect(numericResponse.responseTime == 1.67)
+    }
+
+    @Test func tavilySearchServiceHonorsRetryAfterHeaderForRateLimits() throws {
+        let response = try #require(HTTPURLResponse(
+            url: URL(string: "https://api.tavily.com/search")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "60"]
+        ))
+
+        #expect(TavilySearchService.retryDelay(for: response, attempt: 1) == .seconds(60))
+    }
+
+    @Test func tavilyKeyValidationIgnoresCancelledRequestCompletion() async {
+        let gate = TavilyValidationGate()
+        let model = TavilyKeyValidationModel { key in
+            await gate.suspend(key)
+            if key == "old-key" {
+                throw StaleTavilyValidationError.rejected
+            }
+        }
+
+        model.validate("old-key")
+        await gate.waitUntilStarted("old-key")
+        model.reset()
+        model.validate("new-key")
+        await gate.waitUntilStarted("new-key")
+
+        await gate.resume("new-key")
+        for _ in 0..<20 where model.status != .valid {
+            await Task.yield()
+        }
+        #expect(model.status == .valid)
+
+        await gate.resume("old-key")
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        #expect(model.status == .valid)
     }
 
     @Test func searchInvocationUserVisibleResultsStripsInternalWebSearchEnvelope() {
@@ -2549,6 +2601,7 @@ struct ChatLLMTests {
             "search_depth": "basic",
             "time_range": "week"
           },
+          "response_time": "1.67",
           "results": [
             {
               "title": "Swift 6.2 Released",
@@ -2589,6 +2642,32 @@ struct ChatLLMTests {
         )
     }
 
+}
+
+private enum StaleTavilyValidationError: Error {
+    case rejected
+}
+
+private actor TavilyValidationGate {
+    private var startedKeys: Set<String> = []
+    private var continuations: [String: CheckedContinuation<Void, Never>] = [:]
+
+    func suspend(_ key: String) async {
+        startedKeys.insert(key)
+        await withCheckedContinuation { continuation in
+            continuations[key] = continuation
+        }
+    }
+
+    func waitUntilStarted(_ key: String) async {
+        while !startedKeys.contains(key) {
+            await Task.yield()
+        }
+    }
+
+    func resume(_ key: String) {
+        continuations.removeValue(forKey: key)?.resume()
+    }
 }
 
 private final class MockTavilyURLProtocol: URLProtocol, @unchecked Sendable {

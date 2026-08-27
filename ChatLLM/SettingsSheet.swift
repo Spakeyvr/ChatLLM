@@ -1,13 +1,6 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    private enum WebSearchKeyStatus: Equatable {
-        case idle
-        case checking
-        case valid
-        case invalid(String)
-    }
-
     static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX text and image chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Tool and low-memory turns use safer uncompressed or bounded caches.")
     static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX text and image chats. Tool and low-memory turns use safer cache modes.")
     static let mlxRotorQuantExperimentalTitle = String(localized: "RotorQuant Experimental")
@@ -25,7 +18,7 @@ struct SettingsSheet: View {
     private let showCharacterCount = true
 
     @State private var areChatPreferencesFocused = false
-    @State private var webSearchKeyStatus: WebSearchKeyStatus = .idle
+    @State private var tavilyKeyValidation = TavilyKeyValidationModel()
 
     enum PendingAction: Identifiable {
         case deleteAll
@@ -195,7 +188,7 @@ struct SettingsSheet: View {
                         .autocorrectionDisabled()
                         .accessibilityLabel(String(localized: "Tavily API Key"))
                         .onChange(of: settings.tavilyApiKey) {
-                            webSearchKeyStatus = .idle
+                            tavilyKeyValidation.reset()
                         }
 
                     HStack {
@@ -216,7 +209,7 @@ struct SettingsSheet: View {
                         Button {
                             validateTavilyKey()
                         } label: {
-                            if webSearchKeyStatus == .checking {
+                            if tavilyKeyValidation.status == .checking {
                                 ProgressView()
                                     .controlSize(.small)
                             } else {
@@ -226,11 +219,11 @@ struct SettingsSheet: View {
                         .buttonStyle(.bordered)
                         .disabled(
                             settings.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                            webSearchKeyStatus == .checking
+                            tavilyKeyValidation.status == .checking
                         )
                     }
 
-                    switch webSearchKeyStatus {
+                    switch tavilyKeyValidation.status {
                     case .idle, .checking:
                         EmptyView()
                     case .valid:
@@ -366,6 +359,9 @@ struct SettingsSheet: View {
                     secondaryButton: .cancel()
                 )
             }
+        }
+        .onDisappear {
+            tavilyKeyValidation.reset()
         }
     }
 
@@ -700,19 +696,7 @@ struct SettingsSheet: View {
     }
 
     private func validateTavilyKey() {
-        let key = settings.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        webSearchKeyStatus = .checking
-
-        Task {
-            do {
-                let service = try TavilySearchService(apiKey: key)
-                try await service.validateAPIKey()
-                webSearchKeyStatus = .valid
-            } catch {
-                webSearchKeyStatus = .invalid(error.localizedDescription)
-            }
-        }
+        tavilyKeyValidation.validate(settings.tavilyApiKey)
     }
 
 }

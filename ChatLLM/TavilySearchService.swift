@@ -71,7 +71,13 @@ struct TavilySearchResponse: Decodable, Sendable {
         results = try container.decode([TavilySearchResult].self, forKey: .results)
         answer = try container.decodeIfPresent(String.self, forKey: .answer)
         autoParameters = try container.decodeIfPresent(TavilyAutoParameters.self, forKey: .autoParameters)
-        responseTime = try container.decodeIfPresent(Double.self, forKey: .responseTime)
+        if let numericResponseTime = try? container.decode(Double.self, forKey: .responseTime) {
+            responseTime = numericResponseTime
+        } else if let stringResponseTime = try? container.decode(String.self, forKey: .responseTime) {
+            responseTime = Double(stringResponseTime)
+        } else {
+            responseTime = nil
+        }
         requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
         creditsUsed = try container.decodeIfPresent(Usage.self, forKey: .usage)?.credits
     }
@@ -130,6 +136,7 @@ actor TavilySearchService: WebSearchProviding {
     nonisolated private static let liveCacheTTL: TimeInterval = 60
     nonisolated private static let standardCacheTTL: TimeInterval = 600
     nonisolated private static let retryableStatusCodes: Set<Int> = [429, 500, 502, 503, 504]
+    nonisolated private static let maximumRetryAfterSeconds: Double = 60
 
     private let apiKey: String
     private let baseURL = URL(string: "https://api.tavily.com/search")!
@@ -215,7 +222,7 @@ actor TavilySearchService: WebSearchProviding {
                    Self.retryableStatusCodes.contains(response.statusCode),
                    attempt < retryCount {
                     attempt += 1
-                    try await Task.sleep(for: .milliseconds(250 * attempt))
+                    try await Task.sleep(for: Self.retryDelay(for: response, attempt: attempt))
                     continue
                 }
                 return result
@@ -230,6 +237,19 @@ actor TavilySearchService: WebSearchProviding {
                 throw TavilySearchError.networkError(error)
             }
         }
+    }
+
+    nonisolated static func retryDelay(for response: HTTPURLResponse, attempt: Int) -> Duration {
+        let fallback = Duration.milliseconds(250 * max(attempt, 1))
+        guard response.statusCode == 429,
+              let header = response.value(forHTTPHeaderField: "Retry-After"),
+              let seconds = Double(header.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds >= 0 else {
+            return fallback
+        }
+
+        let boundedSeconds = min(seconds, maximumRetryAfterSeconds)
+        return .milliseconds(Int((boundedSeconds * 1_000).rounded(.up)))
     }
 
     private func validate(response: URLResponse, data: Data) throws {
