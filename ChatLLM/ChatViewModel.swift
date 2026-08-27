@@ -109,7 +109,7 @@ nonisolated private final class FoundationModelsGateLease: @unchecked Sendable {
 final class ChatViewModel: ObservableObject {
 
     // MARK: - Logging
-    let logger = Logger(subsystem: "com.yourapp.chatllm", category: "ChatViewModel")
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "ChatViewModel")
 
     @Published var isGenerating = false
     @Published var streamingMessageID: UUID?
@@ -1209,10 +1209,9 @@ final class ChatViewModel: ObservableObject {
             }
             guard !Task.isCancelled else { throw CancellationError() }
             guard manager.currentModel != nil else {
-                let modelName = manager.currentModel?.name ?? "The model"
                 let reason = manager.loadError ?? "The model hasn't finished loading."
                 throw NSError(domain: "MLXGeneration", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "\(modelName) isn't ready. \(reason)\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings."
+                    NSLocalizedDescriptionKey: "The selected MLX model isn't ready. \(reason)\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings."
                 ])
             }
 

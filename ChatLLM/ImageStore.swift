@@ -13,7 +13,7 @@ import ImageIO
 actor ImageStore {
     static let shared = ImageStore()
 
-    private let logger = Logger(subsystem: "com.yourapp.chatllm", category: "ImageStore")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "ImageStore")
     private let nativeInferenceMaxDimension: CGFloat = 336
     private let cleanupProtectionWindow: TimeInterval = 15
 

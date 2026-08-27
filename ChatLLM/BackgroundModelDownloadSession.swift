@@ -267,6 +267,7 @@ nonisolated final class BackgroundModelDownloadSession: NSObject, @unchecked Sen
         stateLock.unlock()
 
         session.getAllTasks { tasks in
+            var matchedTask = false
             for task in tasks where taskIDs.contains(task.taskIdentifier) || {
                 guard let description = task.taskDescription,
                       let descriptor = Self.decodeDescriptor(description) else {
@@ -274,8 +275,14 @@ nonisolated final class BackgroundModelDownloadSession: NSObject, @unchecked Sen
                 }
                 return descriptor.id == transferID
             }() {
+                matchedTask = true
                 task.cancel()
             }
+
+            guard !matchedTask else { return }
+            self.stateLock.lock()
+            self.cancelledTransferIDs.remove(transferID)
+            self.stateLock.unlock()
         }
     }
 

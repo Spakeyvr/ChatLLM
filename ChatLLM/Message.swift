@@ -449,27 +449,6 @@ extension Message {
         }
     }
 
-    /// Efficient bulk text update for streaming with conditional invalidation
-    func updateStreamingContent(_ newText: String, reasoning: String? = nil, finalAnswer: String? = nil) {
-        // Only invalidate cache if content actually changed
-        let contentChanged = self.text != newText ||
-                           self.reasoning != reasoning ||
-                           self.finalAnswer != finalAnswer
-        
-        if contentChanged {
-            invalidateCache()
-            
-            // Batch property updates to minimize SwiftData notifications
-            self.text = newText
-            if let reasoning = reasoning {
-                self.reasoning = reasoning
-            }
-            if let finalAnswer = finalAnswer {
-                self.finalAnswer = finalAnswer
-            }
-        }
-    }
-    
     /// Mark as complete and finalize
     func markAsComplete() {
         guard !self.isFinal else { return } // Skip if already final

@@ -179,7 +179,7 @@ extension ChatViewModel {
         )
 
         let shouldUseReasoning = await resolvedReasoningMode(
-            for: enhancedText,
+            for: userPrompt,
             logContext: "image query"
         )
 

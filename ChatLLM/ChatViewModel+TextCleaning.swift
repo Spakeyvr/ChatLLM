@@ -58,28 +58,6 @@ extension ChatViewModel {
             }
         }
 
-        // Detect exact character-level repetitions like "hello worldhello world".
-        // Only scan the tail (newly added text) — any earlier repetitions were caught on prior tokens.
-        for windowSize in stride(from: min(50, cleaned.count / 2), through: 5, by: -1) {
-            let tailLength = min(cleaned.count, windowSize * 2 + 100)
-            let tailOffset = cleaned.count - tailLength
-            var prevIdx = cleaned.index(cleaned.startIndex, offsetBy: tailOffset)
-            var nextIdx = cleaned.index(prevIdx, offsetBy: 1)
-            let limit = tailLength - windowSize - 1
-            guard limit > 0 else { continue }
-            for _ in 0..<limit {
-                guard let prevEnd = cleaned.index(prevIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
-                      let nextEnd = cleaned.index(nextIdx, offsetBy: windowSize, limitedBy: cleaned.endIndex),
-                      nextEnd <= cleaned.endIndex else { break }
-                if cleaned[prevIdx..<prevEnd] == cleaned[nextIdx..<nextEnd] {
-                    cleaned.removeSubrange(prevIdx..<prevEnd)
-                    return Self.cleanGlitchedText(cleaned)
-                }
-                prevIdx = cleaned.index(after: prevIdx)
-                nextIdx = cleaned.index(after: nextIdx)
-            }
-        }
-
         // Strip Unicode whitespace artifacts that can appear in web/tool-injected content
         let normalized = cleaned
             .replacingOccurrences(of: "\u{00A0}", with: " ")   // NBSP -> space

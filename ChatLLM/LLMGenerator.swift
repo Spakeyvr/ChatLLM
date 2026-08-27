@@ -91,7 +91,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         return TaskBackedAsyncThrowingStream.make { continuation in
             Task {
                 do {
-                    var lastYieldedLength = 0
+                    var lastYieldedUTF8Count = 0
                     var iterator = session.streamResponse(to: effectivePrompt).makeAsyncIterator()
                     while let partial = try await iterator.next() {
                         if Task.isCancelled {
@@ -99,12 +99,11 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                             return
                         }
                         let newContent = partial.content
-                        if newContent.count > lastYieldedLength {
-                            let delta = String(newContent.dropFirst(lastYieldedLength))
-                            if !delta.isEmpty {
-                                continuation.yield(delta)
-                                lastYieldedLength = newContent.count
-                            }
+                        if let delta = Self.incrementalDelta(
+                            from: newContent,
+                            afterUTF8Count: &lastYieldedUTF8Count
+                        ) {
+                            continuation.yield(delta)
                         }
                     }
                     continuation.finish()
@@ -119,5 +118,18 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                 }
             }
         }
+    }
+
+    nonisolated static func incrementalDelta(
+        from accumulatedContent: String,
+        afterUTF8Count lastYieldedUTF8Count: inout Int
+    ) -> String? {
+        let utf8 = accumulatedContent.utf8
+        guard utf8.count > lastYieldedUTF8Count else { return nil }
+
+        let deltaStart = utf8.index(utf8.startIndex, offsetBy: lastYieldedUTF8Count)
+        let delta = String(decoding: utf8[deltaStart...], as: UTF8.self)
+        lastYieldedUTF8Count = utf8.count
+        return delta.isEmpty ? nil : delta
     }
 }

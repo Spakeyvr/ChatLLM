@@ -89,11 +89,13 @@ enum RichTextFeatureDetector {
             #"(?m)^\s{0,3}~~~"#,
             #"(?m)^\s{0,3}(?:\|.*\|)$"#,
             #"(?m)^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$"#,
+            // Route every inline or reference-style image through the hardened
+            // WebView policy instead of leaving it to the native fallback.
+            #"!\["#,
             // Math patterns
             #"\\\((.+?)\\\)"#,
             #"\\\[(.+?)\\\]"#,
-            #"\$\$(.+?)\$\$"#,
-            #"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)"#
+            #"\$\$(.+?)\$\$"#
         ]
         return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
     }()
@@ -112,6 +114,19 @@ enum RichTextFeatureDetector {
             }
         }
         return false
+    }
+}
+
+enum RichMarkdownRenderingPolicy {
+    static let disabledMarkdownRules = ["image"]
+    static let contentSecurityPolicy = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+
+    static var disabledMarkdownRulesJSON: String {
+        guard let data = try? JSONEncoder().encode(disabledMarkdownRules),
+              let json = String(data: data, encoding: .utf8) else {
+            return #"["image"]"#
+        }
+        return json
     }
 }
 
@@ -276,6 +291,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
 
     private static func makeHTML(text: String, fontSize: Double, palette: RichTextPalette) -> String? {
         let encodedText = text.jsLiteral
+        let disabledMarkdownRules = RichMarkdownRenderingPolicy.disabledMarkdownRulesJSON
         guard let markdownItJS else {
             return nil
         }
@@ -290,6 +306,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+          <meta http-equiv="Content-Security-Policy" content="(RichMarkdownRenderingPolicy.contentSecurityPolicy)">
           <style>
           \(katexCSS)
           </style>
@@ -425,6 +442,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               typographer: true,
               breaks: true
             });
+            md.disable((disabledMarkdownRules));
             root.innerHTML = md.render(source);
             if (window.renderMathInElement) {
               window.renderMathInElement(root, {
@@ -434,8 +452,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
                 delimiters: [
                   { left: "$$", right: "$$", display: true },
                   { left: "\\\\[", right: "\\\\]", display: true },
-                  { left: "\\\\(", right: "\\\\)", display: false },
-                  { left: "$", right: "$", display: false }
+                  { left: "\\\\(", right: "\\\\)", display: false }
                 ]
               });
             }

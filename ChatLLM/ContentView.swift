@@ -980,16 +980,24 @@ struct ContentView: View {
     }
 
     private func deleteAllChats() {
+        Task {
+            await deleteAllChatsAfterStoppingGeneration()
+        }
+    }
+
+    private func deleteAllChatsAfterStoppingGeneration() async {
         AppHaptics.impact(.heavy)
-        
-        // Cancel any ongoing operations
-        currentViewModel?.cancelGeneration()
+
+        let conversationsToDelete = Array(conversations)
+        let conversationIDsToDelete = Set(conversationsToDelete.map(\.id))
+        guard await stopGenerationBeforeDeleting(conversationIDs: conversationIDsToDelete) else {
+            return
+        }
+
         currentViewModel = nil
         selection = nil
-        
-        // Create a copy of the conversations array to avoid modification during iteration
-        let conversationsToDelete = Array(conversations)
-        let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
+
+        let excludedConversationIDs = conversationIDsToDelete
         let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
         
         // Delete everything
@@ -1010,6 +1018,12 @@ struct ContentView: View {
     }
 
     private func deleteAllExceptCurrent() {
+        Task {
+            await deleteAllExceptCurrentAfterStoppingGeneration()
+        }
+    }
+
+    private func deleteAllExceptCurrentAfterStoppingGeneration() async {
         AppHaptics.impact(.heavy)
         
         // If there's a selection, keep it; otherwise keep the most recent conversation
@@ -1025,12 +1039,9 @@ struct ContentView: View {
         guard !conversationsToDelete.isEmpty else { return }
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
-        
-        // Cancel operations in view model if it's for a conversation being deleted
-        if let currentVM = currentViewModel,
-           conversationsToDelete.contains(where: { $0.id == currentVM.conversation.id }) {
-            currentVM.cancelGeneration()
-            currentViewModel = nil
+
+        guard await stopGenerationBeforeDeleting(conversationIDs: excludedConversationIDs) else {
+            return
         }
         
         for convo in conversationsToDelete {
@@ -1111,6 +1122,12 @@ struct ContentView: View {
     }
     
     private func performAutoDeleteIfNeeded() {
+        Task {
+            await performAutoDeleteAfterStoppingGenerationIfNeeded()
+        }
+    }
+
+    private func performAutoDeleteAfterStoppingGenerationIfNeeded() async {
         guard autoDeleteOldChats else { return }
         
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -autoDeleteDays, to: Date()) ?? Date()
@@ -1122,13 +1139,9 @@ struct ContentView: View {
         guard !conversationsToDelete.isEmpty else { return }
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
-        
-        // Cancel operations for conversations being deleted
-        for convo in conversationsToDelete {
-            if let currentVM = currentViewModel, currentVM.conversation.id == convo.id {
-                currentVM.cancelGeneration()
-                currentViewModel = nil
-            }
+
+        guard await stopGenerationBeforeDeleting(conversationIDs: excludedConversationIDs) else {
+            return
         }
         
         // Update selection if current selection is being deleted
@@ -1153,6 +1166,20 @@ struct ContentView: View {
         } catch {
             print("Failed to auto-delete old conversations: \(error)")
         }
+    }
+
+    private func stopGenerationBeforeDeleting(conversationIDs: Set<UUID>) async -> Bool {
+        while let viewModel = currentViewModel,
+              conversationIDs.contains(viewModel.conversation.id) {
+            guard await viewModel.cancelGenerationAndWait() else {
+                errorMessage = String(localized: "Couldn't stop the active response. Please try deleting again.")
+                return false
+            }
+            if currentViewModel === viewModel {
+                currentViewModel = nil
+            }
+        }
+        return true
     }
 }
 
