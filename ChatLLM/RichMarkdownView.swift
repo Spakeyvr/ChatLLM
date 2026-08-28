@@ -8,10 +8,25 @@ import WebKit
 
 /// Renders assistant Markdown.
 ///
-/// Everything except math is laid out natively by `MarkdownBlocksView`, so the
-/// common message costs no WebView, no height round-trip, and no reload when the
-/// transcript recycles it off screen. Math still needs KaTeX, so a message that
-/// contains it is rendered by the bundled WebView document instead.
+/// There are two rendering paths, and the split is math-based:
+///
+/// - **Native** (`MarkdownBlocksView` + `MarkdownBlockParser`): headings, lists,
+///   quotes, fenced code, tables, hr, and inline emphasis. Used for every
+///   message that contains no math. No WebView, no height round-trip, no reload
+///   when the transcript recycles a bubble off screen.
+/// - **Bundled WebView document** (`RichMarkdownWebViewRepresentable`): the only
+///   remaining user of `RenderingAssets/` (`markdown-it.min.js`, `katex.min.js`,
+///   `katex-auto-render.min.js`, `katex.min.css`). It renders the *whole* message
+///   with markdown-it, then KaTeX auto-render handles the math. Chosen only when
+///   `RichTextFeatureDetector.requiresAdvancedRendering` finds math outside code
+///   spans, when the WebView fails to load, and while a math document is still
+///   measuring its height.
+///
+/// Do not delete the `RenderingAssets/` files: the native path cannot render
+/// KaTeX, and the WebView document inlines all four of them (see `makeHTML()`).
+/// If you add a rendered feature, decide explicitly whether it belongs in
+/// `MarkdownBlockParser` (native) or in the WebView document's JS, and keep the
+/// detector in sync so math stays the only trigger for the WebView.
 struct RichMarkdownView: View {
     let text: String
     let fontSize: Double

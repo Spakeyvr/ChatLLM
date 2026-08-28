@@ -154,6 +154,7 @@ final class ChatViewModel: ObservableObject {
     var saveCount: Int = 0
     private let forceSaveThreshold: Int = 25 // Balance between persistence and performance
     var lastSaveTime: Date = .distantPast
+    private var lifecycleSaveCancellables: [AnyCancellable] = []
 
     // MARK: - Foundation Models Session Management
 
@@ -208,6 +209,31 @@ final class ChatViewModel: ObservableObject {
                     self?.cancelGeneration()
                 }
             }
+
+        // Streaming writes are saved through scheduleCoalescedSave(), which can
+        // trail the model output by up to the force-save threshold plus the
+        // debounce interval. Persist synchronously at the moments iOS is most
+        // likely to kill the process — backgrounding, app switch, and
+        // memory-pressure jetsam — so a mid-generation kill loses at most the
+        // tokens received since the previous coalesced save, not the final tail.
+        func makeLifecycleSaveSink(_ notification: Notification.Name) -> AnyCancellable {
+            NotificationCenter.default.publisher(for: notification)
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        // Skip unsent draft conversations: saving would promote
+                        // an empty "New Chat" into the store just because the
+                        // user backgrounded the app.
+                        guard conversation.modelContext != nil else { return }
+                        immediateSave()
+                    }
+                }
+        }
+        lifecycleSaveCancellables = [
+            makeLifecycleSaveSink(UIApplication.willResignActiveNotification),
+            makeLifecycleSaveSink(UIApplication.didEnterBackgroundNotification),
+            makeLifecycleSaveSink(UIApplication.didReceiveMemoryWarningNotification)
+        ]
     }
 
     deinit {
@@ -215,6 +241,7 @@ final class ChatViewModel: ObservableObject {
         currentStreamTask?.cancel()
         keyChangeCancellable?.cancel()
         modelPipelineResetCancellable?.cancel()
+        lifecycleSaveCancellables.forEach { $0.cancel() }
     }
 
     // MARK: - Coalesced Save
@@ -1103,7 +1130,9 @@ final class ChatViewModel: ObservableObject {
                         }
                         liveTarget.markAsComplete()
                         conversation.lastUpdated = Date()
-                        scheduleCoalescedSave()
+                        // The message is final here; persist synchronously so a
+                        // jetsam cannot erase the timeout outcome.
+                        immediateSave()
                     }
                     break
                 }
@@ -1154,7 +1183,9 @@ final class ChatViewModel: ObservableObject {
                     )
                 )
                 conversation.lastUpdated = Date()
-                scheduleCoalescedSave()
+                // Final message content; save synchronously instead of riding
+                // the streaming debounce so the completed turn is durable.
+                immediateSave()
             }
 
             logger.notice(
