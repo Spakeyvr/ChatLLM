@@ -229,8 +229,7 @@ struct StepByStepReasoningSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             RichMarkdownView(
                                 text: sanitizedReasoning,
-                                fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
-                                forceAdvancedRenderer: true
+                                fontSize: UIFont.preferredFont(forTextStyle: .body).pointSize
                             )
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -273,8 +272,7 @@ struct RawReasoningChunkView: View {
         VStack(alignment: .leading, spacing: 0) {
             RichMarkdownView(
                 text: text,
-                fontSize: messageFontSize,
-                forceAdvancedRenderer: true
+                fontSize: messageFontSize
             )
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)

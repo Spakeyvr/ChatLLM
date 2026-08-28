@@ -6,11 +6,16 @@
 import SwiftUI
 import WebKit
 
+/// Renders assistant Markdown.
+///
+/// Everything except math is laid out natively by `MarkdownBlocksView`, so the
+/// common message costs no WebView, no height round-trip, and no reload when the
+/// transcript recycles it off screen. Math still needs KaTeX, so a message that
+/// contains it is rendered by the bundled WebView document instead.
 struct RichMarkdownView: View {
     let text: String
     let fontSize: Double
     var textTone: TextTone = .primary
-    var forceAdvancedRenderer: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -19,12 +24,8 @@ struct RichMarkdownView: View {
         case secondary
     }
 
-    private var shouldUseAdvancedRenderer: Bool {
-        forceAdvancedRenderer || RichTextFeatureDetector.requiresAdvancedRendering(text)
-    }
-
     var body: some View {
-        if shouldUseAdvancedRenderer {
+        if RichTextFeatureDetector.requiresAdvancedRendering(text) {
             RichMarkdownWebView(
                 text: text,
                 fontSize: fontSize,
@@ -35,32 +36,28 @@ struct RichMarkdownView: View {
                 fallbackTone: textTone
             )
         } else {
-            NativeMarkdownText(
-                text: text,
+            MarkdownBlocksView(
+                blocks: MarkdownBlockCache.blocks(for: text),
                 fontSize: fontSize,
-                textTone: textTone
+                tone: textTone
             )
         }
     }
 }
 
+/// Used while the math document loads, and if it fails outright. Parsing is
+/// shared with the primary path so the fallback keeps the same block structure.
 private struct NativeMarkdownText: View {
     let text: String
     let fontSize: Double
     let textTone: RichMarkdownView.TextTone
 
     var body: some View {
-        Group {
-            if let attributed = NativeMarkdownParser.attributedString(from: text) {
-                Text(attributed)
-                    .font(.system(size: fontSize))
-                    .foregroundStyle(textTone == .secondary ? .secondary : .primary)
-            } else {
-                Text(verbatim: text.isEmpty ? " " : text)
-                    .font(.system(size: fontSize))
-                    .foregroundStyle(textTone == .secondary ? .secondary : .primary)
-            }
-        }
+        MarkdownBlocksView(
+            blocks: MarkdownBlockCache.blocks(for: text),
+            fontSize: fontSize,
+            tone: textTone
+        )
     }
 }
 
@@ -73,47 +70,157 @@ enum NativeMarkdownParser {
     }
 }
 
+/// Bounded memo for parsed block trees.
+///
+/// A streaming message is re-parsed once per token, which is cheap and expected.
+/// This only exists so that redundant `body` calls — an appearance change, a
+/// parent re-render, a bubble scrolling back into view — do not repeat the work.
+nonisolated enum MarkdownBlockCache {
+    private static let limit = 32
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var entries: [String: [MarkdownBlock]] = [:]
+    nonisolated(unsafe) private static var order: [String] = []
+
+    static func blocks(for text: String) -> [MarkdownBlock] {
+        lock.lock()
+        if let cached = entries[text] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let parsed = MarkdownBlockParser.parse(text)
+
+        lock.lock()
+        if entries[text] == nil {
+            entries[text] = parsed
+            order.append(text)
+            while order.count > limit {
+                entries.removeValue(forKey: order.removeFirst())
+            }
+        }
+        lock.unlock()
+        return parsed
+    }
+
+    static func removeAll() {
+        lock.lock()
+        entries.removeAll()
+        order.removeAll()
+        lock.unlock()
+    }
+}
+
+/// Remembers the measured height of a rendered math document.
+///
+/// The transcript is a `LazyVStack`, so scrolling a math bubble off screen and
+/// back tears down its WebView and reloads the document. Without a cached height
+/// the bubble collapses to a single point and everything below it jumps.
+nonisolated enum MarkdownHeightCache {
+    nonisolated struct Key: Hashable, Sendable {
+        let text: String
+        let fontSize: Double
+    }
+
+    private static let limit = 64
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var entries: [Key: CGFloat] = [:]
+    nonisolated(unsafe) private static var order: [Key] = []
+
+    static func height(for key: Key) -> CGFloat? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[key]
+    }
+
+    static func store(_ height: CGFloat, for key: Key) {
+        guard height > 1 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if entries.updateValue(height, forKey: key) == nil {
+            order.append(key)
+            while order.count > limit {
+                entries.removeValue(forKey: order.removeFirst())
+            }
+        }
+    }
+
+    static func removeAll() {
+        lock.lock()
+        entries.removeAll()
+        order.removeAll()
+        lock.unlock()
+    }
+}
+
+/// Decides whether a message needs the bundled KaTeX document.
+///
+/// Only math does. Headings, lists, quotes, code, tables and inline emphasis are
+/// all rendered natively, so they no longer force a WebView.
 enum RichTextFeatureDetector {
-    // Pre-compiled patterns (compiled once at app launch, avoiding per-call regex recompilation)
-    private static let compiledPatterns: [NSRegularExpression] = {
+    private static let mathPatterns: [NSRegularExpression] = {
         let patterns = [
-            // Block patterns require the bundled renderer. SwiftUI Text can
-            // display inline AttributedString styles, but it does not preserve
-            // the visual hierarchy and layout of these block structures.
-            #"(?m)^\s{0,3}#{1,6}\s+\S"#,
-            #"(?m)^[ \t]{0,3}(?:[-*+]\s+\S|\d+[.)]\s+\S)"#,
-            #"(?m)^[ \t]{0,3}>\s*\S"#,
-            #"(?m)^\S[^\n]*\n[ \t]{0,3}(?:=+|-+)[ \t]*$"#,
-            #"(?m)^(?: {4}|\t)\S"#,
-            #"(?m)^\s{0,3}```"#,
-            #"(?m)^\s{0,3}~~~"#,
-            #"(?m)^\s{0,3}(?:\|.*\|)$"#,
-            #"(?m)^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$"#,
-            // Route every inline or reference-style image through the hardened
-            // WebView policy instead of leaving it to the native fallback.
-            #"!\["#,
-            // Math patterns
             #"(?s)\\\((.+?)\\\)"#,
             #"(?s)\\\[(.+?)\\\]"#,
             #"(?s)\$\$(.+?)\$\$"#
         ]
-        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: []) }
     }()
+
+    private static let inlineCodeSpan = try? NSRegularExpression(pattern: #"`+[^`]*`+"#, options: [])
 
     static func requiresAdvancedRendering(_ text: String) -> Bool {
         guard !text.isEmpty else { return false }
-        let ns = text as NSString
-        let range = NSRange(location: 0, length: ns.length)
+        // Swift interpolation (`\(name)`) and TeX-looking strings inside code are
+        // not math. Masking code first keeps a snippet from spawning a WebView.
+        let searchable = textOutsideCode(text)
+        guard !searchable.isEmpty else { return false }
 
-        if text.contains("\\begin{") || text.contains("\\end{") {
+        if searchable.contains("\\begin{") || searchable.contains("\\end{") {
             return true
         }
-        for regex in compiledPatterns {
-            if regex.firstMatch(in: text, options: [], range: range) != nil {
-                return true
+
+        let range = NSRange(searchable.startIndex..., in: searchable)
+        return mathPatterns.contains { $0.firstMatch(in: searchable, options: [], range: range) != nil }
+    }
+
+    /// Returns `text` with fenced blocks and inline code spans removed.
+    static func textOutsideCode(_ text: String) -> String {
+        guard text.contains("`") || text.contains("~~~") else { return text }
+
+        var kept: [String] = []
+        var fenceCharacter: Character?
+        var fenceLength = 0
+
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            let first = trimmed.first
+            let isFenceLine = (first == "`" || first == "~") && trimmed.prefix(while: { $0 == first }).count >= 3
+
+            if let open = fenceCharacter {
+                if isFenceLine, first == open, trimmed.prefix(while: { $0 == open }).count >= fenceLength {
+                    fenceCharacter = nil
+                    fenceLength = 0
+                }
+                continue
             }
+
+            if isFenceLine, let first {
+                fenceCharacter = first
+                fenceLength = trimmed.prefix(while: { $0 == first }).count
+                continue
+            }
+
+            kept.append(line)
         }
-        return false
+
+        let withoutFences = kept.joined(separator: "\n")
+        guard withoutFences.contains("`"), let inlineCodeSpan else { return withoutFences }
+        return inlineCodeSpan.stringByReplacingMatches(
+            in: withoutFences,
+            range: NSRange(withoutFences.startIndex..., in: withoutFences),
+            withTemplate: " "
+        )
     }
 }
 
@@ -186,10 +293,23 @@ private struct RichMarkdownWebView: View {
     let palette: RichTextPalette
     let fallbackTone: RichMarkdownView.TextTone
 
-    @State private var height: CGFloat = 1
+    @State private var height: CGFloat
     @State private var hasMeasuredHeight = false
     @State private var failedToLoad = false
     @Environment(\.openURL) private var openURL
+
+    init(text: String, fontSize: Double, palette: RichTextPalette, fallbackTone: RichMarkdownView.TextTone) {
+        self.text = text
+        self.fontSize = fontSize
+        self.palette = palette
+        self.fallbackTone = fallbackTone
+        // Seeding the last known height keeps the transcript from jumping when a
+        // bubble is recycled back into view and its document has to reload.
+        // `hasMeasuredHeight` stays false so the native fallback still covers the
+        // gap until KaTeX has actually painted.
+        let cached = MarkdownHeightCache.height(for: .init(text: text, fontSize: fontSize))
+        _height = State(initialValue: cached ?? 1)
+    }
 
     var body: some View {
         Group {
@@ -527,6 +647,9 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         }
 
         func makeWebView() -> WKWebView {
+            // No explicit process pool: WebKit has shared content processes
+            // between web views on its own since iOS 15, and `WKProcessPool` is
+            // deprecated precisely because setting one no longer does anything.
             let config = WKWebViewConfiguration()
             config.defaultWebpagePreferences.allowsContentJavaScript = true
             config.preferences.javaScriptCanOpenWindowsAutomatically = false
@@ -609,6 +732,12 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
                 if !self.hasMeasuredHeight { self.hasMeasuredHeight = true }
                 if abs(self.dynamicHeight - nextHeight) >= 1 {
                     self.dynamicHeight = nextHeight
+                }
+                if let payload = self.appliedPayload ?? self.latestPayload {
+                    MarkdownHeightCache.store(
+                        nextHeight,
+                        for: .init(text: payload.text, fontSize: payload.fontSize)
+                    )
                 }
             }
         }

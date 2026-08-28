@@ -10,6 +10,8 @@ struct MarkdownRenderingPreview: View {
 
     private static let paragraphs = "First **bold** word.\nNext line.\n\nSecond paragraph with _italic_ text and `first_name`."
     private static let blocks = "## Live heading\n\nFirst **bold** word.\n\n- First item\n- Second item\n\n```swift\nlet first_name = 1\n```"
+    /// Math is the one construct still rendered by the bundled KaTeX document.
+    private static let math = "Pythagoras:\n\n$$a^2 + b^2 = c^2$$"
 
     var body: some View {
         VStack {
@@ -40,8 +42,9 @@ struct MarkdownRenderingPreview: View {
         .task {
             guard viewModel == nil else { return }
             let reasoning = ProcessInfo.processInfo.arguments.contains("-ui-test-markdown-reasoning")
+            let math = ProcessInfo.processInfo.arguments.contains("-ui-test-markdown-math")
             let conversation = Conversation(title: "Markdown Preview", reasoningMode: reasoning)
-            let message = Message(role: .assistant, text: Self.paragraphs, order: 0,
+            let message = Message(role: .assistant, text: math ? Self.math : Self.paragraphs, order: 0,
                                   conversation: conversation, isReasoningMode: reasoning)
             if reasoning {
                 message.reasoning = "Checking the formatting."

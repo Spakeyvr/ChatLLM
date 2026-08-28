@@ -19,28 +19,53 @@ final class ChatLLMUITests: XCTestCase {
             app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown"]
             if reasoning { app.launchArguments.append("-ui-test-markdown-reasoning") }
             app.launch()
-            let paragraph = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Second paragraph with italic text")).firstMatch
-            XCTAssertTrue(paragraph.waitForExistence(timeout: 5))
-            XCTAssertTrue(paragraph.label.contains("First bold word.\nNext line.\n\nSecond paragraph"))
-            XCTAssertTrue(paragraph.label.contains("first_name"))
+
+            // Each paragraph is its own element now, and a soft break stays inside one.
+            let firstParagraph = app.staticTexts
+                .matching(NSPredicate(format: "label CONTAINS %@", "First bold word"))
+                .firstMatch
+            XCTAssertTrue(firstParagraph.waitForExistence(timeout: 5))
+            XCTAssertTrue(firstParagraph.label.contains("Next line."))
+            XCTAssertFalse(firstParagraph.label.contains("Second paragraph"))
+
+            let secondParagraph = app.staticTexts
+                .matching(NSPredicate(format: "label CONTAINS %@", "Second paragraph with italic text"))
+                .firstMatch
+            XCTAssertTrue(secondParagraph.exists)
+            XCTAssertTrue(secondParagraph.label.contains("first_name"))
             XCTAssertEqual(app.staticTexts["markdown.status"].label, "Streaming")
             captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-paragraphs", in: app)
 
             app.buttons["markdown.advance"].tap()
-            let webView = app.webViews.firstMatch
-            XCTAssertTrue(webView.waitForExistence(timeout: 10))
-            XCTAssertTrue(webView.staticTexts["First item"].waitForExistence(timeout: 5))
-            XCTAssertTrue(webView.staticTexts["Second item"].exists)
+            // Headings, lists and code are laid out natively — no WebView involved.
+            XCTAssertTrue(app.staticTexts["Live heading"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["First item"].exists)
+            XCTAssertTrue(app.staticTexts["Second item"].exists)
+            XCTAssertTrue(app.staticTexts["let first_name = 1"].exists)
+            XCTAssertFalse(app.webViews.firstMatch.exists)
             XCTAssertEqual(app.staticTexts["markdown.status"].label, "Streaming")
             captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-streaming", in: app)
 
             app.buttons["markdown.advance"].tap()
-            XCTAssertTrue(webView.staticTexts["paragraph"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Last paragraph."].waitForExistence(timeout: 5))
             XCTAssertEqual(app.staticTexts["markdown.status"].label, "Finished")
-            XCTAssertTrue(webView.staticTexts["First item"].exists)
+            XCTAssertTrue(app.staticTexts["First item"].exists)
+            XCTAssertFalse(app.webViews.firstMatch.exists)
             captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-finished", in: app)
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testMathStillRendersThroughTheBundledDocument() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown", "-ui-test-markdown-math"]
+        app.launch()
+
+        let webView = app.webViews.firstMatch
+        XCTAssertTrue(webView.waitForExistence(timeout: 10))
+        captureSettingsScreenshot("markdown-math", in: app)
+        app.terminate()
     }
 
     private func launchApp(

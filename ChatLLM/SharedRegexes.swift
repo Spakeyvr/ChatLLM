@@ -20,6 +20,21 @@ enum SharedRegexes {
     static let excessiveWhitespace = try! NSRegularExpression(
         pattern: #"\s{2,}"#, options: [])
 
+    /// `![alt](url)` — reduced to its alt text so no remote URL ever reaches the
+    /// renderer. Capture 1 is the alt text.
+    static let markdownInlineImage = try! NSRegularExpression(
+        pattern: #"!\[([^\]]*)\]\([^)]*\)"#, options: [])
+
+    /// `![alt][ref]` — the reference form of the same thing.
+    static let markdownReferenceImage = try! NSRegularExpression(
+        pattern: #"!\[([^\]]*)\]\[[^\]]*\]"#, options: [])
+
+    /// A link reference definition line, e.g. `[remote]: https://example.com`.
+    /// The inline-only parser has no concept of these, so they are dropped
+    /// rather than shown to the reader as literal text.
+    static let markdownLinkReferenceDefinition = try! NSRegularExpression(
+        pattern: #"^[ \t]{0,3}\[[^\]]+\]:[ \t]*\S+[ \t]*$"#, options: [])
+
     /// Phrase patterns are drawn from fixed keyword lists and reused constantly
     /// (`requiresWebSearch` alone probes ~60 phrases per message), so the compiled
     /// regexes are cached instead of rebuilt on every call.
