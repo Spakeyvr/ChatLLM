@@ -8,22 +8,37 @@
 import Foundation
 import FoundationModels
 
+/// Keep trusted instructions and conversation roles separate from user text.
+/// Serializing roles into the prompt teaches the model to echo that serialization.
+struct LLMRequest: Sendable, Equatable {
+    struct Turn: Sendable, Equatable {
+        enum Role: Sendable { case user, assistant }
+        let role: Role
+        let content: String
+    }
+
+    var instructions: String = ""
+    var history: [Turn] = []
+    var prompt: String
+}
+
 protocol LLMGenerator {
     func isAvailable() -> Bool
-    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String
-    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
 }
 
 extension LLMGenerator {
     func respond(to prompt: String) async throws -> String {
-        try await respond(to: prompt, tools: [])
+        try await respond(to: LLMRequest(prompt: prompt), tools: [])
     }
     func streamResponse(to prompt: String) async throws -> AsyncThrowingStream<String, Error> {
-        try await streamResponse(to: prompt, tools: [])
+        try await streamResponse(to: LLMRequest(prompt: prompt), tools: [])
     }
 }
 
-private let _reasoningPreamble = """
+extension LLMRequest {
+    static let reasoningInstructions = """
     Reasoning Mode Instructions:
     - Think step-by-step only inside <thinking> ... </thinking>.
     - If you encounter typos or unclear requests, interpret the user's intent.
@@ -37,13 +52,6 @@ private let _reasoningPreamble = """
     - Make sure your final answer is formal and complete.
 
     """
-
-private func buildEnhancedPrompt(for original: String) -> String {
-    guard original.contains("<thinking>"),
-          !original.contains("Reasoning Mode Instructions:") else {
-        return original
-    }
-    return _reasoningPreamble + original
 }
 
 nonisolated private func makeSafetyBlockedError() -> NSError {
@@ -64,15 +72,32 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         return Self.safetyKeywords.contains(where: message.contains)
     }
 
-    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+    static func makeSession(for request: LLMRequest, tools: [any FoundationModelTool]) -> LanguageModelSession {
+        let session = LanguageModelSession(tools: tools, instructions: request.instructions)
+        guard !request.history.isEmpty else { return session }
+
+        // Retain the framework-generated instructions entry, including tool schemas.
+        let history: [Transcript.Entry] = request.history.map { turn in
+            let segments: [Transcript.Segment] = [.text(.init(content: turn.content))]
+            switch turn.role {
+            case .user:
+                return .prompt(.init(segments: segments))
+            case .assistant:
+                return .response(.init(assetIDs: [], segments: segments))
+            }
+        }
+        let transcript = Transcript(entries: Array(session.transcript) + history)
+        return LanguageModelSession(tools: tools, transcript: transcript)
+    }
+
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
         }
-        let session = tools.isEmpty ? LanguageModelSession() : LanguageModelSession(tools: tools)
-        let effectivePrompt = buildEnhancedPrompt(for: prompt)
+        let session = Self.makeSession(for: request, tools: tools)
         do {
-            let response = try await session.respond(to: effectivePrompt)
+            let response = try await session.respond(to: request.prompt)
             return response.content
         } catch {
             if isSafetyModerationError(error) { throw makeSafetyBlockedError() }
@@ -80,19 +105,18 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         }
     }
 
-    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
         }
-        let session = tools.isEmpty ? LanguageModelSession() : LanguageModelSession(tools: tools)
-        let effectivePrompt = buildEnhancedPrompt(for: prompt)
+        let session = Self.makeSession(for: request, tools: tools)
 
         return TaskBackedAsyncThrowingStream.make { continuation in
             Task {
                 do {
                     var lastYieldedUTF8Count = 0
-                    var iterator = session.streamResponse(to: effectivePrompt).makeAsyncIterator()
+                    var iterator = session.streamResponse(to: request.prompt).makeAsyncIterator()
                     while let partial = try await iterator.next() {
                         if Task.isCancelled {
                             continuation.finish()

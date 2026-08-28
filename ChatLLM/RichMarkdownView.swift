@@ -50,15 +50,13 @@ private struct NativeMarkdownText: View {
     let textTone: RichMarkdownView.TextTone
 
     var body: some View {
-        let processedText = LatexProcessor.process(text)
-
         Group {
-            if let attributed = NativeMarkdownParser.attributedString(from: processedText) {
+            if let attributed = NativeMarkdownParser.attributedString(from: text) {
                 Text(attributed)
                     .font(.system(size: fontSize))
                     .foregroundStyle(textTone == .secondary ? .secondary : .primary)
             } else {
-                Text(processedText.isEmpty ? " " : processedText)
+                Text(verbatim: text.isEmpty ? " " : text)
                     .font(.system(size: fontSize))
                     .foregroundStyle(textTone == .secondary ? .secondary : .primary)
             }
@@ -83,8 +81,10 @@ enum RichTextFeatureDetector {
             // display inline AttributedString styles, but it does not preserve
             // the visual hierarchy and layout of these block structures.
             #"(?m)^\s{0,3}#{1,6}\s+\S"#,
-            #"(?m)^\s{0,3}(?:[-*+]\s+\S|\d+\.\s+\S)"#,
-            #"(?m)^\s{0,3}>\s+\S"#,
+            #"(?m)^[ \t]{0,3}(?:[-*+]\s+\S|\d+[.)]\s+\S)"#,
+            #"(?m)^[ \t]{0,3}>\s*\S"#,
+            #"(?m)^\S[^\n]*\n[ \t]{0,3}(?:=+|-+)[ \t]*$"#,
+            #"(?m)^(?: {4}|\t)\S"#,
             #"(?m)^\s{0,3}```"#,
             #"(?m)^\s{0,3}~~~"#,
             #"(?m)^\s{0,3}(?:\|.*\|)$"#,
@@ -93,9 +93,9 @@ enum RichTextFeatureDetector {
             // WebView policy instead of leaving it to the native fallback.
             #"!\["#,
             // Math patterns
-            #"\\\((.+?)\\\)"#,
-            #"\\\[(.+?)\\\]"#,
-            #"\$\$(.+?)\$\$"#
+            #"(?s)\\\((.+?)\\\)"#,
+            #"(?s)\\\[(.+?)\\\]"#,
+            #"(?s)\$\$(.+?)\$\$"#
         ]
         return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
     }()
@@ -130,7 +130,7 @@ enum RichMarkdownRenderingPolicy {
     }
 }
 
-private struct RichTextPalette: Hashable {
+struct RichTextPalette: Hashable {
     let text: String
     let link: String
     let codeBackground: String
@@ -140,6 +140,13 @@ private struct RichTextPalette: Hashable {
     let separator: String
     let tableStripe: String
     let inlineCode: String
+
+    var cssVariables: [String: String] {
+        ["text": text, "link": link, "code-background": codeBackground,
+         "code-border": codeBorder, "quote-border": quoteBorder,
+         "quote-background": quoteBackground, "separator": separator,
+         "table-stripe": tableStripe, "inline-code": inlineCode]
+    }
 
     init(colorScheme: ColorScheme, tone: RichMarkdownView.TextTone) {
         let trait = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
@@ -211,7 +218,7 @@ private struct RichMarkdownWebView: View {
     }
 }
 
-private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
+struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     let text: String
     let fontSize: Double
     let palette: RichTextPalette
@@ -230,56 +237,17 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.defaultWebpagePreferences.allowsContentJavaScript = true
-        config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        config.userContentController.add(context.coordinator, name: Coordinator.heightHandlerName)
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isScrollEnabled = false
-        webView.scrollView.showsVerticalScrollIndicator = false
-        webView.scrollView.showsHorizontalScrollIndicator = false
-        webView.navigationDelegate = context.coordinator
-        webView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        webView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return webView
+        context.coordinator.makeWebView()
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        // Hash the inputs, not the assembled document: the document embeds ~430 KB of
-        // bundled KaTeX/markdown-it sources, and building + hashing it on every SwiftUI
-        // update was dominating the cost of showing a message bubble.
-        var hasher = Hasher()
-        hasher.combine(text)
-        hasher.combine(fontSize)
-        hasher.combine(palette)
-        let payloadHash = hasher.finalize()
-
-        guard context.coordinator.lastPayloadHash != payloadHash else { return }
-
-        guard let html = Self.makeHTML(text: text, fontSize: fontSize, palette: palette) else {
-            context.coordinator.setFailedToLoad(true)
-            return
-        }
-
-        context.coordinator.lastPayloadHash = payloadHash
-        context.coordinator.setHasMeasuredHeight(false)
-        context.coordinator.setDynamicHeight(1)
-        context.coordinator.setFailedToLoad(false)
-
-        webView.loadHTMLString(html, baseURL: nil)
+        context.coordinator.update(webView, text: text, fontSize: fontSize, palette: palette)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.heightHandlerName)
-        webView.navigationDelegate = nil
+        coordinator.dismantle(webView)
     }
 
-    // Bundled renderer sources are ~430 KB in total and never change at runtime.
-    // Read and escape them once instead of on every updateUIView call.
     private static let markdownItJS: String? = bundledTextResource(named: "markdown-it.min", extension: "js")?
         .escapedInlineScript
     private static let katexCSS: String = (bundledTextResource(named: "katex.min", extension: "css") ?? "")
@@ -289,12 +257,13 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     private static let katexAutoRenderJS: String = (bundledTextResource(named: "katex-auto-render.min", extension: "js") ?? "")
         .escapedInlineScript
 
-    private static func makeHTML(text: String, fontSize: Double, palette: RichTextPalette) -> String? {
-        let encodedText = text.jsLiteral
+    // A single document per WebView. Message text only crosses the argument bridge,
+    // so streamed tokens never reload the parser or become executable HTML/scripts.
+    static let rendererHTML: String? = makeHTML()
+
+    private static func makeHTML() -> String? {
         let disabledMarkdownRules = RichMarkdownRenderingPolicy.disabledMarkdownRulesJSON
-        guard let markdownItJS else {
-            return nil
-        }
+        guard let markdownItJS else { return nil }
 
         let katexCSS = Self.katexCSS
         let katexJS = Self.katexJS
@@ -306,7 +275,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-          <meta http-equiv="Content-Security-Policy" content="(RichMarkdownRenderingPolicy.contentSecurityPolicy)">
+          <meta http-equiv="Content-Security-Policy" content="\(RichMarkdownRenderingPolicy.contentSecurityPolicy)">
           <style>
           \(katexCSS)
           </style>
@@ -321,9 +290,9 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               overflow: hidden;
             }
             body {
-              color: \(palette.text);
+              color: var(--text);
               font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-              font-size: \(fontSize)px;
+              font-size: var(--font-size, 16px);
               line-height: 1.45;
               -webkit-font-smoothing: antialiased;
               word-wrap: break-word;
@@ -331,6 +300,7 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               user-select: text;
               -webkit-user-select: text;
             }
+            #content { display: flow-root; }
             #content > :first-child { margin-top: 0; }
             #content > :last-child { margin-bottom: 0; }
             p, ul, ol, blockquote, pre, table, hr {
@@ -353,23 +323,23 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               margin-top: 0.25em;
             }
             a {
-              color: \(palette.link);
+              color: var(--link);
               text-decoration: none;
             }
             pre, code {
               font-family: "SF Mono", "Menlo", "Consolas", monospace;
             }
             code {
-              color: \(palette.inlineCode);
-              background: \(palette.codeBackground);
-              border: 1px solid \(palette.codeBorder);
+              color: var(--inline-code);
+              background: var(--code-background);
+              border: 1px solid var(--code-border);
               border-radius: 6px;
               padding: 0.12em 0.35em;
               font-size: 0.92em;
             }
             pre {
-              background: \(palette.codeBackground);
-              border: 1px solid \(palette.codeBorder);
+              background: var(--code-background);
+              border: 1px solid var(--code-border);
               border-radius: 10px;
               padding: 0.8em 0.9em;
               overflow-x: auto;
@@ -384,14 +354,14 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               overflow-wrap: normal;
             }
             blockquote {
-              border-left: 3px solid \(palette.quoteBorder);
-              background: \(palette.quoteBackground);
+              border-left: 3px solid var(--quote-border);
+              background: var(--quote-background);
               padding: 0.75em 0.9em;
               border-radius: 0 10px 10px 0;
             }
             hr {
               border: 0;
-              border-top: 1px solid \(palette.separator);
+              border-top: 1px solid var(--separator);
             }
             table {
               width: 100%;
@@ -399,16 +369,16 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               font-size: 0.96em;
             }
             th, td {
-              border: 1px solid \(palette.separator);
+              border: 1px solid var(--separator);
               padding: 0.55em 0.7em;
               text-align: left;
               vertical-align: top;
             }
             thead th {
-              background: \(palette.codeBackground);
+              background: var(--code-background);
             }
             tbody tr:nth-child(even) {
-              background: \(palette.tableStripe);
+              background: var(--table-stripe);
             }
             img {
               max-width: 100%;
@@ -434,51 +404,73 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
           \(katexAutoRenderJS)
           </script>
           <script>
-            const source = \(encodedText);
             const root = document.getElementById('content');
             const md = window.markdownit({
               html: false,
               linkify: true,
-              typographer: true,
+              typographer: false,
               breaks: true
             });
-            md.disable((disabledMarkdownRules));
-            root.innerHTML = md.render(source);
-            if (window.renderMathInElement) {
-              window.renderMathInElement(root, {
-                throwOnError: false,
-                strict: "ignore",
-                ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-                delimiters: [
-                  { left: "$$", right: "$$", display: true },
-                  { left: "\\\\[", right: "\\\\]", display: true },
-                  { left: "\\\\(", right: "\\\\)", display: false }
-                ]
-              });
-            }
+            md.disable(\(disabledMarkdownRules));
+            // Protect math from Markdown's escape/emphasis rules before KaTeX
+            // sees it. In particular, Markdown would strip \\( and \\[ delimiters.
+            md.inline.ruler.before('escape', 'math', (state, silent) => {
+              const delimiters = [['$$', '$$'], ['\\\\(', '\\\\)'], ['\\\\[', '\\\\]']];
+              for (const [left, right] of delimiters) {
+                if (!state.src.startsWith(left, state.pos)) continue;
+                const end = state.src.indexOf(right, state.pos + left.length);
+                if (end < 0) return false;
+                if (!silent) {
+                  const token = state.push('math', '', 0);
+                  token.content = state.src.slice(state.pos, end + right.length);
+                }
+                state.pos = end + right.length;
+                return true;
+              }
+              return false;
+            });
+            md.renderer.rules.math = (tokens, index) => md.utils.escapeHtml(tokens[index].content);
+            let revision = 0;
 
             const postHeight = () => {
-              const height = Math.max(
-                document.body.scrollHeight,
-                document.documentElement.scrollHeight,
-                root.scrollHeight
-              );
-              window.webkit?.messageHandlers?.\(Coordinator.heightHandlerName)?.postMessage(height);
+              if (!revision) return;
+              // Document scrollHeight is at least the viewport height, which
+              // prevents a previously tall bubble from ever shrinking.
+              const height = Math.max(1, Math.ceil(root.getBoundingClientRect().height));
+              window.webkit?.messageHandlers?.\(Coordinator.heightHandlerName)?.postMessage({height, revision});
+            };
+
+            window.updateMarkdown = (source, fontSize, palette, nextRevision) => {
+              revision = nextRevision;
+              document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+              for (const [key, value] of Object.entries(palette)) {
+                document.documentElement.style.setProperty('--' + key, value);
+              }
+              root.innerHTML = md.render(source);
+              if (window.renderMathInElement) {
+                window.renderMathInElement(root, {
+                  throwOnError: false,
+                  strict: 'ignore',
+                  ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                  delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '\\\\[', right: '\\\\]', display: true },
+                    { left: '\\\\(', right: '\\\\)', display: false }
+                  ]
+                });
+              }
+              postHeight();
+              requestAnimationFrame(postHeight);
             };
 
             if (window.ResizeObserver) {
-              const observer = new ResizeObserver(() => postHeight());
-              observer.observe(document.body);
+              const observer = new ResizeObserver(postHeight);
               observer.observe(root);
             }
-
-            window.addEventListener('load', postHeight);
+            window.addEventListener('resize', postHeight);
             if (document.fonts && document.fonts.ready) {
               document.fonts.ready.then(postHeight);
             }
-            setTimeout(postHeight, 0);
-            setTimeout(postHeight, 60);
-            setTimeout(postHeight, 180);
           </script>
         </body>
         </html>
@@ -506,7 +498,20 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         @Binding var dynamicHeight: CGFloat
         @Binding var hasMeasuredHeight: Bool
         @Binding var failedToLoad: Bool
-        var lastPayloadHash: Int?
+        private struct Payload: Equatable {
+            let text: String
+            let fontSize: Double
+            let palette: RichTextPalette
+        }
+
+        private var latestPayload: Payload?
+        private var appliedPayload: Payload?
+        private var isLoadingDocument = false
+        private var isReady = false
+        private var isRendering = false
+        private var isDismantled = false
+        private var revision = 0
+        private var measuredRevision = 0
         private let openURL: OpenURLAction
 
         init(
@@ -521,41 +526,97 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
             self.openURL = openURL
         }
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == Self.heightHandlerName else { return }
+        func makeWebView() -> WKWebView {
+            let config = WKWebViewConfiguration()
+            config.defaultWebpagePreferences.allowsContentJavaScript = true
+            config.preferences.javaScriptCanOpenWindowsAutomatically = false
+            config.userContentController.add(self, name: Self.heightHandlerName)
 
-            let nextHeight: CGFloat
-            if let number = message.body as? NSNumber {
-                nextHeight = CGFloat(truncating: number)
-            } else {
-                return
+            let webView = WKWebView(frame: .zero, configuration: config)
+            webView.isOpaque = false
+            webView.backgroundColor = .clear
+            webView.scrollView.backgroundColor = .clear
+            webView.scrollView.isScrollEnabled = false
+            webView.scrollView.showsVerticalScrollIndicator = false
+            webView.scrollView.showsHorizontalScrollIndicator = false
+            webView.navigationDelegate = self
+            webView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            webView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            return webView
+        }
+
+        func update(_ webView: WKWebView, text: String, fontSize: Double, palette: RichTextPalette) {
+            guard !isDismantled else { return }
+            latestPayload = Payload(text: text, fontSize: fontSize, palette: palette)
+            if isReady {
+                renderLatest(in: webView)
+            } else if !isLoadingDocument {
+                guard let html = RichMarkdownWebViewRepresentable.rendererHTML else {
+                    setFailedToLoad(true)
+                    return
+                }
+                isLoadingDocument = true
+                webView.loadHTMLString(html, baseURL: nil)
             }
+        }
 
+        private func renderLatest(in webView: WKWebView) {
+            guard !isDismantled, isReady, !isRendering,
+                  let payload = latestPayload, payload != appliedPayload else { return }
+            isRendering = true
+            revision += 1
+            webView.callAsyncJavaScript(
+                "window.updateMarkdown(text, fontSize, palette, revision); return true;",
+                arguments: ["text": payload.text, "fontSize": payload.fontSize,
+                            "palette": payload.palette.cssVariables, "revision": revision],
+                in: nil,
+                in: .page
+            ) { [weak self, weak webView] result in
+                guard let self, !self.isDismantled else { return }
+                self.isRendering = false
+                switch result {
+                case .success:
+                    self.appliedPayload = payload
+                    // Coalesce tokens that arrived while JS was running, including
+                    // the final update. Never debounce until generation stops.
+                    if let webView { self.renderLatest(in: webView) }
+                case .failure:
+                    self.setFailedToLoad(true)
+                }
+            }
+        }
+
+        func dismantle(_ webView: WKWebView) {
+            isDismantled = true
+            webView.stopLoading()
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: Self.heightHandlerName)
+            webView.navigationDelegate = nil
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !isDismantled, message.name == Self.heightHandlerName,
+                  let body = message.body as? [String: Any],
+                  let number = body["height"] as? NSNumber,
+                  let nextRevision = body["revision"] as? Int,
+                  nextRevision > 0, nextRevision <= revision else { return }
+            let nextHeight = CGFloat(truncating: number)
             guard nextHeight.isFinite, nextHeight > 0 else { return }
-            DispatchQueue.main.async {
-                self.hasMeasuredHeight = true
-                if abs(self.dynamicHeight - nextHeight) > 1 {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isDismantled, nextRevision >= self.measuredRevision else { return }
+                // Accept completed renders while a newer token is queued. Requiring
+                // the latest requested revision can starve height updates mid-stream.
+                self.measuredRevision = nextRevision
+                if !self.hasMeasuredHeight { self.hasMeasuredHeight = true }
+                if abs(self.dynamicHeight - nextHeight) >= 1 {
                     self.dynamicHeight = nextHeight
                 }
             }
         }
 
-        func setDynamicHeight(_ nextValue: CGFloat) {
-            guard dynamicHeight != nextValue else { return }
-            DispatchQueue.main.async {
-                self.dynamicHeight = nextValue
-            }
-        }
-
-        func setHasMeasuredHeight(_ nextValue: Bool) {
-            guard hasMeasuredHeight != nextValue else { return }
-            DispatchQueue.main.async {
-                self.hasMeasuredHeight = nextValue
-            }
-        }
-
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            setFailedToLoad(false)
+            isLoadingDocument = false
+            isReady = true
+            renderLatest(in: webView)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -566,9 +627,13 @@ private struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
             setFailedToLoad(true)
         }
 
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            setFailedToLoad(true)
+        }
+
         func setFailedToLoad(_ nextValue: Bool) {
-            guard failedToLoad != nextValue else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isDismantled, self.failedToLoad != nextValue else { return }
                 self.failedToLoad = nextValue
             }
         }
@@ -609,14 +674,4 @@ private extension String {
         replacingOccurrences(of: "</style", with: "<\\/style")
     }
 
-    var jsLiteral: String {
-        let encoder = JSONEncoder()
-        guard
-            let data = try? encoder.encode(self),
-            let encoded = String(data: data, encoding: .utf8)
-        else {
-            return "\"\""
-        }
-        return encoded
-    }
 }

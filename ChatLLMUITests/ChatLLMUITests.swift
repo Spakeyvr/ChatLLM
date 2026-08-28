@@ -12,6 +12,37 @@ final class ChatLLMUITests: XCTestCase {
     private let firstMLXModelID = "qwen3.5-4b-4bit-hybrid"
     private let secondMLXModelID = "qwen3.5-2b-4bit"
 
+    @MainActor
+    func testMarkdownRendersDuringAndAfterStreamingInBothBubbleTypes() throws {
+        for reasoning in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown"]
+            if reasoning { app.launchArguments.append("-ui-test-markdown-reasoning") }
+            app.launch()
+            let paragraph = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Second paragraph with italic text")).firstMatch
+            XCTAssertTrue(paragraph.waitForExistence(timeout: 5))
+            XCTAssertTrue(paragraph.label.contains("First bold word.\nNext line.\n\nSecond paragraph"))
+            XCTAssertTrue(paragraph.label.contains("first_name"))
+            XCTAssertEqual(app.staticTexts["markdown.status"].label, "Streaming")
+            captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-paragraphs", in: app)
+
+            app.buttons["markdown.advance"].tap()
+            let webView = app.webViews.firstMatch
+            XCTAssertTrue(webView.waitForExistence(timeout: 10))
+            XCTAssertTrue(webView.staticTexts["First item"].waitForExistence(timeout: 5))
+            XCTAssertTrue(webView.staticTexts["Second item"].exists)
+            XCTAssertEqual(app.staticTexts["markdown.status"].label, "Streaming")
+            captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-streaming", in: app)
+
+            app.buttons["markdown.advance"].tap()
+            XCTAssertTrue(webView.staticTexts["paragraph"].waitForExistence(timeout: 5))
+            XCTAssertEqual(app.staticTexts["markdown.status"].label, "Finished")
+            XCTAssertTrue(webView.staticTexts["First item"].exists)
+            captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-finished", in: app)
+            app.terminate()
+        }
+    }
+
     private func launchApp(
         resetAppState: Bool = true,
         fakeMLXDownloads: Bool = false

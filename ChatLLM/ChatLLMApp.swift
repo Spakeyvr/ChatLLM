@@ -50,7 +50,15 @@ struct ChatLLMApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-test-markdown") {
+                MarkdownRenderingPreview()
+            } else {
+                ContentView()
+            }
+            #else
             ContentView()
+            #endif
         }
         .modelContainer(sharedModelContainer)
     }

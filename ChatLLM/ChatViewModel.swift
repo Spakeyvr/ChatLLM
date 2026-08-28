@@ -669,7 +669,7 @@ final class ChatViewModel: ObservableObject {
             toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?
         )
         case foundation(
-            prompt: String,
+            request: LLMRequest,
             tools: [any FoundationModelTool]
         )
     }
@@ -992,7 +992,7 @@ final class ChatViewModel: ObservableObject {
                 return nil
             }
         } else {
-            var prompt = buildPrompt(
+            var request = buildFoundationRequest(
                 upToOrderExclusive: order,
                 currentReasoningActive: resetState.target.isReasoningMode,
                 modelIdentity: ModelBackendBridge.Backend.foundationModels.displayName,
@@ -1000,12 +1000,9 @@ final class ChatViewModel: ObservableObject {
                 forceWebSearchRequired: resetState.forceSearchRequired
             )
             if let instruction = additionalUserInstruction, !instruction.isEmpty {
-                prompt += "\n\nUser: \(instruction)"
+                request.prompt += "\n\n" + instruction
             }
-            if resetState.target.isReasoningMode && !prompt.contains("<thinking>") {
-                prompt += "\n\nAssistant: <thinking>"
-            }
-            backendRequest = .foundation(prompt: prompt, tools: foundationModelTools)
+            backendRequest = .foundation(request: request, tools: foundationModelTools)
         }
 
         guard isGenerationActive(generationID) else { return nil }
@@ -1048,7 +1045,6 @@ final class ChatViewModel: ObservableObject {
 
         var result = StreamConsumptionResult()
         var lastModelWrite: Date = .distantPast
-        var lastRenderedLength = 0
         let activeChunkTimeout = target.isReasoningMode ? reasoningChunkTimeout : chunkTimeout
         let generationStartedAt = Date()
         let backendLabel: String
@@ -1071,18 +1067,14 @@ final class ChatViewModel: ObservableObject {
 
         @MainActor
         func renderIfThrottled() {
-            // Cheapest check first. `String.count` walks the whole string, so measuring
-            // the accumulated response on every token was quadratic in output length;
-            // `utf8.count` is O(1) and only needed once the time gate has passed.
+            // Limit repaint frequency without waiting for a minimum chunk size:
+            // a newline or closing Markdown delimiter can change the entire layout.
             let now = Date()
             guard now.timeIntervalSince(lastModelWrite) >= 0.12 else { return }
-            let cumulativeLength = result.cumulativeText.utf8.count
-            guard lastRenderedLength == 0 || (cumulativeLength - lastRenderedLength) >= 24 else { return }
             guard let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) else { return }
             syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
             updateMessageWithReasoningContent(liveTarget, fullText: result.cumulativeText, finalize: false)
             lastModelWrite = now
-            lastRenderedLength = cumulativeLength
             conversation.lastUpdated = now
             scheduleCoalescedSave()
         }
@@ -1244,7 +1236,7 @@ final class ChatViewModel: ObservableObject {
                     }
                 }
             }
-        case .foundation(let prompt, let tools):
+        case .foundation(let request, let tools):
             logger.notice("streamAssistant entering Foundation Models generation path")
             return TaskBackedAsyncThrowingStream.make { continuation in
                 preparation.webSearchBridge?.setInvocationObserver {
@@ -1256,7 +1248,7 @@ final class ChatViewModel: ObservableObject {
                     let gateLease = FoundationModelsGateLease(gate: Self.fmGate)
                     await withTaskCancellationHandler {
                         do {
-                            let textStream = try await self.generator.streamResponse(to: prompt, tools: tools)
+                            let textStream = try await self.generator.streamResponse(to: request, tools: tools)
                             for try await chunk in textStream {
                                 continuation.yield(.text(chunk))
                             }

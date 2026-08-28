@@ -333,13 +333,13 @@ extension ChatViewModel {
         )
     }
 
-    func buildPrompt(
+    func buildFoundationRequest(
         upToOrderExclusive maxOrderExclusive: Int,
         currentReasoningActive: Bool? = nil,
         modelIdentity: String = "Apple Intelligence",
         webSearchAvailable: Bool = false,
         forceWebSearchRequired: Bool = false
-    ) -> String {
+    ) -> LLMRequest {
         // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
         let allSnapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
 
@@ -362,7 +362,7 @@ extension ChatViewModel {
             .map(\.order)
             .max()
 
-        var parts: [String] = snapshots.compactMap { msg in
+        var turns: [LLMRequest.Turn] = snapshots.compactMap { msg in
             // *** CRITICAL FIX: Only include finalized assistant messages in the prompt ***
             // This prevents incomplete/streaming assistant messages from polluting the context
             if msg.role == .assistant && !msg.isFinal {
@@ -383,14 +383,14 @@ extension ChatViewModel {
                     msg.text,
                     isLatestUserMessage: msg.order == latestUserOrder
                 )
-                return Self.foundationPromptMessage(role: "user", content: userText)
+                return .init(role: .user, content: userText)
             case .assistant:
                 if msg.isReasoningMode, let answer = msg.finalAnswer {
                     let cleanAnswer = stripSourcesFromText(answer)
-                    return Self.foundationPromptMessage(role: "assistant", content: cleanAnswer)
+                    return .init(role: .assistant, content: cleanAnswer)
                 } else {
                     let cleanText = stripSourcesFromText(msg.text)
-                    return Self.foundationPromptMessage(role: "assistant", content: cleanText)
+                    return .init(role: .assistant, content: cleanText)
                 }
             default:
                 return nil
@@ -412,6 +412,10 @@ extension ChatViewModel {
             systemPrompt += "\n\n" + Self.foundationVisionImageInstructions
         }
 
+        if reasoningActive {
+            systemPrompt += "\n\n" + LLMRequest.reasoningInstructions
+        }
+
         if webSearchAvailable {
             systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
                 reasoningEnabled: needsReasoningInstructions,
@@ -421,24 +425,10 @@ extension ChatViewModel {
 
         systemPrompt += "\n\n" + Self.currentDateTimeContext()
 
-        parts.insert(Self.foundationPromptMessage(role: "system", content: systemPrompt), at: 0)
-
-        return parts.joined(separator: "\n\n")
-    }
-
-    nonisolated private static func foundationPromptMessage(role: String, content: String) -> String {
-        """
-        <message role="\(role)">
-        \(xmlEscapedPromptContent(content))
-        </message>
-        """
-    }
-
-    nonisolated private static func xmlEscapedPromptContent(_ content: String) -> String {
-        content
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
+        // The latest user request is sent to respond/streamResponse; prior turns
+        // seed the native transcript, rather than being quoted as another prompt.
+        let prompt = turns.last?.role == .user ? turns.removeLast().content : ""
+        return LLMRequest(instructions: systemPrompt, history: turns, prompt: prompt)
     }
 
     /// Helper to strip <sources>...</sources> blocks from text to avoid prompt bloat

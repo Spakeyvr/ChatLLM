@@ -258,17 +258,12 @@ struct MessageBubble: View {
     }
 }
 
-// MARK: - Standard message bubble for non-reasoning messages with cached markdown rendering
+// MARK: - Standard message bubble
 
 struct StandardMessageBubble: View {
     let message: Message
     @ObservedObject var viewModel: ChatViewModel
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
-
-    // Cache for markdown rendering
-    @State private var cachedAttributedString: AttributedString?
-    @State private var lastRenderedText: String = ""
-    @State private var lastRenderedFontSize: Double = 16.0
 
     var isUser: Bool { message.role == .user }
     var isAssistant: Bool { message.role == .assistant }
@@ -296,9 +291,13 @@ struct StandardMessageBubble: View {
                     }
                 }
 
-                // Show text content with cached markdown
+                // Use the same whitespace-preserving renderer during and after streaming.
                 if !visibleText.isEmpty {
-                    renderMarkdownOrPlain(visibleText, isSystem: isSystem)
+                    RichMarkdownView(
+                        text: visibleText,
+                        fontSize: messageFontSize,
+                        textTone: isSystem ? .secondary : .primary
+                    )
                         .textSelection(.enabled)
                 }
 
@@ -332,47 +331,6 @@ struct StandardMessageBubble: View {
         }
     }
 
-    @ViewBuilder
-    private func renderMarkdownOrPlain(_ text: String, isSystem: Bool) -> some View {
-        // Detection runs a dozen regexes over the whole message; evaluate it once.
-        let requiresAdvancedRendering = RichTextFeatureDetector.requiresAdvancedRendering(text)
-
-        if !isStreaming && !requiresAdvancedRendering &&
-            lastRenderedText == text && lastRenderedFontSize == messageFontSize && cachedAttributedString != nil {
-            // Cache hit
-            Text(cachedAttributedString!)
-                .font(.system(size: messageFontSize))
-                .foregroundStyle(isSystem ? .secondary : .primary)
-        } else {
-            if isStreaming || !requiresAdvancedRendering {
-                let processedText = LatexProcessor.process(text)
-                Group {
-                    if let attributed = try? AttributedString(markdown: processedText) {
-                        Text(attributed)
-                            .font(.system(size: messageFontSize))
-                            .foregroundStyle(isSystem ? .secondary : .primary)
-                            .onAppear {
-                                if !isStreaming {
-                                    cachedAttributedString = attributed
-                                    lastRenderedText = text
-                                    lastRenderedFontSize = messageFontSize
-                                }
-                            }
-                    } else {
-                        Text(processedText.isEmpty ? " " : processedText)
-                            .font(.system(size: messageFontSize))
-                            .foregroundStyle(isSystem ? .secondary : .primary)
-                    }
-                }
-            } else {
-                RichMarkdownView(
-                    text: text,
-                    fontSize: messageFontSize,
-                    textTone: isSystem ? .secondary : .primary
-                )
-            }
-        }
-    }
 }
 
 // MARK: - Reasoning mode message bubble with modern design
@@ -475,20 +433,10 @@ struct ReasoningMessageBubble: View {
                 if hasFinalSection {
                     VStack(alignment: .leading, spacing: 8) {
                         if !finalText.isEmpty {
-                            if isCurrentlyStreaming {
-                                // Fast path: skip LaTeX + markdown parsing during streaming to avoid per-frame stutter
-                                Text(finalText)
-                                    .font(.system(size: messageFontSize))
-                                    .foregroundStyle(.primary)
-                                    .textSelection(.enabled)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } else {
-                                RichMarkdownView(text: finalText, fontSize: messageFontSize)
-                                    .textSelection(.enabled)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                            RichMarkdownView(text: finalText, fontSize: messageFontSize)
+                                .textSelection(.enabled)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         // Error callout for reasoning messages

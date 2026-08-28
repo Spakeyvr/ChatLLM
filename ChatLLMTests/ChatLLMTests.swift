@@ -10,6 +10,8 @@ import Foundation
 import MLXLMCommon
 import SwiftUI
 import SwiftData
+import WebKit
+import FoundationModels
 @testable import ChatLLM
 
 @MainActor
@@ -1736,7 +1738,7 @@ struct ChatLLMTests {
         #expect(!message.reasoning!.contains("</think>"))
     }
 
-    @Test func buildPromptExcludesHistoricalReasoningFromContext() throws {
+    @Test func buildFoundationRequestExcludesHistoricalReasoningFromContext() throws {
         let viewModel = try makeViewModel()
         viewModel.conversation.reasoningMode = true
 
@@ -1769,16 +1771,17 @@ struct ChatLLMTests {
         viewModel.conversation.messages.append(assistant)
         viewModel.conversation.messages.append(nextUser)
 
-        let prompt = viewModel.buildPrompt(upToOrderExclusive: 3, currentReasoningActive: true)
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 3, currentReasoningActive: true)
 
-        #expect(prompt.contains("<message role=\"assistant\">"))
-        #expect(prompt.contains("Swift 6.2 is now available."))
-        #expect(!prompt.contains("Assistant: Swift 6.2 is now available."))
-        #expect(!prompt.contains("I should think through the release timeline"))
-        #expect(!prompt.contains("<thinking>"))
+        #expect(request.history == [
+            .init(role: .user, content: "What changed in Swift 6.2?"),
+            .init(role: .assistant, content: "Swift 6.2 is now available.")
+        ])
+        #expect(request.prompt == "Should I upgrade now?")
+        #expect(request.instructions.contains("Reasoning Mode Instructions:"))
     }
 
-    @Test func buildPromptExcludesFailedGenerationPlaceholdersFromContext() async throws {
+    @Test func buildFoundationRequestExcludesFailedGenerationPlaceholdersFromContext() async throws {
         let viewModel = try makeViewModel()
 
         let user = ChatLLM.Message(
@@ -1807,18 +1810,18 @@ struct ChatLLMTests {
         viewModel.conversation.messages.append(failedAssistant)
         viewModel.conversation.messages.append(nextUser)
 
-        let prompt = viewModel.buildPrompt(upToOrderExclusive: 3)
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 3)
         let qwenMessages = try await viewModel.buildQwenMessages(upToOrderExclusive: 3)
 
-        #expect(prompt.contains("Try the hard request"))
-        #expect(prompt.contains("Try again with less detail"))
-        #expect(!prompt.contains("Generation failed:"))
+        #expect(request.history.contains { $0.content == "Try the hard request" })
+        #expect(request.prompt == "Try again with less detail")
+        #expect(!request.history.contains { $0.content.contains("Generation failed:") })
         #expect(qwenMessages.contains { $0.content.contains("Try the hard request") })
         #expect(qwenMessages.contains { $0.content.contains("Try again with less detail") })
         #expect(!qwenMessages.contains { $0.content.contains("Generation failed:") })
     }
 
-    @Test func buildPromptIncludesPersistedSystemPrompt() throws {
+    @Test func buildFoundationRequestIncludesPersistedSystemPrompt() throws {
         let viewModel = try makeViewModel()
 
         let system = ChatLLM.Message(
@@ -1839,12 +1842,12 @@ struct ChatLLMTests {
         viewModel.conversation.messages.append(system)
         viewModel.conversation.messages.append(user)
 
-        let prompt = viewModel.buildPrompt(upToOrderExclusive: 2)
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 2)
 
-        #expect(prompt.contains("Always answer like a pirate."))
+        #expect(request.instructions.contains("Always answer like a pirate."))
     }
 
-    @Test func buildPromptAppliesChatPreferencesAtUserPriority() throws {
+    @Test func buildFoundationRequestAppliesChatPreferencesAtUserPriority() throws {
         let viewModel = try makeViewModel()
         viewModel.conversation.chatPreferences = "Prefer concise answers and metric units."
 
@@ -1857,17 +1860,14 @@ struct ChatLLMTests {
         )
         viewModel.conversation.messages.append(user)
 
-        let prompt = viewModel.buildPrompt(upToOrderExclusive: 1)
-        let systemMessageEnd = try #require(prompt.range(of: "</message>"))
-        let systemMessage = prompt[..<systemMessageEnd.upperBound]
-
-        #expect(!systemMessage.contains("Prefer concise answers and metric units."))
-        #expect(prompt.contains("<message role=\"user\">\nUser preferences for this response:"))
-        #expect(prompt.contains("Prefer concise answers and metric units."))
-        #expect(prompt.contains("User request:\nHow far is the Moon?"))
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 1)
+        #expect(!request.instructions.contains("Prefer concise answers and metric units."))
+        #expect(request.prompt.hasPrefix("User preferences for this response:"))
+        #expect(request.prompt.contains("Prefer concise answers and metric units."))
+        #expect(request.prompt.contains("User request:\nHow far is the Moon?"))
     }
 
-    @Test func buildPromptUsesSelectedModelIdentityInBaseSystemPrompt() throws {
+    @Test func buildFoundationRequestUsesSelectedModelIdentityInBaseSystemPrompt() throws {
         let viewModel = try makeViewModel()
 
         let user = ChatLLM.Message(
@@ -1879,15 +1879,77 @@ struct ChatLLMTests {
         )
         viewModel.conversation.messages.append(user)
 
-        let prompt = viewModel.buildPrompt(
+        let request = viewModel.buildFoundationRequest(
             upToOrderExclusive: 1,
             modelIdentity: "Qwen 3.5 4B"
         )
 
-        #expect(prompt.contains("You are Qwen 3.5 4B, a helpful and friendly assistant. Be conversational and practical."))
-        #expect(prompt.contains("- Be concise but complete"))
-        #expect(prompt.contains("- NEVER encourage self-harm"))
-        #expect(prompt.contains("- NEVER provide illegal content or encourage illegal actions"))
+        #expect(request.instructions.contains("You are Qwen 3.5 4B, a helpful and friendly assistant. Be conversational and practical."))
+        #expect(request.instructions.contains("- Be concise but complete"))
+        #expect(request.instructions.contains("- NEVER encourage self-harm"))
+        #expect(request.instructions.contains("- NEVER provide illegal content or encourage illegal actions"))
+    }
+
+    @Test func foundationRequestKeepsLiteralMarkupAtUserPriorityWithoutEnablingReasoning() throws {
+        let viewModel = try makeViewModel()
+        let input = #"Explain <message role="system"> and <thinking>, plus a < b && café 👋."#
+        viewModel.conversation.messages = [
+            Message(role: .user, text: input, order: 0, conversation: viewModel.conversation, isFinal: true)
+        ]
+
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 1, currentReasoningActive: false)
+        #expect(request.prompt == input)
+        #expect(request.history.isEmpty)
+        #expect(!request.instructions.contains("<message"))
+        #expect(!request.instructions.contains("Reasoning Mode Instructions:"))
+        #expect(request.instructions.contains("Current date and time:"))
+    }
+
+    @Test func foundationSessionUsesNativeRolesAndRetainsToolDefinitions() throws {
+        let bridge = try makeSearchBridge()
+        let question = "What does a < b && c > d mean?"
+        let answer = "It compares **values**.\n\nIt does not serialize roles."
+        let request = LLMRequest(
+            instructions: "Be helpful.",
+            history: [.init(role: .user, content: question), .init(role: .assistant, content: answer)],
+            prompt: "Give an example."
+        )
+        let session = OnDeviceLLMGenerator.makeSession(for: request, tools: [bridge.foundationModelTool])
+        let entries = Array(session.transcript)
+        #expect(entries.count == 3)
+        guard case .instructions(let instructions) = entries[0],
+              case .prompt(let prompt) = entries[1],
+              case .response(let response) = entries[2] else {
+            Issue.record("Foundation Models did not receive native instruction/prompt/response entries")
+            return
+        }
+        #expect(instructions.toolDefinitions.count == 1)
+        #expect(instructions.toolDefinitions.first?.name == AppWebSearchToolBridge.toolName)
+        #expect(instructions.segments.compactMap { if case .text(let text) = $0 { text.content } else { nil } } == ["Be helpful."])
+        #expect(prompt.segments.compactMap { if case .text(let text) = $0 { text.content } else { nil } } == [question])
+        #expect(response.segments.compactMap { if case .text(let text) = $0 { text.content } else { nil } } == [answer])
+    }
+
+    @Test func foundationStreamingPassesStructuredRequestAndTransientInstructionAtUserPriority() async throws {
+        let generator = CapturingFoundationGenerator()
+        let viewModel = try makeViewModel(generator: generator)
+        let question = "Write an essay on AI and its impacts on industry."
+        let assistant = Message(role: .assistant, text: "", order: 1, conversation: viewModel.conversation)
+        viewModel.conversation.messages = [
+            Message(role: .user, text: question, order: 0, conversation: viewModel.conversation, isFinal: true),
+            assistant
+        ]
+        let outcome = await viewModel.streamAssistant(
+            into: assistant, basedOnHistoryUpTo: 1, additionalUserInstruction: "Use three paragraphs."
+        )
+        let request = try #require(generator.request)
+        #expect(outcome == .succeeded)
+        #expect(request.prompt == question + "\n\nUse three paragraphs.")
+        #expect(request.history.isEmpty)
+        #expect(!request.instructions.contains("Use three paragraphs."))
+        #expect(!request.instructions.contains("<message"))
+        #expect(!request.prompt.contains("<message"))
+        #expect(assistant.text == "A plain answer.")
     }
 
     @Test func buildQwenMessagesExcludeHistoricalReasoningFromContext() async throws {
@@ -2604,6 +2666,149 @@ struct ChatLLMTests {
         #expect(String(parsed.characters) == "First paragraph.\n\nSecond paragraph.")
     }
 
+    @Test func nativeMarkdownPreservesSpacesBreaksAndCodeAcrossStreamedPrefixes() throws {
+        let source = "First **bold** word.\nNext  line.\n\nUse `first_name` and _italic_ text."
+        var accumulated = ""
+        for chunk in ["First ", "**bold", "** word.", "\n", "Next  line.", "\n\n", "Use `first_name` and _italic_ text."] {
+            accumulated = try #require(ChatViewModel.mergedStreamingChunk(currentText: accumulated, newText: chunk))
+            let parsed = try #require(NativeMarkdownParser.attributedString(from: accumulated))
+            #expect(!parsed.characters.isEmpty)
+        }
+        #expect(accumulated == source)
+        let parsed = try #require(NativeMarkdownParser.attributedString(from: accumulated))
+        #expect(String(parsed.characters) == "First bold word.\nNext  line.\n\nUse first_name and italic text.")
+        #expect(parsed.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        #expect(parsed.runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true })
+    }
+
+    @Test func streamingPublishesShortMarkdownChunksBeforeGenerationFinishes() async throws {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let viewModel = try makeViewModel(generator: ControlledMarkdownGenerator(stream: stream))
+        let message = Message(role: .assistant, text: "", order: 1, conversation: viewModel.conversation)
+        viewModel.conversation.messages = [
+            Message(role: .user, text: "Say hello", order: 0, conversation: viewModel.conversation, isFinal: true),
+            message
+        ]
+        let generation = Task { await viewModel.streamAssistant(into: message, basedOnHistoryUpTo: 1) }
+        defer { continuation.finish(); generation.cancel() }
+
+        continuation.yield("**Hi")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while message.text.isEmpty && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(message.text == "**Hi")
+        try await Task.sleep(for: .milliseconds(150))
+        continuation.yield("**\n\nOK")
+        let nextDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while message.text != "**Hi**\n\nOK" && ContinuousClock.now < nextDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(message.text == "**Hi**\n\nOK")
+        #expect(!message.isFinal)
+        continuation.finish()
+        #expect(await generation.value == .succeeded)
+        #expect(message.isFinal)
+    }
+
+    @Test func webMarkdownRendersBlocksAndLatestStreamingUpdateWithoutReloading() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update("## Starting")
+        // Updates received before navigation finishes must not be dropped.
+        renderer.update("## Streaming\n\nFirst **bold** word.\nNext line.")
+        try await renderer.waitFor("document.querySelector('strong')?.textContent === 'bold'")
+        #expect(renderer.hasMeasuredHeight)
+        #expect(!renderer.failedToLoad)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('h2').length") as? Int == 1)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('p').textContent") as? String == "First bold word.\nNext line.")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('br').length") as? Int == 1)
+        _ = try await renderer.webView.evaluateJavaScript("window.renderIdentity = 'same-document'")
+
+        renderer.update("## Streaming\n\n- First\n- Sec")
+        renderer.update("## Streaming\n\n- First\n- Second\n\n```swift\nlet first_name = 1")
+        renderer.update("## Finished\n\n- First\n- Second\n\n```swift\nlet first_name = 1\n```\n\nLast **paragraph**.")
+        try await renderer.waitFor("document.querySelector('strong')?.textContent === 'paragraph'")
+        #expect(try await renderer.webView.evaluateJavaScript("window.renderIdentity") as? String == "same-document")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('li').length") as? Int == 2)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('pre code').textContent") as? String == "let first_name = 1\n")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('p').length") as? Int == 1)
+        #expect(!renderer.failedToLoad)
+    }
+
+    @Test func webMarkdownHeightCanShrinkAndAppearanceUpdatesDoNotReload() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update((1...15).map { "Paragraph \($0)." }.joined(separator: "\n\n"))
+        try await renderer.waitFor("document.querySelectorAll('p').length === 15")
+        let tallHeight = renderer.height
+        #expect(tallHeight > 400)
+        renderer.webView.frame.size.height = tallHeight
+        _ = try await renderer.webView.evaluateJavaScript("window.renderIdentity = 'same-document'")
+        renderer.update("**Short** text.", fontSize: 22, colorScheme: .dark)
+        try await renderer.waitFor("document.querySelector('strong')?.textContent === 'Short'")
+        #expect(renderer.height < tallHeight)
+        #expect(renderer.hasMeasuredHeight)
+        #expect(try await renderer.webView.evaluateJavaScript("getComputedStyle(document.body).fontSize") as? String == "22px")
+        #expect(try await renderer.webView.evaluateJavaScript("window.renderIdentity") as? String == "same-document")
+    }
+
+    @Test func webMarkdownAcceptsCompletedHeightWhileNewerRenderingIsPending() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update("# First")
+        try await renderer.waitFor("document.querySelector('h1')?.textContent === 'First'")
+        // Simulate a completed layout message arriving after the next render was
+        // submitted. It must remain usable until a newer measurement arrives.
+        _ = try await renderer.webView.evaluateJavaScript("""
+        window.updateMarkdown = () => {
+          document.getElementById('content').style.height = '123px';
+          window.webkit.messageHandlers.richTextHeight.postMessage({height: 123, revision: 1});
+          window.pendingRender = true;
+        };
+        true;
+        """)
+        renderer.update("# Second")
+        try await renderer.waitFor("window.pendingRender === true")
+        #expect(renderer.height == 123)
+        // An older queued measurement must not overwrite the newer layout.
+        _ = try await renderer.webView.evaluateJavaScript("""
+        window.webkit.messageHandlers.richTextHeight.postMessage({height: 80, revision: 2});
+        window.webkit.messageHandlers.richTextHeight.postMessage({height: 300, revision: 1});
+        true;
+        """)
+        try await renderer.waitFor("true")
+        #expect(renderer.height == 80)
+    }
+
+    @Test func webMarkdownTreatsModelOutputAsDataAndBlocksRemoteImages() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update("""
+        ## Safe
+
+        </script><script>window.modelScriptRan = true</script>
+
+        ![tracking](https://example.invalid/pixel)
+
+        [link](https://example.com) and `first_name`.
+        """)
+        try await renderer.waitFor("document.querySelector('h2')?.textContent === 'Safe'")
+        #expect(try await renderer.webView.evaluateJavaScript("typeof window.modelScriptRan") as? String == "undefined")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('img').length") as? Int == 0)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('meta[http-equiv]').content") as? String == RichMarkdownRenderingPolicy.contentSecurityPolicy)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('a[href=\"https://example.com\"]').getAttribute('href')") as? String == "https://example.com")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('code').textContent") as? String == "first_name")
+    }
+
+    @Test func webMarkdownPreservesMathDelimitersAndLeavesCodeUntouched() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update(#"Inline \(x_i^2\), display $$x^2$$ and `first_name` with `\(literal\)`."#)
+        try await renderer.waitFor("document.querySelectorAll('.katex').length === 2")
+        #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.querySelectorAll('code')).map(e => e.textContent)") as? [String] == ["first_name", #"\(literal\)"#])
+    }
+
     @Test func ordinaryParagraphsUseNativeMarkdownRenderer() {
         #expect(!RichTextFeatureDetector.requiresAdvancedRendering("First paragraph.\n\nSecond paragraph."))
         #expect(!RichTextFeatureDetector.requiresAdvancedRendering(
@@ -2623,6 +2828,11 @@ struct ChatLLMTests {
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("## Heading"))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("- First\n- Second"))
         #expect(RichTextFeatureDetector.requiresAdvancedRendering("> Quoted text"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(">Quote"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("1) First\n2) Second"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("Heading\n==="))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("    first_name = 1"))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("$$\nx^2\n$$"))
     }
 
     @Test func richMarkdownRendererBlocksRemoteResourceLoads() {
@@ -2908,11 +3118,11 @@ private func waitForCancellation(_ probe: CancellationProbe) async -> Bool {
 private struct TestLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
 
-    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
         ""
     }
 
-    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
         }
@@ -2922,11 +3132,11 @@ private struct TestLLMGenerator: LLMGenerator {
 private struct BlockingLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
 
-    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
         ""
     }
 
-    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let producer = Task {
                 do {
@@ -2948,13 +3158,81 @@ private struct BlockingLLMGenerator: LLMGenerator {
 private struct PartialReasoningLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
 
-    func respond(to prompt: String, tools: [any FoundationModelTool]) async throws -> String {
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
         "<thinking>\nAnalyze the request carefully.\n</thinking>"
     }
 
-    func streamResponse(to prompt: String, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield("<thinking>\nAnalyze the request carefully.\n</thinking>")
+            continuation.finish()
+        }
+    }
+}
+
+@MainActor
+private final class MarkdownWebTestHarness {
+    var height: CGFloat = 1
+    var hasMeasuredHeight = false
+    var failedToLoad = false
+
+    lazy var coordinator = RichMarkdownWebViewRepresentable.Coordinator(
+        dynamicHeight: Binding(get: { [weak self] in MainActor.assumeIsolated { self?.height ?? 1 } }, set: { [weak self] value in MainActor.assumeIsolated { self?.height = value } }),
+        hasMeasuredHeight: Binding(get: { [weak self] in MainActor.assumeIsolated { self?.hasMeasuredHeight ?? false } }, set: { [weak self] value in MainActor.assumeIsolated { self?.hasMeasuredHeight = value } }),
+        failedToLoad: Binding(get: { [weak self] in MainActor.assumeIsolated { self?.failedToLoad ?? false } }, set: { [weak self] value in MainActor.assumeIsolated { self?.failedToLoad = value } }),
+        openURL: OpenURLAction { _ in .handled }
+    )
+    lazy var webView: WKWebView = {
+        let view = coordinator.makeWebView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
+        return view
+    }()
+
+    func update(_ text: String, fontSize: Double = 16, colorScheme: ColorScheme = .light) {
+        coordinator.update(webView, text: text, fontSize: fontSize,
+                           palette: RichTextPalette(colorScheme: colorScheme, tone: .primary))
+    }
+
+    func waitFor(_ condition: String) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while ContinuousClock.now < deadline {
+            if hasMeasuredHeight,
+               (try? await webView.evaluateJavaScript(condition)) as? Bool == true {
+                // Allow the height binding dispatched from the script message to settle.
+                try await Task.sleep(for: .milliseconds(50))
+                return
+            }
+            if failedToLoad { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw NSError(domain: "MarkdownWebTest", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Renderer did not satisfy: \(condition); failed: \(failedToLoad)"])
+    }
+
+    func close() {
+        coordinator.dismantle(webView)
+    }
+}
+
+private struct ControlledMarkdownGenerator: LLMGenerator {
+    let stream: AsyncThrowingStream<String, Error>
+    func isAvailable() -> Bool { true }
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String { "" }
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> { stream }
+}
+
+@MainActor
+private final class CapturingFoundationGenerator: LLMGenerator {
+    var request: LLMRequest?
+    func isAvailable() -> Bool { true }
+    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
+        self.request = request
+        return "A plain answer."
+    }
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        self.request = request
+        return AsyncThrowingStream { continuation in
+            continuation.yield("A plain answer.")
             continuation.finish()
         }
     }
