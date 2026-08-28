@@ -11,6 +11,8 @@ import MLXLMCommon
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Generation
+
     nonisolated private static let maximumPromptTokenCountCacheEntries = 256
     nonisolated private static let rotorQuantKeyBits = 3
     nonisolated private static let rotorQuantValueBits = 2
@@ -121,7 +123,6 @@ extension MLXModelManager {
     var shouldPreferRotorQuant: Bool {
         UserDefaults.standard.mlxEnableRotorQuant
     }
-    // MARK: - Generation
 
     func generateTextStream(
         conversationID: UUID,
@@ -233,6 +234,7 @@ extension MLXModelManager {
             throw error
         }
     }
+
     // MARK: - Errors
 
     enum GenerationError: LocalizedError {

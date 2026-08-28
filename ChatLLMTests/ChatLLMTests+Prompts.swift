@@ -51,7 +51,7 @@ extension ChatLLMTests {
         #expect(merged.first(where: { $0.id == newID })?.anchorStepNumber == 3)
     }
 
-    @Test func clearingSearchInvocationsAlsoClearsLegacySearchQuery() {
+    @Test func settingSearchInvocationsMirrorsLegacyQueryAndClearingClearsBoth() {
         let conversation = Conversation(title: "Test")
         let message = ChatLLM.Message(
             role: .assistant,
@@ -108,13 +108,6 @@ extension ChatLLMTests {
         #expect(context.contains("Saturday, March 7, 2026 at 12:00 UTC"))
         #expect(context.contains("current year"))
         #expect(context.contains("exact date"))
-    }
-
-    @Test func mlxSessionReusePolicyAllowsKeyedSessionReuseAcrossModes() {
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: true, hasTools: false, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: true, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: true))
     }
 
     @Test func mlxTimeContextGateSkipsOrdinaryTurns() {

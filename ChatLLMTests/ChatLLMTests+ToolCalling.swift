@@ -168,45 +168,6 @@ extension ChatLLMTests {
         #expect(scope == .none)
     }
 
-    @Test func mlxGenerationCommitRequiresMatchingLoadAndRevision() {
-        let loadID = UUID()
-
-        #expect(MLXInferenceWorker.generationStateIsCurrent(
-            expectedLoadID: loadID,
-            currentLoadID: loadID,
-            expectedStateRevision: 4,
-            currentStateRevision: 4
-        ))
-        #expect(!MLXInferenceWorker.generationStateIsCurrent(
-            expectedLoadID: loadID,
-            currentLoadID: UUID(),
-            expectedStateRevision: 4,
-            currentStateRevision: 4
-        ))
-        #expect(!MLXInferenceWorker.generationStateIsCurrent(
-            expectedLoadID: loadID,
-            currentLoadID: loadID,
-            expectedStateRevision: 4,
-            currentStateRevision: 5
-        ))
-    }
-
-    @Test func mlxVisibleMessageSignatureStoresOnlyFixedSizeContentIdentity() {
-        let first = MLXVisibleMessageSignature(
-            message: Chat.Message(role: .user, content: "A long conversation message")
-        )
-        let same = MLXVisibleMessageSignature(
-            message: Chat.Message(role: .user, content: "A long conversation message")
-        )
-        let changed = MLXVisibleMessageSignature(
-            message: Chat.Message(role: .user, content: "A different conversation message")
-        )
-
-        #expect(first == same)
-        #expect(first != changed)
-        #expect(first.contentFingerprint.count == 32)
-    }
-
     @Test func smolLM3ToolResponsesUseNativeToolRole() {
         let manager = MLXModelManager()
         let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))

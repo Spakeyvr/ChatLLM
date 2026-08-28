@@ -5,16 +5,21 @@
 //  Manages MLX-based language models downloaded to Documents/Models/.
 //
 //  The manager body is split into Type+Concern extension files:
+//    MLXCachePolicy.swift              Shared cache-policy/benchmark/perf types
 //    MLXModelManager+ModelInfo.swift    MLXModelInfo and generation result types
 //    MLXModelManager+Catalog.swift      Model catalog, installation status, package metadata
 //    MLXModelManager+Downloads.swift    Download lifecycle and partial-download cleanup
 //    MLXModelManager+Loading.swift      Load/teardown lifecycle and shader pre-warming
 //    MLXModelManager+Tuning.swift       Prefill-step-size benchmarking and persistence
-//    MLXModelManager+Generation.swift   Generation configuration and cache policy
+//    MLXModelManager+Generation.swift   Generation configuration and stream orchestration
 //    MLXModelManager+ToolCalling.swift  Tool-template inspection and tool-response formatting
-//    MLXModelManager+Memory.swift       Memory pressure and cache policy
+//    MLXModelManager+Memory.swift       Memory pressure handling and teardown
 //
 //  Stored state lives here; it is internal so the extension files can share it.
+//  Four published properties (pendingModelToLoad, activeDownloadModelID,
+//  downloadErrorModelID, latestPerformanceSample) intentionally lost their
+//  private(set) qualifiers for the same reason: Swift has no module-scoped
+//  setter, so cross-file extensions must be able to write them.
 //
 
 import Foundation

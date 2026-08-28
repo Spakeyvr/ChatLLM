@@ -12,6 +12,8 @@ import OSLog
 import UIKit
 
 extension MLXModelManager {
+    // MARK: - Prefill Tuning
+
     nonisolated static let defaultPrefillStepSize = 512
     nonisolated static let minimumAdaptivePrefillStepSize = 128
 

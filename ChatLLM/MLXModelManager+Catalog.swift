@@ -9,6 +9,8 @@ import Foundation
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Catalog
+
     static let uiTestFakeDownloadsArgument = "-ui-test-fake-mlx-downloads"
     /// Model directories left behind by superseded releases. Nothing in
     /// `modelDefinitions` refers to them, so the picker cannot show or delete
@@ -89,6 +91,7 @@ extension MLXModelManager {
             minimumPhoneMemoryForToolCallsBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
     ]
+
     // MARK: - Model Directory (Documents)
 
     func modelDirectoryURL(for info: MLXModelInfo) -> URL? {
@@ -157,11 +160,6 @@ extension MLXModelManager {
         return ModelInstallationStatus(isInstalled: true, isCompatible: true, compatibilityError: nil)
     }
 
-    private func isModelAvailable(_ info: MLXModelInfo) -> Bool {
-        let status = installationStatus(for: info)
-        return status.isInstalled && status.isCompatible
-    }
-
     func compatibilityError(for info: MLXModelInfo) -> String? {
         compatibilityErrors[info.id]
     }
@@ -199,6 +197,7 @@ extension MLXModelManager {
             }
         }
     }
+
     // MARK: - Diagnostics / Management
 
     func refreshModelAvailability() {

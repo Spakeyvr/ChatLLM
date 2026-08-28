@@ -9,6 +9,8 @@ import Foundation
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Download
+
     private static let activeBackgroundDownloadModelIDKey = "mlx.activeBackgroundDownloadModelID"
     var activeDownloadModel: MLXModelInfo? {
         guard let activeDownloadModelID else { return nil }
@@ -27,7 +29,6 @@ extension MLXModelManager {
         guard downloadErrorModelID == modelID else { return nil }
         return downloadError
     }
-    // MARK: - Download
 
     func restoreBackgroundDownloadIfNeeded() {
         guard !Self.isUITestFakeDownloadsEnabled,

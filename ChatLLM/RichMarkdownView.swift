@@ -24,6 +24,27 @@ import WebKit
 ///
 /// Do not delete the `RenderingAssets/` files: the native path cannot render
 /// KaTeX, and the WebView document inlines all four of them (see `makeHTML()`).
+/// Only `markdown-it.min.js` is load-critical there — if a KaTeX file is
+/// missing from the bundle the document silently renders everything *except*
+/// math, with no failure signal.
+///
+/// Known limitations a maintainer should not "fix" blindly:
+/// - KaTeX fonts are not bundled (the CSS references `fonts/KaTeX_*.woff2` that
+///   do not exist, and the CSP only allows `data:` fonts), so math renders with
+///   the CSS fallback (Times/serif). If fidelity ever matters, inline the fonts
+///   as `data:` URIs in `makeHTML()` — do not add remote font loads.
+/// - The detector also flags a bare `\begin{…}` environment, but KaTeX
+///   auto-render only handles `$$`, `\[`, and `\(`; a bare `\begin{align}…`
+///   triggers the WebView yet renders as literal text. Detection-only support.
+/// - Images are disabled in both paths: the native renderer reduces
+///   `![alt](url)` to its alt text, while markdown-it's `image` rule is disabled
+///   so the raw markup shows. Keep `RichMarkdownRenderingPolicy
+///   .disabledMarkdownRules` in sync with `MarkdownInlineRenderer
+///   .sanitizedSource` if that policy ever changes.
+///
+/// `LatexProcessor.swift` is unused legacy from before native rendering — math
+/// is rendered by KaTeX, not converted to Unicode.
+///
 /// If you add a rendered feature, decide explicitly whether it belongs in
 /// `MarkdownBlockParser` (native) or in the WebView document's JS, and keep the
 /// detector in sync so math stays the only trigger for the WebView.

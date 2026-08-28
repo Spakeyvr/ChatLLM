@@ -10,6 +10,8 @@ import MLX
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Memory Pressure
+
     nonisolated private static let aggressiveMemoryCacheLimitBytes = 1 * 1024 * 1024
     func handleMemoryWarning() {
         logger.notice("MLX received memory warning; clearing caches and invalidating sessions")
@@ -22,11 +24,6 @@ extension MLXModelManager {
         }
         aggressivelyFreeMemory(reason: "memory.warning")
     }
-    private func resetMemoryCaches() {
-        Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
-        URLCache.shared.removeAllCachedResponses()
-    }
-
     func applySteadyStateMemoryCachePolicy() {
         Memory.cacheLimit = Self.aggressiveMemoryCacheLimitBytes
     }

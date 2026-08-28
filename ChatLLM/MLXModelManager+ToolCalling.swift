@@ -10,6 +10,8 @@ import MLXLMCommon
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Tool Calling
+
     enum ToolTemplateSupport: Equatable {
         case supported
         case unsupported(String)

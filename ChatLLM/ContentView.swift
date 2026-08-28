@@ -99,6 +99,7 @@ struct ContentView: View {
                 if newColumn == .sidebar, draftConversation != nil, selection == nil {
                     draftConversation = nil
                     currentViewModel?.cancelGeneration()
+                    currentViewModel?.flushPendingSaveForTeardown()
                     currentViewModel = nil
                 }
             }
@@ -294,6 +295,7 @@ struct ContentView: View {
         ModelBackendBridge.shared.bindConversation(newSelection)
         if let currentVM = currentViewModel, currentVM.conversation.id != newID {
             currentVM.cancelGeneration()
+            currentVM.flushPendingSaveForTeardown()
             currentViewModel = nil
         }
     }
@@ -318,6 +320,7 @@ struct ContentView: View {
                 // Current selection was deleted - clean up view model if it hasn't been already
                 if let currentVM = currentViewModel, currentVM.conversation.id == currentSelection.id {
                     currentVM.cancelGeneration()
+                    currentVM.flushPendingSaveForTeardown()
                     currentViewModel = nil
                 }
                 

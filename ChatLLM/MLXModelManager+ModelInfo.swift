@@ -8,6 +8,7 @@
 import Foundation
 
 extension MLXModelManager {
+
     // MARK: - Model Info
 
     struct MLXModelInfo: Identifiable, Sendable {

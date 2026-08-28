@@ -12,12 +12,13 @@ import MLXLMCommon
 import OSLog
 
 extension MLXModelManager {
+    // MARK: - Loading
+
     func invalidateConversationSession(_ conversationID: UUID, reason: String) {
         Task {
             await inferenceWorker.invalidateConversation(conversationID, reason: reason)
         }
     }
-    // MARK: - Loading
 
     func startLoading(modelID: String? = nil, source: String = "unknown") {
         let preferredModel = modelID.flatMap { id in
@@ -254,6 +255,7 @@ extension MLXModelManager {
         tearDownCurrentModel(reason: "unloadAllModels")
         logger.notice("Unloaded all MLX models")
     }
+
     // MARK: - Shader Pre-warming
 
     /// Runs a minimal text forward pass immediately after model load to pre-compile all LM Metal

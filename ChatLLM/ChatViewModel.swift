@@ -212,20 +212,25 @@ final class ChatViewModel: ObservableObject {
 
         // Streaming writes are saved through scheduleCoalescedSave(), which can
         // trail the model output by up to the force-save threshold plus the
-        // debounce interval. Persist synchronously at the moments iOS is most
-        // likely to kill the process — backgrounding, app switch, and
-        // memory-pressure jetsam — so a mid-generation kill loses at most the
-        // tokens received since the previous coalesced save, not the final tail.
+        // debounce interval. Persist at the moments iOS is most likely to kill
+        // the process — backgrounding, app switch, and memory-pressure jetsam —
+        // so a mid-generation kill loses at most the tokens received since the
+        // previous coalesced save, not the final tail.
         func makeLifecycleSaveSink(_ notification: Notification.Name) -> AnyCancellable {
             NotificationCenter.default.publisher(for: notification)
                 .sink { [weak self] _ in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
+                    guard let self else { return }
+                    // UIApplication lifecycle notifications are posted on the
+                    // main thread, so run the save synchronously instead of
+                    // hopping to a Task: a scheduled Task queues behind
+                    // whatever the main actor is already doing — precisely the
+                    // situation when memory-pressure jetsam is imminent.
+                    MainActor.assumeIsolated {
                         // Skip unsent draft conversations: saving would promote
                         // an empty "New Chat" into the store just because the
                         // user backgrounded the app.
-                        guard conversation.modelContext != nil else { return }
-                        immediateSave()
+                        guard self.conversation.modelContext != nil else { return }
+                        self.immediateSave()
                     }
                 }
         }
@@ -234,6 +239,14 @@ final class ChatViewModel: ObservableObject {
             makeLifecycleSaveSink(UIApplication.didEnterBackgroundNotification),
             makeLifecycleSaveSink(UIApplication.didReceiveMemoryWarningNotification)
         ]
+
+        // The launch falls back to an in-memory store when the on-disk one was
+        // too corrupted to open (see ChatLLMApp.makeModelContainer). Every save
+        // then "succeeds" without persisting anything; say so loudly rather
+        // than letting the durability guarantees silently evaporate.
+        if context.container.configurations.contains(where: \.isStoredInMemoryOnly) {
+            logger.error("SwiftData opened the in-memory fallback store; conversation persistence is NOT durable for this launch (original store was quarantined).")
+        }
     }
 
     deinit {
@@ -247,6 +260,9 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Coalesced Save
 
     internal func scheduleCoalescedSave() {
+        // Counts mutation events (token batches and search-state updates), not
+        // elapsed time, so the force-save threshold bounds how many mutations a
+        // crash can lose regardless of how fast they arrive.
         saveCount += 1
 
         let timeSinceLastSave = Date().timeIntervalSince(lastSaveTime)
@@ -266,6 +282,9 @@ final class ChatViewModel: ObservableObject {
         pendingSaveTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             try? await Task.sleep(for: self.saveInterval)
+            // After this guard the body runs synchronously on the main actor,
+            // so it cannot interleave with immediateSave() or a newer task; the
+            // unconditional nil-out below can only clear this task.
             guard !Task.isCancelled else { return }
             do {
                 try self.context.save()
@@ -273,8 +292,14 @@ final class ChatViewModel: ObservableObject {
                 self.lastSaveTime = Date()
             } catch {
                 self.logger.error("Failed to save context: \((error as NSError).localizedDescription, privacy: .public)")
-                // Retry once more immediately on failure
-                try? self.context.save()
+                // Retry once more immediately on failure; log a second failure
+                // instead of discarding it, so persistent save breakage (disk
+                // full, store corruption mid-session) is visible in Console.
+                do {
+                    try self.context.save()
+                } catch {
+                    self.logger.error("Coalesced save retry failed: \((error as NSError).localizedDescription, privacy: .public)")
+                }
             }
             self.pendingSaveTask = nil
         }
@@ -299,6 +324,14 @@ final class ChatViewModel: ObservableObject {
         } catch {
             logger.error("Failed to immediately save context: \((error as NSError).localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Flushes coalesced changes before the view model is discarded (deinit
+    /// cannot flush: it is nonisolated). Skips unsent drafts so discarding one
+    /// does not promote it into the store.
+    func flushPendingSaveForTeardown() {
+        guard conversation.modelContext != nil else { return }
+        immediateSave()
     }
 
     internal static func mergeSearchInvocations(
@@ -1416,6 +1449,10 @@ final class ChatViewModel: ObservableObject {
                 conversation.messages.removeAll { $0.id == target.id }
                 context.delete(target)
                 conversation.lastUpdated = Date()
+                // Persist the deletion here rather than relying on the caller's
+                // save so the "cancelled before any output" cleanup is durable
+                // on its own.
+                immediateSave()
                 return outcome
             }
         }
