@@ -82,7 +82,7 @@ struct AppSettingsDraft: Equatable {
             enableHaptics: true,
             reasoningModeDefault: false,
             messageFontSize: 16.0,
-            mlxMaxOutputTokens: 1024,
+            mlxMaxOutputTokens: 0,
             mlxContextWindowTokens: 0,
             mlxEnableRotorQuant: true,
             mlxRepetitionPenalty: 1.0,
@@ -99,27 +99,66 @@ struct AppSettingsDraft: Equatable {
         self = Self.defaults()
     }
 
-    func persist(to defaults: UserDefaults = .standard) {
-        defaults.set(chatPreferences, forKey: AppSettingsKeys.chatPreferences)
-        defaults.removeObject(forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
-        defaults.set(appAppearance, forKey: AppSettingsKeys.appAppearance)
-        defaults.set(appLanguage, forKey: AppSettingsKeys.appLanguage)
-        defaults.sendOnReturn = sendOnReturn
-        defaults.enableHapticsPreference = enableHaptics
-        defaults.set(reasoningModeDefault, forKey: AppSettingsKeys.reasoningModeDefault)
-        defaults.set(messageFontSize, forKey: AppSettingsKeys.messageFontSize)
-        defaults.mlxMaxOutputTokens = mlxMaxOutputTokens
-        defaults.set(mlxContextWindowTokens, forKey: AppSettingsKeys.mlxContextWindowTokens)
-        defaults.mlxEnableRotorQuant = mlxEnableRotorQuant
-        defaults.mlxRepetitionPenalty = mlxRepetitionPenalty
-        defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
-        defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)
-        defaults.set(developerModeEnabled, forKey: AppSettingsKeys.developerModeEnabled)
-        defaults.set(disableRAMPrecautions, forKey: AppSettingsKeys.disableRAMPrecautions)
-        defaults.set(visionConfidenceThreshold, forKey: AppSettingsKeys.visionConfidenceThreshold)
-        defaults.disableToolCalls = disableToolCalls
+    // Live settings edits pass the prior snapshot so an unrelated preference
+    // never rewrites credentials or overwrites values changed elsewhere.
+    func persist(to defaults: UserDefaults = .standard, comparedTo previous: Self? = nil) {
+        if previous?.chatPreferences != chatPreferences || defaults.object(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) != nil {
+            defaults.set(chatPreferences, forKey: AppSettingsKeys.chatPreferences)
+            defaults.removeObject(forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
+        }
+        if previous?.appAppearance != appAppearance {
+            defaults.set(appAppearance, forKey: AppSettingsKeys.appAppearance)
+        }
+        if previous?.appLanguage != appLanguage {
+            defaults.set(appLanguage, forKey: AppSettingsKeys.appLanguage)
+        }
+        if previous?.sendOnReturn != sendOnReturn {
+            defaults.sendOnReturn = sendOnReturn
+        }
+        if previous?.enableHaptics != enableHaptics {
+            defaults.enableHapticsPreference = enableHaptics
+        }
+        if previous?.reasoningModeDefault != reasoningModeDefault {
+            defaults.set(reasoningModeDefault, forKey: AppSettingsKeys.reasoningModeDefault)
+        }
+        if previous?.messageFontSize != messageFontSize {
+            defaults.set(messageFontSize, forKey: AppSettingsKeys.messageFontSize)
+        }
+        if previous?.mlxMaxOutputTokens != mlxMaxOutputTokens {
+            defaults.mlxMaxOutputTokens = mlxMaxOutputTokens
+        }
+        if previous?.mlxContextWindowTokens != mlxContextWindowTokens {
+            defaults.set(mlxContextWindowTokens, forKey: AppSettingsKeys.mlxContextWindowTokens)
+        }
+        if previous?.mlxEnableRotorQuant != mlxEnableRotorQuant {
+            defaults.mlxEnableRotorQuant = mlxEnableRotorQuant
+        }
+        if previous?.mlxRepetitionPenalty != mlxRepetitionPenalty {
+            defaults.mlxRepetitionPenalty = mlxRepetitionPenalty
+        }
+        if previous?.autoDeleteOldChats != autoDeleteOldChats {
+            defaults.set(autoDeleteOldChats, forKey: AppSettingsKeys.autoDeleteOldChats)
+        }
+        if previous?.autoDeleteDays != autoDeleteDays {
+            defaults.set(autoDeleteDays, forKey: AppSettingsKeys.autoDeleteDays)
+        }
+        if previous?.developerModeEnabled != developerModeEnabled {
+            defaults.set(developerModeEnabled, forKey: AppSettingsKeys.developerModeEnabled)
+        }
+        if previous?.disableRAMPrecautions != disableRAMPrecautions {
+            defaults.set(disableRAMPrecautions, forKey: AppSettingsKeys.disableRAMPrecautions)
+        }
+        if previous?.visionConfidenceThreshold != visionConfidenceThreshold {
+            defaults.set(visionConfidenceThreshold, forKey: AppSettingsKeys.visionConfidenceThreshold)
+        }
+        if previous?.disableToolCalls != disableToolCalls {
+            defaults.disableToolCalls = disableToolCalls
+        }
 
         let trimmedKey = tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard previous == nil || previous?.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines) != trimmedKey else {
+            return
+        }
         if trimmedKey.isEmpty {
             TavilyAPIKeyStore.clear(
                 userDefaults: defaults,

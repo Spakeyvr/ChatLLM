@@ -1,126 +1,74 @@
-//
-//  SettingsSheet+DataManagement.swift
-//  ChatLLM
-//
-//  Created by Nevio on 10/24/25.
-//
-
 import SwiftUI
-import UIKit
 
-extension SettingsSheet {
+enum SettingsDataAction {
+    case deleteAll, deleteAllExceptCurrent, export
+}
 
-    // MARK: - Data Management Section
+struct PrivacySettingsView: View {
+    @Binding var settings: AppSettingsDraft
+    let hasChats: Bool
+    let canDeleteAllExceptCurrent: Bool
+    let onDeleteAll: () -> Void
+    let onDeleteAllExceptCurrent: () -> Void
+    let onExportChats: () -> Void
+    @State private var deletion: SettingsDataAction?
+    @State private var showingDeletionConfirmation = false
 
-    @ViewBuilder
-    var dataManagementSection: some View {
-        Section(header: Text(String(localized: "Data Management"))) {
-            Button {
-                exportConversations()
-            } label: {
-                Label {
-                    Text(String(localized: "Export All Chats"))
-                        .foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "square.and.arrow.up")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.blue)
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Auto-Delete Chats", isOn: $settings.autoDeleteOldChats)
+                    .accessibilityIdentifier("settings.autoDelete")
+                if settings.autoDeleteOldChats {
+                    Picker("Delete After", selection: $settings.autoDeleteDays) {
+                        ForEach([7, 14, 30, 60, 90], id: \.self) { days in
+                            Text("\(days) days").tag(days)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.retention")
                 }
+            } footer: {
+                Text("Automatically remove conversations older than the selected period. Deleted chats cannot be recovered.")
             }
-            .buttonStyle(.plain)
-            .disabled(!hasChats)
-
-            Button {
-                if confirmBeforeDeletingChats {
-                    pendingAction = .deleteAll
-                } else {
-                    onDeleteAll()
+            Section {
+                Button(action: onExportChats) {
+                    Label("Export All Chats", systemImage: "square.and.arrow.up")
+                        .foregroundStyle(hasChats ? Color.accentColor : Color(uiColor: .tertiaryLabel))
                 }
-            } label: {
-                Label {
-                    Text(String(localized: "Delete All Chats"))
-                        .foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "trash")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.red)
-                }
+                .disabled(!hasChats)
+                .accessibilityIdentifier("settings.exportChats")
+            } footer: {
+                Text("Export a copy of your conversations to keep or share.")
             }
-            .buttonStyle(.plain)
-            .disabled(!hasChats)
-
-            Button {
-                if confirmBeforeDeletingChats {
-                    pendingAction = .deleteAllExceptCurrent
-                } else {
-                    onDeleteAllExceptCurrent()
+            Section {
+                Button("Delete All Except Current", role: .destructive) {
+                    deletion = .deleteAllExceptCurrent
+                    showingDeletionConfirmation = true
                 }
-            } label: {
-                Label {
-                    Text(String(localized: "Delete All Except Current"))
-                        .foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "trash")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.red)
+                .disabled(!canDeleteAllExceptCurrent)
+                .accessibilityIdentifier("settings.deleteOtherChats")
+                Button("Delete All Chats", role: .destructive) {
+                    deletion = .deleteAll
+                    showingDeletionConfirmation = true
                 }
-            }
-            .buttonStyle(.plain)
-            .disabled(!canDeleteAllExceptCurrent)
-
-            Button {
-                pendingAction = .resetSettings
-            } label: {
-                Label {
-                    Text(String(localized: "Reset Settings"))
-                        .foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.red)
-                }
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // MARK: - Actions
-
-    func exportConversations() {
-        onExportChats()
-    }
-
-    func resetSettings() {
-        settings.resetToDefaults()
-    }
-
-    func openDiscordInvite() {
-        let discordInviteURL = "https://discord.gg/PGNCC4Vy7T"
-
-        guard let url = URL(string: discordInviteURL) else {
-            print("Invalid Discord invite URL")
-            return
-        }
-
-        UIApplication.shared.open(url, options: [:]) { success in
-            if !success {
-                print("Failed to open Discord invite")
+                .disabled(!hasChats)
+                .accessibilityIdentifier("settings.deleteAllChats")
+            } footer: {
+                Text("Permanently delete conversations and their attachments from this device.")
             }
         }
-    }
-
-    func openTavilySignUp() {
-        let tavilyURL = "https://app.tavily.com/"
-
-        guard let url = URL(string: tavilyURL) else {
-            print("Invalid Tavily URL")
-            return
-        }
-
-        UIApplication.shared.open(url, options: [:]) { success in
-            if !success {
-                print("Failed to open Tavily")
+        .navigationTitle("Privacy & Data")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert(deletion == .deleteAll ? String(localized: "Delete All Chats?") : String(localized: "Delete Other Chats?"),
+               isPresented: $showingDeletionConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if deletion == .deleteAll { onDeleteAll() } else { onDeleteAllExceptCurrent() }
             }
+        } message: {
+            Text(deletion == .deleteAll
+                 ? String(localized: "All conversations and their attachments will be permanently deleted. This cannot be undone.")
+                 : String(localized: "All conversations except the current one will be permanently deleted. If no chat is selected, the most recent chat is kept. This cannot be undone."))
         }
     }
 }

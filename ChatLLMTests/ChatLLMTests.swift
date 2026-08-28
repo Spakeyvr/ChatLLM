@@ -1088,6 +1088,34 @@ struct ChatLLMTests {
         #expect(defaults.mlxEnableRotorQuant)
     }
 
+    @Test func unlimitedOutputDefaultsApplyOnFirstLoadAndReset() throws {
+        let suiteName = "settings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(defaults.mlxMaxOutputTokensLimit == nil)
+        var draft = AppSettingsDraft.load(from: defaults)
+        #expect(draft.mlxMaxOutputTokens == 0)
+
+        draft.mlxMaxOutputTokens = 768
+        draft.resetToDefaults()
+        #expect(draft.mlxMaxOutputTokens == 0)
+    }
+
+    @Test func unlimitedOutputDefaultPreservesSavedLimits() throws {
+        let suiteName = "settings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.mlxMaxOutputTokens = 768
+        #expect(defaults.mlxMaxOutputTokensLimit == 768)
+        #expect(AppSettingsDraft.load(from: defaults).mlxMaxOutputTokens == 768)
+
+        defaults.mlxMaxOutputTokens = 0
+        #expect(defaults.mlxMaxOutputTokensLimit == nil)
+        #expect(AppSettingsDraft.load(from: defaults).mlxMaxOutputTokens == 0)
+    }
+
     @Test func resetSettingsRestoresRotorQuantDefault() {
         var draft = AppSettingsDraft.defaults()
         draft.mlxEnableRotorQuant = false
@@ -1119,7 +1147,7 @@ struct ChatLLMTests {
         #expect(!draft.sendOnReturn)
     }
 
-    @Test func appSettingsDraftDoesNotPersistUntilSave() throws {
+    @Test func appSettingsDraftDoesNotPersistUntilExplicitCommit() throws {
         let suiteName = "settings-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -1160,6 +1188,44 @@ struct ChatLLMTests {
 
         #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == "Prefer concise answers.")
         #expect(defaults.object(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) == nil)
+    }
+
+    @Test func incrementalSettingsSaveOnlyWritesChangedPreferences() throws {
+        let suiteName = "settings-incremental-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let previous = AppSettingsDraft.defaults()
+        var updated = previous
+        updated.sendOnReturn = true
+        // A value changed elsewhere must not be overwritten by an unrelated edit.
+        defaults.set(22.0, forKey: AppSettingsKeys.messageFontSize)
+        // An unchanged credential must not trigger key migration, removal or save.
+        defaults.set("test-key-sentinel", forKey: TavilyAPIKeyStore.userDefaultsKey)
+
+        updated.persist(to: defaults, comparedTo: previous)
+
+        #expect(defaults.sendOnReturn)
+        #expect(defaults.double(forKey: AppSettingsKeys.messageFontSize) == 22)
+        #expect(defaults.string(forKey: TavilyAPIKeyStore.userDefaultsKey) == "test-key-sentinel")
+        #expect(defaults.object(forKey: AppSettingsKeys.appAppearance) == nil)
+    }
+
+    @Test func incrementalSettingsSaveMigratesLegacyPreferencesWithoutChangingThem() throws {
+        let suiteName = "settings-incremental-migration-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var previous = AppSettingsDraft.defaults()
+        previous.chatPreferences = "Keep answers concise."
+        defaults.set(previous.chatPreferences, forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
+        var updated = previous
+        updated.enableHaptics = false
+
+        updated.persist(to: defaults, comparedTo: previous)
+
+        #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == previous.chatPreferences)
+        #expect(defaults.object(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) == nil)
+        #expect(!defaults.enableHapticsPreference)
     }
 
     @Test func tavilyKeyMigratesOutOfPlaintextUserDefaults() throws {

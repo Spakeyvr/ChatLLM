@@ -335,7 +335,7 @@ extension UserDefaults {
     var mlxMaxOutputTokens: Int {
         get {
             guard object(forKey: "mlxMaxOutputTokens") != nil else {
-                return 1024
+                return 0
             }
             let storedValue = integer(forKey: "mlxMaxOutputTokens")
             if storedValue <= 0 {

@@ -41,10 +41,12 @@ struct ChatLLMApp: App {
     ])
 
     init() {
-        configureUITestStateIfNeeded()
+        // Reset test data before opening SQLite, never underneath a live store.
+        Self.configureUITestStateIfNeeded()
+        sharedModelContainer = Self.makeModelContainer()
     }
 
-    var sharedModelContainer: ModelContainer = Self.makeModelContainer()
+    var sharedModelContainer: ModelContainer
 
     var body: some Scene {
         WindowGroup {
@@ -53,7 +55,7 @@ struct ChatLLMApp: App {
         .modelContainer(sharedModelContainer)
     }
 
-    private func configureUITestStateIfNeeded() {
+    private static func configureUITestStateIfNeeded() {
         let arguments = ProcessInfo.processInfo.arguments
         guard arguments.contains("-ui-test-reset-app-state") else {
             return
@@ -127,7 +129,7 @@ struct ChatLLMApp: App {
         }
     }
 
-    private func clearSwiftDataStoreIfNeeded() {
+    private static func clearSwiftDataStoreIfNeeded() {
         let storeURL = Self.makeModelConfiguration().url
         let sidecarURLs = [
             storeURL,
@@ -140,7 +142,7 @@ struct ChatLLMApp: App {
         }
     }
 
-    private func clearAttachmentStorageIfNeeded() {
+    private static func clearAttachmentStorageIfNeeded() {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return
         }

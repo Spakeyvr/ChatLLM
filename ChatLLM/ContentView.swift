@@ -27,10 +27,16 @@ struct ContentView: View {
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showDeleteAllAlert: Bool = false
     @State private var showSettings: Bool = false
+    @State private var pendingSettingsAction: SettingsDataAction?
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
     @State private var isErrorAlertPresented: Bool = false
-    @State private var showExportSheet: Bool = false
+    private struct ChatExport: Identifiable {
+        let url: URL
+        var id: URL { url }
+    }
+
+    @State private var chatExport: ChatExport?
     @State private var exportURL: URL?
     @FocusState private var isSearchFocused: Bool
     @State private var attachmentCleanupTask: Task<Void, Never>?
@@ -45,14 +51,6 @@ struct ContentView: View {
     @AppStorage("autoDeleteDays") private var autoDeleteDays: Int = 30
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
 
-    private var preferredScheme: ColorScheme? {
-        switch appAppearance {
-        case "light": return .light
-        case "dark": return .dark
-        default: return nil
-        }
-    }
-
     private var storedChatPreferences: String {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: AppSettingsKeys.chatPreferences) != nil {
@@ -65,7 +63,11 @@ struct ContentView: View {
         rootContent
             // Apply selected language to entire UI
             .environment(\.locale, Locale(identifier: appLanguage))
-            .preferredColorScheme(preferredScheme)
+            .background {
+                AppAppearanceOverride(appearance: appAppearance)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
     }
 
     @ViewBuilder
@@ -119,15 +121,13 @@ struct ContentView: View {
                 isPresented: $showSettings,
                 hasChats: !conversations.isEmpty,
                 canDeleteAllExceptCurrent: conversations.count > 1,
-                onDeleteAll: { showDeleteAllAlert = true },
-                onDeleteAllExceptCurrent: { deleteAllExceptCurrent() },
-                onExportChats: { exportAllChats() },
-                onDismiss: { showSettings = false }
+                onDeleteAll: { queueSettingsAction(.deleteAll) },
+                onDeleteAllExceptCurrent: { queueSettingsAction(.deleteAllExceptCurrent) },
+                onExportChats: { queueSettingsAction(.export) },
+                onDismiss: performPendingSettingsAction
             )
-            .sheet(isPresented: $showExportSheet, onDismiss: cleanupExportFile) {
-                if let url = exportURL {
-                    ShareSheet(activityItems: [url])
-                }
+            .sheet(item: $chatExport, onDismiss: cleanupExportFile) { export in
+                ShareSheet(activityItems: [export.url])
             }
     }
 
@@ -979,6 +979,24 @@ struct ContentView: View {
         }
     }
 
+    // Wait for the cover to dismiss before exporting or showing action errors.
+    // Deletion has already been confirmed inside Settings.
+    private func queueSettingsAction(_ action: SettingsDataAction) {
+        pendingSettingsAction = action
+        showSettings = false
+    }
+
+    private func performPendingSettingsAction() {
+        let action = pendingSettingsAction
+        pendingSettingsAction = nil
+        switch action {
+        case .deleteAll: deleteAllChats()
+        case .deleteAllExceptCurrent: deleteAllExceptCurrent()
+        case .export: exportAllChats()
+        case nil: break
+        }
+    }
+
     private func deleteAllChats() {
         Task {
             await deleteAllChatsAfterStoppingGeneration()
@@ -1066,7 +1084,7 @@ struct ContentView: View {
         guard !conversations.isEmpty else { return }
         cleanupExportFile()
         
-        // Create export content as JSON
+        // Create a readable text export.
         let dateFormatter = DateFormatter()
         dateFormatter.dateStyle = .medium
         dateFormatter.timeStyle = .short
@@ -1109,7 +1127,7 @@ struct ContentView: View {
             let exportData = Data(exportText.utf8)
             try exportData.write(to: tempURL, options: [.atomic, .completeFileProtection])
             exportURL = tempURL
-            showExportSheet = true
+            chatExport = ChatExport(url: tempURL)
         } catch {
             errorMessage = String(localized: "Failed to export chats. Please try again.")
         }
@@ -1183,7 +1201,8 @@ struct ContentView: View {
     }
 }
 
-// A container that owns temporary copies for Settings, enabling Cancel (discard) and Save (commit).
+// Owns the live settings snapshot. Each binding edit persists only changed fields;
+// dedicated editors keep API keys and response preferences local until Save.
 private struct SettingsSheetContainer: View {
     let hasChats: Bool
     let canDeleteAllExceptCurrent: Bool
@@ -1214,7 +1233,13 @@ private struct SettingsSheetContainer: View {
     var body: some View {
         NavigationStack {
             SettingsSheet(
-                settings: $draft,
+                settings: Binding(
+                    get: { draft },
+                    set: { updated in
+                        updated.persist(comparedTo: draft)
+                        draft = updated
+                    }
+                ),
                 hasChats: hasChats,
                 canDeleteAllExceptCurrent: canDeleteAllExceptCurrent,
                 onDeleteAll: onDeleteAll,
@@ -1222,31 +1247,16 @@ private struct SettingsSheetContainer: View {
                 onExportChats: onExportChats
             )
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(String(localized: "Cancel")) {
-                        onDismiss()
-                    }
-                    .fontWeight(.semibold)
-                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(String(localized: "Save")) {
-                        draft.persist()
+                    Button(String(localized: "Done")) {
                         onDismiss()
                     }
                     .fontWeight(.semibold)
+                    .accessibilityIdentifier("settings.done")
                 }
             }
         }
-        .preferredColorScheme(colorScheme(for: draft.appAppearance))
         .environment(\.locale, Locale(identifier: draft.appLanguage))
-    }
-
-    private func colorScheme(for appearance: String) -> ColorScheme? {
-        switch appearance {
-        case "light": return .light
-        case "dark": return .dark
-        default: return nil // system
-        }
     }
 }
 
@@ -1399,14 +1409,14 @@ private extension View {
         onExportChats: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) -> some View {
-        fullScreenCover(isPresented: isPresented) {
+        fullScreenCover(isPresented: isPresented, onDismiss: onDismiss) {
             SettingsSheetContainer(
                 hasChats: hasChats,
                 canDeleteAllExceptCurrent: canDeleteAllExceptCurrent,
                 onDeleteAll: onDeleteAll,
                 onDeleteAllExceptCurrent: onDeleteAllExceptCurrent,
                 onExportChats: onExportChats,
-                onDismiss: onDismiss
+                onDismiss: { isPresented.wrappedValue = false }
             )
         }
     }
