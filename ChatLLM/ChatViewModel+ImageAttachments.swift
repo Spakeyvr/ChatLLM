@@ -380,29 +380,4 @@ extension ChatViewModel {
         
         return attachment
     }
-    
-    /// Get attachments for a message
-    func getAttachments(for message: Message) -> [MessageAttachment] {
-        message.attachments
-    }
-    
-    /// Delete an attachment
-    func deleteAttachment(_ attachment: MessageAttachment) async {
-        let canonicalURL = attachment.actualFileURL
-
-        if let message = attachment.message {
-            message.attachments.removeAll { $0.id == attachment.id }
-        }
-        
-        context.delete(attachment)
-        conversation.lastUpdated = Date()
-        immediateSave()
-        do {
-            try await ImageStore.shared.delete(url: canonicalURL)
-        } catch {
-            logger.error("Failed to delete attachment file: \((error as NSError).localizedDescription, privacy: .public)")
-        }
-        await ImageStore.shared.deleteInferenceVariant(for: canonicalURL)
-        invalidateMLXConversationSession(reason: "attachment_deleted")
-    }
 }

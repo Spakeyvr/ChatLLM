@@ -14,11 +14,6 @@ import SafariServices
 enum Strings {
     static let thinking = String(localized: "Thinking…")
     static let loading = String(localized: "Loading…")
-    static let reasoning = String(localized: "Reasoning")
-    static let alwaysUseReasoning = String(localized: "Always Use Reasoning")
-    static let smartReasoningMode = String(localized: "Smart Reasoning Mode")
-    static let reasoningModeEnabled = String(localized: "Reasoning mode enabled")
-    static let smartReasoningModeEnabled = String(localized: "Smart reasoning mode enabled")
 }
 
 // MARK: - Shared error callout

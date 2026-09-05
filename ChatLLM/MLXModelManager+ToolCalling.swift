@@ -57,53 +57,6 @@ extension MLXModelManager {
         prefersUserWrappedToolResponses(for: model)
     }
 
-    nonisolated internal static func normalizedToolArguments(
-        _ arguments: [String: any Sendable]
-    ) -> [String: any Sendable] {
-        arguments.reduce(into: [String: any Sendable]()) { partialResult, entry in
-            partialResult[entry.key] = normalizedToolArgumentValue(entry.value)
-        }
-    }
-
-    nonisolated private static func normalizedToolArgumentValue(_ value: any Sendable) -> any Sendable {
-        switch value {
-        case let jsonValue as JSONValue:
-            return normalized(jsonValue)
-        case let string as String:
-            return string
-        case let bool as Bool:
-            return bool
-        case let int as Int:
-            return int
-        case let double as Double:
-            return double
-        case let array as [JSONValue]:
-            return array.map { normalized($0) }
-        case let object as [String: JSONValue]:
-            return object.mapValues { normalized($0) }
-        default:
-            return String(describing: value)
-        }
-    }
-
-    nonisolated private static func normalized(_ value: JSONValue) -> any Sendable {
-        switch value {
-        case .null:
-            return "null"
-        case .bool(let bool):
-            return bool
-        case .int(let int):
-            return int
-        case .double(let double):
-            return double
-        case .string(let string):
-            return string
-        case .array(let array):
-            return array.map { normalized($0) }
-        case .object(let object):
-            return object.mapValues { normalized($0) }
-        }
-    }
     func applyPreferredToolCallFormatIfNeeded(
         to loaded: ModelContainer,
         for model: MLXModelInfo

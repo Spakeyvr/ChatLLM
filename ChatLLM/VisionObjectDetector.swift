@@ -166,17 +166,6 @@ final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
         // Vision Framework is always available - no external model needed
         true
     }
-    
-    @MainActor
-    var statusMessage: String {
-        if let error = lastError {
-            return error
-        } else if isProcessing {
-            return "Analyzing image..."
-        } else {
-            return "Vision Framework ready"
-        }
-    }
 }
 
 // MARK: - Error Types

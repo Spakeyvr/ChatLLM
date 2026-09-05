@@ -553,20 +553,6 @@ enum ReasoningTextSanitizer {
 
 // Note: SwiftData's @Model macro automatically provides Sendable conformance
 
-// MARK: - Extensions
-
-extension Message {
-    /// Debug description for reasoning state
-    var reasoningDebugDescription: String {
-        var parts: [String] = []
-        parts.append("isReasoningMode: \(isReasoningMode)")
-        parts.append("hasReasoning: \(reasoning != nil && !reasoning!.isEmpty)")
-        parts.append("hasFinalAnswer: \(finalAnswer != nil && !finalAnswer!.isEmpty)")
-        parts.append("text.count: \(text.count)")
-        return "[\(parts.joined(separator: ", "))]"
-    }
-}
-
 // MARK: - Collection helpers for Message
 
 extension Array where Element == Message {

@@ -126,24 +126,6 @@ final class MessageAttachment {
         return getAnalysisResult()?.objects
     }
     
-    /// Format detection results as a human-readable summary
-    private func formatDetectionSummary(_ detections: [DetectedObject]) -> String {
-        // This is now just a fallback, as storeAnalysisResult sets detectionSummary
-        guard !detections.isEmpty else {
-            return "No objects detected"
-        }
-        
-        if detections.count == 1 {
-            return "Detected: \(detections[0].description)"
-        } else if detections.count <= 3 {
-            let descriptions = detections.map { $0.label }.joined(separator: ", ")
-            return "Detected: \(descriptions)"
-        } else {
-            let topThree = detections.prefix(3).map { $0.label }.joined(separator: ", ")
-            return "Detected: \(topThree), and \(detections.count - 3) more"
-        }
-    }
-    
     /// Load the image from disk
     func loadImage() async -> UIImage? {
         guard type == .image else { return nil }
@@ -159,25 +141,4 @@ final class MessageAttachment {
         print("   File exists: \(FileManager.default.fileExists(atPath: imageURL.path))")
         return nil
     }
-    
-    /// Get detailed detection information for display
-    @MainActor
-    var detectionInfo: String? {
-        guard detectionProcessed else { return nil }
-        
-        // --- UPDATED to use new summary ---
-        if let summary = self.detectionSummary, !summary.isEmpty {
-            return summary
-        }
-        
-        // Fallback
-        if let detections = getDetectionResults(), !detections.isEmpty {
-            return formatDetectionSummary(detections)
-        } else {
-            return "No objects detected"
-        }
-    }
 }
-
-// Provide a compatibility alias in case any code refers to `Attachment`
-typealias Attachment = MessageAttachment

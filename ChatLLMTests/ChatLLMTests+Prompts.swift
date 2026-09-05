@@ -51,29 +51,6 @@ extension ChatLLMTests {
         #expect(merged.first(where: { $0.id == newID })?.anchorStepNumber == 3)
     }
 
-    @Test func settingSearchInvocationsMirrorsLegacyQueryAndClearingClearsBoth() {
-        let conversation = Conversation(title: "Test")
-        let message = ChatLLM.Message(
-            role: .assistant,
-            text: "Answer",
-            order: 1,
-            conversation: conversation
-        )
-
-        message.searchInvocations = [
-            SearchInvocation(
-                query: "latest swift release",
-                results: "Swift 6.2 Released"
-            )
-        ]
-        #expect(message.searchQuery == "latest swift release")
-
-        message.searchInvocations = nil
-
-        #expect(message.searchInvocations == nil)
-        #expect(message.searchQuery == nil)
-    }
-
     @Test func assistantPlaceholderTracksForcedWebSearchSeparatelyFromSearchHistory() throws {
         let viewModel = try makeViewModel()
 

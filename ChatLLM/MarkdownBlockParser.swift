@@ -51,8 +51,6 @@ nonisolated struct MarkdownTable: Equatable, Sendable {
     var headers: [String]
     var alignments: [ColumnAlignment]
     var rows: [[String]]
-
-    var columnCount: Int { headers.count }
 }
 
 // MARK: - Parser

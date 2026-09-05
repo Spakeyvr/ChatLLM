@@ -24,17 +24,7 @@ struct LLMRequest: Sendable, Equatable {
 
 protocol LLMGenerator {
     func isAvailable() -> Bool
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
-}
-
-extension LLMGenerator {
-    func respond(to prompt: String) async throws -> String {
-        try await respond(to: LLMRequest(prompt: prompt), tools: [])
-    }
-    func streamResponse(to prompt: String) async throws -> AsyncThrowingStream<String, Error> {
-        try await streamResponse(to: LLMRequest(prompt: prompt), tools: [])
-    }
 }
 
 extension LLMRequest {
@@ -88,21 +78,6 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         }
         let transcript = Transcript(entries: Array(session.transcript) + history)
         return LanguageModelSession(tools: tools, transcript: transcript)
-    }
-
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
-        guard isAvailable() else {
-            throw NSError(domain: "OnDeviceLLMGenerator", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
-        }
-        let session = Self.makeSession(for: request, tools: tools)
-        do {
-            let response = try await session.respond(to: request.prompt)
-            return response.content
-        } catch {
-            if isSafetyModerationError(error) { throw makeSafetyBlockedError() }
-            throw error
-        }
     }
 
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {

@@ -62,74 +62,6 @@ struct InlineThinkingView: View {
     }
 }
 
-// MARK: - Individual Chain of Thought step view
-
-struct CoTStepView: View {
-    let step: ReasoningStep
-    let isLast: Bool
-
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Step indicator
-            VStack(spacing: 4) {
-                ZStack {
-                    Circle()
-                        .fill(.blue.opacity(0.15))
-                        .frame(width: 28, height: 28)
-
-                    Text("\(step.stepNumber)")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.blue)
-                }
-
-                if !isLast {
-                    Rectangle()
-                        .fill(.blue.opacity(0.2))
-                        .frame(width: 2)
-                        .frame(maxHeight: .infinity)
-                }
-            }
-            .frame(width: 28)
-
-            // Step content
-            VStack(alignment: .leading, spacing: 6) {
-                if let title = step.title, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: messageFontSize * 0.9))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
-                }
-
-                RichMarkdownView(
-                    text: step.content,
-                    fontSize: messageFontSize * 0.85,
-                    textTone: .secondary
-                )
-                .textSelection(.enabled)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
-            }
-            .padding(.vertical, 8)
-            .padding(.trailing, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.leading, 16)
-        .background {
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                .fill(.regularMaterial.opacity(0.5))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                .stroke(.blue.opacity(0.1), lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
-    }
-}
-
 // MARK: - Step-by-Step Reasoning Sheet
 
 struct StepByStepReasoningSheet: View {
@@ -281,71 +213,6 @@ struct RawReasoningChunkView: View {
     }
 }
 
-// MARK: - Individual step card for the sheet view
-
-struct StepCard: View {
-    let step: ReasoningStep
-    let isLast: Bool
-    let isFirst: Bool
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Left side indicator - overlay approach for perfect alignment
-            ZStack(alignment: .top) {
-                // The continuous connecting line
-                VStack(spacing: 0) {
-                    // Top segment (above dot center)
-                    if isFirst {
-                        Color.clear
-                            .frame(width: 1, height: 10)
-                    } else {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 1, height: 10)
-                    }
-
-                    // Bottom segment (below dot center)
-                    if isLast {
-                        Color.clear
-                            .frame(width: 1)
-                    } else {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 1)
-                    }
-                }
-
-                // The dot
-                Circle()
-                    .fill(Color.gray)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 6)
-            }
-            .frame(width: 8)
-
-            // Content
-            HStack(alignment: .top, spacing: 8) {
-                Text("\(step.stepNumber).")
-                    .font(.system(size: messageFontSize))
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary)
-                    .fixedSize()
-
-                VStack(alignment: .leading, spacing: 0) {
-                    RichMarkdownView(text: step.content, fontSize: messageFontSize)
-                        .textSelection(.enabled)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.bottom, isLast ? 0 : 20)
-        }
-    }
-}
-
 // MARK: - Search step card for reasoning flow (display only — parent owns the sheet)
 
 struct SearchStepCard: View {
@@ -441,22 +308,5 @@ struct SearchStepCard: View {
         .disabled(invocation.displaySources.isEmpty)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .contentShape(Rectangle())
-    }
-}
-
-// MARK: - Container for a list of search cards (sheet ownership delegated to caller)
-
-struct SearchInvocationsList: View {
-    let invocations: [SearchInvocation]
-    let onSelect: (SearchInvocation) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(invocations) { invocation in
-                SearchStepCard(invocation: invocation) {
-                    onSelect(invocation)
-                }
-            }
-        }
     }
 }

@@ -181,30 +181,3 @@ struct NavigationTitleView: View {
         }
     }
 }
-
-// MARK: - Toolbar buttons component
-
-struct ToolbarButtonsView: View {
-    let isReasoningEnabled: Bool
-    let isSmartReasoningEnabled: Bool
-    let reasoningAvailable: Bool
-    let onReasoningTap: () -> Void
-
-    var body: some View {
-        Button(action: onReasoningTap) {
-            if reasoningAvailable && isReasoningEnabled {
-                Image(systemName: "brain.head.profile")
-                    .foregroundStyle(.blue)
-            } else if reasoningAvailable && isSmartReasoningEnabled {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.purple)
-            } else {
-                Image(systemName: "brain.head.profile")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .disabled(!reasoningAvailable)
-        .accessibilityLabel(String(localized: "Reasoning Mode"))
-        .accessibilityHint(String(localized: "Configure reasoning settings"))
-    }
-}

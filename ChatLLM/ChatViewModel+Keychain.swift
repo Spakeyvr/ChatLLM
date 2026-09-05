@@ -28,10 +28,4 @@ extension ChatViewModel {
             tavilyKeyMissing = true
         }
     }
-
-    /// Save API key to the shared Keychain-backed store, then reinitialize the service.
-    func saveTavilyAPIKey(_ key: String) {
-        TavilyAPIKeyStore.save(key)
-        loadTavilyAPIKey()
-    }
 }

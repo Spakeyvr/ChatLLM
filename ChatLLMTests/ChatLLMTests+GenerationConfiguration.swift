@@ -173,11 +173,4 @@ extension ChatLLMTests {
 
         #expect(cost == 52)
     }
-
-    @Test func mlxSessionReusePolicyAllowsKeyedSessionReuseAcrossModes() {
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: true, hasTools: false, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: true, hasMedia: false))
-        #expect(MLXModelManager.shouldPersistSessionAcrossTurns(enableThinking: false, hasTools: false, hasMedia: true))
-    }
 }

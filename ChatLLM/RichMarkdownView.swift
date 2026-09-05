@@ -42,9 +42,6 @@ import WebKit
 ///   .disabledMarkdownRules` in sync with `MarkdownInlineRenderer
 ///   .sanitizedSource` if that policy ever changes.
 ///
-/// `LatexProcessor.swift` is unused legacy from before native rendering — math
-/// is rendered by KaTeX, not converted to Unicode.
-///
 /// If you add a rendered feature, decide explicitly whether it belongs in
 /// `MarkdownBlockParser` (native) or in the WebView document's JS, and keep the
 /// detector in sync so math stays the only trigger for the WebView.

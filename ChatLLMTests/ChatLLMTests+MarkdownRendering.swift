@@ -169,12 +169,6 @@ extension ChatLLMTests {
         #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.querySelectorAll('code')).map(e => e.textContent)") as? [String] == ["first_name", #"\(literal\)"#])
     }
 
-    @Test func nativeLatexProcessorPreservesDollarAmounts() {
-        let input = "The basic plan costs $5 per month and the pro plan costs $12 per month."
-
-        #expect(LatexProcessor.process(input) == input)
-    }
-
     // MARK: - Markdown routing
 
     @Test func mathDocumentStillBlocksRemoteResourceLoads() {

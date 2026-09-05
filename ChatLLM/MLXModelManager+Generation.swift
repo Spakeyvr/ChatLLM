@@ -58,16 +58,6 @@ extension MLXModelManager {
         return tokenCount
     }
 
-    nonisolated internal static func shouldPersistSessionAcrossTurns(
-        enableThinking: Bool,
-        hasTools: Bool,
-        hasMedia: Bool
-    ) -> Bool {
-        _ = enableThinking
-        _ = hasTools
-        _ = hasMedia
-        return true
-    }
     struct PromptTokenCountCacheKey: Hashable {
         let modelID: String
         let fingerprint: Int

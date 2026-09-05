@@ -212,7 +212,6 @@ struct SearchInvocation: Codable, Sendable, Identifiable {
     var errorDescription: String?
 
     var succeeded: Bool { status == .completed && errorDescription == nil }
-    var isSearching: Bool { status == .searching }
     var displaySources: [WebSearchSource] {
         if let sources = response?.sources, !sources.isEmpty { return sources }
         return WebSearchSource.parseLegacyResults(results)
@@ -346,15 +345,6 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     private var _invocations: [SearchInvocation] = []
     private var _searchLimitReached = false
     nonisolated(unsafe) private var _invocationObserver: (@Sendable () -> Void)?
-
-    // Backward-compat accessors (return last invocation)
-    var lastSearchQuery: String? {
-        lock.withLock { _invocations.last?.query }
-    }
-
-    var lastSearchResults: String? {
-        lock.withLock { _invocations.last?.results }
-    }
 
     var allInvocations: [SearchInvocation] {
         lock.withLock { _invocations }

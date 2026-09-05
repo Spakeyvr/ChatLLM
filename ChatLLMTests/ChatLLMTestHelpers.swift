@@ -142,10 +142,6 @@ func waitForCancellation(_ probe: CancellationProbe) async -> Bool {
 internal struct TestLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
 
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
-        ""
-    }
-
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
@@ -155,10 +151,6 @@ internal struct TestLLMGenerator: LLMGenerator {
 
 internal struct BlockingLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
-
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
-        ""
-    }
 
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -181,10 +173,6 @@ internal struct BlockingLLMGenerator: LLMGenerator {
 
 internal struct PartialReasoningLLMGenerator: LLMGenerator {
     func isAvailable() -> Bool { true }
-
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
-        "<thinking>\nAnalyze the request carefully.\n</thinking>"
-    }
 
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -241,7 +229,6 @@ internal final class MarkdownWebTestHarness {
 internal struct ControlledMarkdownGenerator: LLMGenerator {
     let stream: AsyncThrowingStream<String, Error>
     func isAvailable() -> Bool { true }
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String { "" }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> { stream }
 }
 
@@ -249,10 +236,6 @@ internal struct ControlledMarkdownGenerator: LLMGenerator {
 internal final class CapturingFoundationGenerator: LLMGenerator {
     var request: LLMRequest?
     func isAvailable() -> Bool { true }
-    func respond(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> String {
-        self.request = request
-        return "A plain answer."
-    }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         self.request = request
         return AsyncThrowingStream { continuation in

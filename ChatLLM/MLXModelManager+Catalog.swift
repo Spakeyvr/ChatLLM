@@ -241,23 +241,6 @@ extension MLXModelManager {
             logger.debug("Model '\(model.localDirName, privacy: .public)' was not installed; nothing to delete")
         }
     }
-    func printModelLocations() {
-        for model in availableModels {
-            if let url = modelDirectoryURL(for: model) {
-                logger.debug("Model file \(model.name, privacy: .public): \(url.path, privacy: .private) available=\(model.isAvailable, privacy: .public)")
-            } else {
-                logger.debug("Model file \(model.name, privacy: .public) not found; available=\(model.isAvailable, privacy: .public)")
-            }
-        }
-    }
-
-    func printModelInputOutputInfo() {
-        guard let current = currentModel else {
-            logger.notice("No MLX model loaded")
-            return
-        }
-        logger.notice("Current model: \(current.displayName, privacy: .public) context=\(current.contextLength, privacy: .public) reasoning=\(current.supportsReasoning, privacy: .public)")
-    }
     func packageMetadata(for info: MLXModelInfo) -> ModelPackageMetadata? {
         if let cached = packageMetadataCache[info.id] {
             return cached

@@ -41,22 +41,9 @@
 		3DAC545F2EAC24760054484A /* ChatLLMUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChatLLMUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E5FD88882F548912004FD5CC /* Exceptions for "ChatLLM" folder in "ChatLLM" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				CoreML.xcconfig,
-			);
-			target = 3DAC54452EAC24740054484A /* ChatLLM */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3DAC54482EAC24740054484A /* ChatLLM */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				E5FD88882F548912004FD5CC /* Exceptions for "ChatLLM" folder in "ChatLLM" target */,
-			);
 			path = ChatLLM;
 			sourceTree = "<group>";
 		};

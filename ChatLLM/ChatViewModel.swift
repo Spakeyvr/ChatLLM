@@ -8,7 +8,6 @@
 import Foundation
 import SwiftData
 import Combine
-@preconcurrency import Vision
 import UIKit
 import FoundationModels
 import Security  // For Keychain
@@ -558,53 +557,6 @@ final class ChatViewModel: ObservableObject {
 
         guard isGenerationActive(generationID) else { return }
         await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: trimmed)
-    }
-
-    // MARK: - OCR
-
-    func extractOCR(from image: UIImage) async -> String {
-        let logger = self.logger
-        return await withTaskCancellationHandler {
-            await Task.detached(priority: .userInitiated) { () -> String in
-                guard let cg = image.cgImage else {
-                    logger.error("Failed to get CGImage from UIImage")
-                    return ""
-                }
-
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-
-                request.automaticallyDetectsLanguage = true
-                if #available(iOS 16.0, *) {
-                    request.revision = VNRecognizeTextRequestRevision3
-                }
-
-                let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-                do {
-                    try handler.perform([request])
-                    guard let results = request.results, !results.isEmpty else {
-                        logger.debug("No text recognition results found")
-                        return ""
-                    }
-
-                    let texts: [String] = results.compactMap { observation in
-                        guard let topCandidate = observation.topCandidates(1).first,
-                              topCandidate.confidence > 0.1 else { return nil }
-                        return topCandidate.string
-                    }
-
-                    let extractedText = texts.joined(separator: "\n")
-                    logger.debug("OCR extracted \(texts.count, privacy: .public) text segments")
-                    return extractedText
-                } catch {
-                    logger.error("OCR processing failed: \((error as NSError).localizedDescription, privacy: .public)")
-                    return ""
-                }
-            }.value
-        } onCancel: {
-            logger.debug("OCR task was cancelled")
-        }
     }
 
     // MARK: - Internals

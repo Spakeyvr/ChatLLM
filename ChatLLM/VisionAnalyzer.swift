@@ -72,11 +72,6 @@ nonisolated struct DetectedFace: Codable, Sendable {
         self.landmarks = landmarks
         self.quality = quality
     }
-    
-    var qualityPercentage: String {
-        guard let q = quality else { return "N/A" }
-        return String(format: "%.0f%%", q * 100)
-    }
 }
 
 nonisolated struct FaceLandmarks: Codable, Sendable {
@@ -96,10 +91,6 @@ nonisolated struct BodyPose: Codable, Sendable {
         self.id = id
         self.confidence = confidence
         self.joints = joints
-    }
-    
-    var jointNames: [String] {
-        Array(joints.keys).sorted()
     }
 }
 
@@ -416,32 +407,6 @@ nonisolated struct AnalysisOptions: Sendable {
     
     // Presets
     static var all: AnalysisOptions { AnalysisOptions() }
-    static var objectsOnly: AnalysisOptions {
-        AnalysisOptions(
-            detectObjects: true,
-            recognizeText: false,
-            detectFaces: false,
-            detectBodyPose: false,
-            detectBarcodes: false,
-            detectHands: false,
-            assessQuality: false,
-            classifyScene: false, // --- NEW
-            getSaliency: false    // --- NEW
-        )
-    }
-    static var textOnly: AnalysisOptions {
-        AnalysisOptions(
-            detectObjects: false,
-            recognizeText: true,
-            detectFaces: false,
-            detectBodyPose: false,
-            detectBarcodes: false,
-            detectHands: false,
-            assessQuality: false,
-            classifyScene: false, // --- NEW
-            getSaliency: false    // --- NEW
-        )
-    }
     static var objectsAndText: AnalysisOptions {
         AnalysisOptions(
             detectObjects: true,
@@ -918,31 +883,6 @@ final class VisionAnalyzer: ObservableObject {
                 continuation.resume(returning: nil)
             }
         }
-    }
-    
-    // MARK: - Convenience Methods
-    
-    /// Quick text recognition only
-    func recognizeTextOnly(in image: UIImage) async throws -> String {
-        let result = try await analyze(image: image, options: .textOnly)
-        return result.fullText
-    }
-    
-    /// Get user-friendly status message
-    @MainActor
-    var statusMessage: String {
-        if let error = lastError {
-            return error
-        } else if isProcessing {
-            return "Analyzing image..."
-        } else {
-            return "Ready to analyze"
-        }
-    }
-    
-    /// Check if Vision Framework is ready
-    var isReady: Bool {
-        objectDetector.isModelLoaded
     }
 }
 

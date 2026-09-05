@@ -312,17 +312,6 @@ class ModelBackendBridge: ObservableObject {
         }
         return manager.toolCallIssue(for: model)
     }
-
-    func shouldEnableThinking(
-        reasoningMode: Bool,
-        smartReasoningMode: Bool,
-        messageReasoningMode: Bool
-    ) -> Bool {
-        guard reasoningAvailable else { return false }
-        if reasoningMode { return true }
-        if smartReasoningMode && messageReasoningMode { return true }
-        return false
-    }
 }
 
 // MARK: - UserDefaults Extension
@@ -413,16 +402,3 @@ extension UserDefaults {
         set { set(newValue, forKey: "disableToolCalls") }
     }
 }
-
-// MARK: - Preview Support
-
-#if DEBUG
-extension ModelBackendBridge {
-    static var preview: ModelBackendBridge {
-        let bridge = ModelBackendBridge()
-        bridge.selectedBackend = .mlx
-        bridge.selectedModelID = "qwen3.5-4b-4bit-hybrid"
-        return bridge
-    }
-}
-#endif

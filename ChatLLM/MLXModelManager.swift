@@ -53,7 +53,6 @@ final class MLXModelManager: ObservableObject {
     @Published var downloadErrorModelID: String?
     @Published var latestPerformanceSample: MLXPerformanceSample?
 
-    var supportsNativeThinking: Bool { true }
 
     // MARK: - State
     //
