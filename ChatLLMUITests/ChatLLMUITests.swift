@@ -293,6 +293,24 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsSwipeDismissKeepsChanges() throws {
+        let app = launchApp()
+        openSettings(in: app)
+        app.buttons["settings.chat"].tap()
+        let sendOnReturn = app.switches["settings.sendOnReturn"]
+        let original = sendOnReturn.value as? String
+        toggle(sendOnReturn)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let navigationBar = app.navigationBars["Settings"]
+        navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
+        openSettings(in: app)
+        app.buttons["settings.chat"].tap()
+        XCTAssertNotEqual(app.switches["settings.sendOnReturn"].value as? String, original)
+    }
+
+    @MainActor
     func testSettingsAppearanceAndDetailNavigation() throws {
         let app = launchApp()
         openSettings(in: app)
@@ -300,8 +318,7 @@ final class ChatLLMUITests: XCTestCase {
         let oppositeAppearance = systemBrightness > 128 ? "Dark" : "Light"
         captureSettingsScreenshot("settings-light", in: app)
         app.buttons["settings.appearance"].tap()
-        app.buttons["settings.colorScheme"].tap()
-        app.buttons[oppositeAppearance].tap()
+        app.segmentedControls["settings.colorScheme"].buttons[oppositeAppearance].tap()
         captureSettingsScreenshot("appearance-dark", in: app)
         app.sliders["settings.messageTextSize"].adjust(toNormalizedSliderPosition: 1)
         XCTAssertEqual(app.sliders["settings.messageTextSize"].value as? String, "22 points")
@@ -311,8 +328,7 @@ final class ChatLLMUITests: XCTestCase {
         captureSettingsScreenshot("settings-dark", in: app)
 
         app.buttons["settings.appearance"].tap()
-        app.buttons["settings.colorScheme"].tap()
-        app.buttons["System"].tap()
+        app.segmentedControls["settings.colorScheme"].buttons["System"].tap()
         app.buttons["Reset Text Size"].tap()
         XCTAssertEqual(app.sliders["settings.messageTextSize"].value as? String, "16 points")
         captureSettingsScreenshot("appearance-light", in: app)

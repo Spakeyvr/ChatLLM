@@ -11,15 +11,25 @@ struct AppearanceSettingsView: View {
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }
+                .pickerStyle(.segmented)
                 .accessibilityIdentifier("settings.colorScheme")
+            } header: {
+                Text("Color Scheme")
             } footer: {
                 Text("System follows your device’s appearance.")
             }
             Section("Message Preview") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("How can I make my day a little simpler?")
-                        .foregroundStyle(.secondary)
+                        .padding(12)
+                        .background(Color.accentColor.opacity(0.12), in: .rect(cornerRadius: 16))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.leading, 24)
                     Text("Start with one thing that matters. Break it into small steps, and take them one at a time.")
+                        .padding(12)
+                        .background(Color(uiColor: .tertiarySystemGroupedBackground), in: .rect(cornerRadius: 16))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, 24)
                 }
                 .font(.system(size: settings.messageFontSize))
                 .padding(.vertical, 8)

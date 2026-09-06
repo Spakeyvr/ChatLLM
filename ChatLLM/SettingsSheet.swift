@@ -127,7 +127,6 @@ struct SettingsRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
 }

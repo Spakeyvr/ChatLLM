@@ -6,17 +6,11 @@ struct ChatSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
+            Section("Interaction") {
                 Toggle("Send on Return", isOn: $settings.sendOnReturn)
                     .accessibilityIdentifier("settings.sendOnReturn")
-            } footer: {
-                Text("Use the Return key to send a message instead of adding a new line.")
-            }
-            Section {
                 Toggle("Haptic Feedback", isOn: $settings.enableHaptics)
                     .accessibilityIdentifier("settings.haptics")
-            } footer: {
-                Text("Play subtle vibrations for actions on supported devices.")
             }
             Section {
                 Toggle("Reasoning by Default", isOn: $settings.reasoningModeDefault)
@@ -24,21 +18,14 @@ struct ChatSettingsView: View {
                 Button {
                     showingPreferencesEditor = true
                 } label: {
-                    HStack {
-                        LabeledContent {
-                            Text(settings.chatPreferences.isEmpty
-                                 ? String(localized: "Not Set") : String(localized: "Custom"))
-                                .foregroundStyle(.secondary)
-                        } label: {
-                            Text("Response Preferences")
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                    LabeledContent {
+                        Text(settings.chatPreferences.isEmpty
+                             ? String(localized: "Not Set") : String(localized: "Custom"))
+                            .foregroundStyle(.secondary)
+                    } label: {
+                        Text("Response Preferences")
                     }
-                    .foregroundStyle(.primary)
                 }
-                .buttonStyle(.plain)
                 .accessibilityIdentifier("settings.responsePreferences")
             } header: {
                 Text("New Chats")

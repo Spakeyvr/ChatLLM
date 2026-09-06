@@ -1181,11 +1181,10 @@ private struct SettingsSheetContainer: View {
                 onExportChats: onExportChats
             )
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Done")) {
                         onDismiss()
                     }
-                    .fontWeight(.semibold)
                     .accessibilityIdentifier("settings.done")
                 }
             }
@@ -1343,7 +1342,7 @@ private extension View {
         onExportChats: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) -> some View {
-        fullScreenCover(isPresented: isPresented, onDismiss: onDismiss) {
+        sheet(isPresented: isPresented, onDismiss: onDismiss) {
             SettingsSheetContainer(
                 hasChats: hasChats,
                 canDeleteAllExceptCurrent: canDeleteAllExceptCurrent,
@@ -1352,6 +1351,8 @@ private extension View {
                 onExportChats: onExportChats,
                 onDismiss: { isPresented.wrappedValue = false }
             )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 }
