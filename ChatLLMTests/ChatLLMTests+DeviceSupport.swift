@@ -17,11 +17,11 @@ import FoundationModels
 
 extension ChatLLMTests {
     @Test func qwen4BRequiresEightGigabytesOnIPhone() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(!profile.supportsModel(model))
@@ -29,11 +29,11 @@ extension ChatLLMTests {
     }
 
     @Test func qwen4BEnablesToolCallsAtEightGigabytesOnIPhone() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(model))
@@ -42,11 +42,11 @@ extension ChatLLMTests {
     }
 
     @Test func qwen2BAllowsSixGigabyteIPhonesButBlocksToolCalls() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
 
         #expect(profile.supportsModel(model))
@@ -55,11 +55,11 @@ extension ChatLLMTests {
     }
 
     @Test func qwen2BEnablesToolCallsAtEightGigabytesOnIPhone() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
 
         #expect(profile.supportsModel(model))
@@ -68,7 +68,7 @@ extension ChatLLMTests {
     }
 
     @Test func smolLM3ModelDefinitionMatchesDownloadMetadata() {
-        let manager = MLXModelManager()
+        let manager = makeModelManager()
         let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
 
         #expect(model.name == "SmolLM3")
@@ -84,22 +84,22 @@ extension ChatLLMTests {
     }
 
     @Test func smolLM3PhoneMemoryLimitsGateModelAndToolCalls() {
-        let fourGigabyteProfile = MLXDeviceSupportProfile(
+        let fourGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 4 * MLXDeviceSupportProfile.gibibyte
         )
-        let sixGigabyteProfile = MLXDeviceSupportProfile(
+        let sixGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let eightGigabyteProfile = MLXDeviceSupportProfile(
+        let eightGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
 
-        let fourGigabyteManager = MLXModelManager(deviceSupportProfile: fourGigabyteProfile)
-        let sixGigabyteManager = MLXModelManager(deviceSupportProfile: sixGigabyteProfile)
-        let eightGigabyteManager = MLXModelManager(deviceSupportProfile: eightGigabyteProfile)
+        let fourGigabyteManager = makeModelManager(deviceSupportProfile: fourGigabyteProfile)
+        let sixGigabyteManager = makeModelManager(deviceSupportProfile: sixGigabyteProfile)
+        let eightGigabyteManager = makeModelManager(deviceSupportProfile: eightGigabyteProfile)
         let fourGigabyteModel = try! #require(fourGigabyteManager.model(withID: "smollm3-3b-4bit"))
         let sixGigabyteModel = try! #require(sixGigabyteManager.model(withID: "smollm3-3b-4bit"))
         let eightGigabyteModel = try! #require(eightGigabyteManager.model(withID: "smollm3-3b-4bit"))
@@ -116,11 +116,11 @@ extension ChatLLMTests {
 
     @Test func qwenEightGigabyteTierTreatsSlightlyUnderreportedPhoneAsEightGigabytes() {
         let marketedEightGigabytesButReportedBelowEightGiB: UInt64 = 7_950_000_000
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: marketedEightGigabytesButReportedBelowEightGiB
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let twoBModel = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
         let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
@@ -132,7 +132,7 @@ extension ChatLLMTests {
 
     @Test func twelveGigabyteTierDisablesLowMemoryKVFallbackAfterNormalization() {
         let marketedTwelveGigabytesButReportedBelowTwelveGiB: UInt64 = 11_900_000_000
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: marketedTwelveGigabytesButReportedBelowTwelveGiB
         )
@@ -141,7 +141,7 @@ extension ChatLLMTests {
     }
 
     @Test func eightGigabyteTierStillUsesLowMemoryKVFallback() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
@@ -150,15 +150,15 @@ extension ChatLLMTests {
     }
 
     @Test func contextWindowMaximumTracksSixEightAndTwelveGigabyteTiers() {
-        let sixGigabyteProfile = MLXDeviceSupportProfile(
+        let sixGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let eightGigabyteProfile = MLXDeviceSupportProfile(
+        let eightGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
-        let twelveGigabyteProfile = MLXDeviceSupportProfile(
+        let twelveGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 12 * MLXDeviceSupportProfile.gibibyte
         )
@@ -169,7 +169,7 @@ extension ChatLLMTests {
     }
 
     @Test func userDefaultsContextWindowClampsToFiveHundredTwelveTokenMinimum() {
-        let defaults = UserDefaults.standard
+        let defaults = testEnvironment.defaults
         let key = "mlxContextWindowTokens"
         let hadExistingValue = defaults.object(forKey: key) != nil
         let previousValue = defaults.integer(forKey: key)
@@ -189,11 +189,11 @@ extension ChatLLMTests {
     }
 
     @Test func qwenIPhoneMemoryLimitsDoNotApplyToNonPhoneDevices() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: false,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let fourBModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         #expect(profile.supportsModel(fourBModel))
@@ -203,11 +203,11 @@ extension ChatLLMTests {
 
     #if targetEnvironment(simulator)
     @Test func qwenModelsAreEligibleForDownloadOnIPhoneSimulator() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 16 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let qwenModels = manager.availableModels.filter { $0.id.hasPrefix("qwen") }
 
         #expect(qwenModels.count == 3)
@@ -225,22 +225,22 @@ extension ChatLLMTests {
     }
 
     @Test func phoneContextOverridesDoNotClampNonPhoneDevices() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: false,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let compactModel = try! #require(manager.model(withID: "qwen3.5-0.8b-4bit"))
 
         #expect(profile.maxContextWindowTokens(for: compactModel) == 2_048)
     }
 
     @Test func modelManagerRejectsIncompatibleProgrammaticDownloads() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 6 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         manager.startDownload(for: model)
@@ -251,11 +251,11 @@ extension ChatLLMTests {
     }
 
     @Test func modelManagerReportsUndownloadedModelLoadError() {
-        let profile = MLXDeviceSupportProfile(
+        let profile = makeDeviceProfile(
             isPhone: false,
             physicalMemoryBytes: 8 * MLXDeviceSupportProfile.gibibyte
         )
-        let manager = MLXModelManager(deviceSupportProfile: profile)
+        let manager = makeModelManager(deviceSupportProfile: profile)
         let model = MLXModelManager.MLXModelInfo(
             id: "undownloaded-test-model",
             name: "Undownloaded Test",

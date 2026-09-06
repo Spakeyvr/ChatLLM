@@ -23,7 +23,7 @@ extension ChatViewModel {
 
     /// Determines if reasoning mode should be used based on prompt complexity
     internal func shouldUseReasoningForPrompt(_ userText: String) async throws -> Bool {
-        let backendBridge = ModelBackendBridge.shared
+        let backendBridge = self.backendBridge
         guard backendBridge.reasoningAvailable else { return false }
 
         if conversation.reasoningMode { return true }
@@ -330,7 +330,7 @@ extension ChatViewModel {
             // MLX reasoning path: the <think> opening tag is baked into the prompt prefix,
             // so the streamed output starts with raw thinking content and ends with </think>.
             // Before </think> arrives all content is in-progress reasoning with no tags at all.
-            let isMLX = ModelBackendBridge.shared.selectedBackend == .mlx
+            let isMLX = backendBridge.selectedBackend == .mlx
             if isMLX {
                 let hasClose = visiblePortion.contains("</think>") || visiblePortion.contains("</thinking>")
                 if !hasClose {

@@ -82,7 +82,8 @@ final class MLXModelManager: ObservableObject {
     let inferenceWorker: MLXInferenceWorker
     var simulatedDownloadedModelIDs: Set<String> = []
 
-    let documentsDirectory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+    let documentsDirectory: URL
+    let defaults: UserDefaults
 
     struct ModelInstallationStatus {
         let isInstalled: Bool
@@ -98,7 +99,16 @@ final class MLXModelManager: ObservableObject {
 
     // MARK: - Init
 
-    init(deviceSupportProfile: MLXDeviceSupportProfile? = nil) {
+    init(
+        deviceSupportProfile: MLXDeviceSupportProfile? = nil,
+        defaults: UserDefaults = .standard,
+        documentsDirectory: URL? = nil,
+        restoresBackgroundDownloads: Bool = true
+    ) {
+        self.defaults = defaults
+        self.documentsDirectory = documentsDirectory ?? FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
         MLXRuntimeConfiguration.configureForCurrentProcess()
         self.deviceSupportProfile = deviceSupportProfile ?? MLXDeviceSupportProfile.current
         self.inferenceWorker = MLXInferenceWorker(
@@ -151,9 +161,9 @@ final class MLXModelManager: ObservableObject {
             for: UserDefaults.didChangeNotification
         )
         .map { _ in
-            UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
+            defaults.bool(forKey: AppSettingsKeys.disableRAMPrecautions)
         }
-        .prepend(UserDefaults.standard.bool(forKey: AppSettingsKeys.disableRAMPrecautions))
+        .prepend(defaults.bool(forKey: AppSettingsKeys.disableRAMPrecautions))
         .removeDuplicates()
         .dropFirst()
         .sink { [weak self] _ in
@@ -162,7 +172,7 @@ final class MLXModelManager: ObservableObject {
             }
         }
 
-        restoreBackgroundDownloadIfNeeded()
+        if restoresBackgroundDownloads { restoreBackgroundDownloadIfNeeded() }
     }
 
     deinit {

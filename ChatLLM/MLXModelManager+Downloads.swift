@@ -32,19 +32,19 @@ extension MLXModelManager {
 
     func restoreBackgroundDownloadIfNeeded() {
         guard !Self.isUITestFakeDownloadsEnabled,
-              let modelID = UserDefaults.standard.string(
+              let modelID = defaults.string(
                 forKey: Self.activeBackgroundDownloadModelIDKey
               ) else {
             return
         }
 
         guard let model = model(withID: modelID) else {
-            UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
+            defaults.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
             return
         }
 
         guard !model.isAvailable else {
-            UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
+            defaults.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
             return
         }
 
@@ -70,7 +70,7 @@ extension MLXModelManager {
             return
         }
 
-        UserDefaults.standard.set(model.id, forKey: Self.activeBackgroundDownloadModelIDKey)
+        defaults.set(model.id, forKey: Self.activeBackgroundDownloadModelIDKey)
 
         let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
         let targetDir = modelsDir.appendingPathComponent(model.localDirName, isDirectory: true)
@@ -101,7 +101,7 @@ extension MLXModelManager {
                     self.isDownloading = false
                     self.activeDownloadModelID = nil
                     self.downloadErrorModelID = nil
-                    UserDefaults.standard.removeObject(
+                    self.defaults.removeObject(
                         forKey: Self.activeBackgroundDownloadModelIDKey
                     )
                     self.refreshModelAvailability()
@@ -118,7 +118,7 @@ extension MLXModelManager {
                     self.downloadProgress = 0
                     self.downloadError = nil
                     self.downloadErrorModelID = nil
-                    UserDefaults.standard.removeObject(
+                    self.defaults.removeObject(
                         forKey: Self.activeBackgroundDownloadModelIDKey
                     )
                 }
@@ -132,7 +132,7 @@ extension MLXModelManager {
                     self.activeDownloadModelID = nil
                     self.downloadError = error.localizedDescription
                     self.downloadErrorModelID = model.id
-                    UserDefaults.standard.removeObject(
+                    self.defaults.removeObject(
                         forKey: Self.activeBackgroundDownloadModelIDKey
                     )
                 }
@@ -150,7 +150,7 @@ extension MLXModelManager {
         downloadProgress = 0
         downloadError = nil
         downloadErrorModelID = nil
-        UserDefaults.standard.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
+        defaults.removeObject(forKey: Self.activeBackgroundDownloadModelIDKey)
         if let model {
             let modelsDir = documentsDirectory.appendingPathComponent("Models", isDirectory: true)
             BackgroundModelDownloadSession.shared.cancelTransfers(

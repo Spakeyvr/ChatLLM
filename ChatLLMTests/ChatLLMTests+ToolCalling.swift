@@ -111,7 +111,7 @@ extension ChatLLMTests {
     }
 
     @Test func qwenToolResponsesReuseWrappedUserPromptCompatibilityPath() {
-        let manager = MLXModelManager()
+        let manager = makeModelManager()
         let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
 
         let content = MLXModelManager.toolResponsePromptContent(
@@ -125,7 +125,7 @@ extension ChatLLMTests {
     }
 
     @Test func qwenToolResponsesRequireExplicitMessageHistoryAcrossToolLoop() {
-        let manager = MLXModelManager()
+        let manager = makeModelManager()
         let model = try! #require(manager.model(withID: "qwen3.5-2b-4bit"))
 
         #expect(MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
@@ -159,7 +159,7 @@ extension ChatLLMTests {
     }
 
     @Test func smolLM3ToolResponsesUseNativeToolRole() {
-        let manager = MLXModelManager()
+        let manager = makeModelManager()
         let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
 
         let content = MLXModelManager.toolResponsePromptContent(

@@ -49,11 +49,12 @@ extension MLXModelManager {
 
     nonisolated static func persistedPrefillStepSize(
         for modelID: String,
-        deviceSupportProfile: MLXDeviceSupportProfile
+        deviceSupportProfile: MLXDeviceSupportProfile,
+        defaults: UserDefaults = .standard
     ) -> Int? {
         let key = prefillTuningUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
-        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
-        let storedValue = UserDefaults.standard.integer(forKey: key)
+        guard defaults.object(forKey: key) != nil else { return nil }
+        let storedValue = defaults.integer(forKey: key)
         guard [256, 512, 1024].contains(storedValue) else { return nil }
         return storedValue
     }
@@ -61,10 +62,11 @@ extension MLXModelManager {
     nonisolated private static func storePersistedPrefillStepSize(
         _ prefillStepSize: Int,
         for modelID: String,
-        deviceSupportProfile: MLXDeviceSupportProfile
+        deviceSupportProfile: MLXDeviceSupportProfile,
+        defaults: UserDefaults = .standard
     ) {
         let key = prefillTuningUserDefaultsKey(for: modelID, deviceSupportProfile: deviceSupportProfile)
-        UserDefaults.standard.set(prefillStepSize, forKey: key)
+        defaults.set(prefillStepSize, forKey: key)
     }
 
     nonisolated static func recommendedWiredMemoryCapBytes(
@@ -194,13 +196,13 @@ extension MLXModelManager {
         model: MLXModelInfo? = nil
     ) -> GenerationConfiguration {
         Self.generationConfiguration(
-            isEnabled: UserDefaults.standard.mlxEnableRotorQuant,
+            isEnabled: defaults.mlxEnableRotorQuant,
             preferRotorQuant: shouldPreferRotorQuant,
             hasTools: false,
             hasMedia: false,
             memoryConstrained: false,
             prefersBoundedCache: prefersBoundedKVCacheAcrossTurns,
-            configuredMaxOutputTokens: UserDefaults.standard.mlxMaxOutputTokensLimit,
+            configuredMaxOutputTokens: defaults.mlxMaxOutputTokensLimit,
             configuredContextWindow: configuredContextWindowLimit(for: model)
         )
     }
@@ -245,7 +247,8 @@ extension MLXModelManager {
         let initialPrefillStepSize = await inferenceWorker.prefillStepSize(for: model.id)
         let persistedPrefill = Self.persistedPrefillStepSize(
             for: model.id,
-            deviceSupportProfile: deviceSupportProfile
+            deviceSupportProfile: deviceSupportProfile,
+            defaults: defaults
         )
         let defaultGenerationConfiguration = defaultGenerationConfigurationForCurrentDevice(model: model)
         let prefillCandidates = persistedPrefill.map { [$0] } ?? Array(Set([256, initialPrefillStepSize, 1024])).sorted()
@@ -329,7 +332,8 @@ extension MLXModelManager {
             Self.storePersistedPrefillStepSize(
                 selectedPrefill.candidate,
                 for: model.id,
-                deviceSupportProfile: self.deviceSupportProfile
+                deviceSupportProfile: self.deviceSupportProfile,
+                defaults: self.defaults
             )
             await self.inferenceWorker.updateLoadedModelTuning(
                 modelID: model.id,
@@ -352,7 +356,8 @@ extension MLXModelManager {
     private func tuningNeedsRetry(for model: MLXModelInfo) -> Bool {
         let persistedPrefill = Self.persistedPrefillStepSize(
             for: model.id,
-            deviceSupportProfile: deviceSupportProfile
+            deviceSupportProfile: deviceSupportProfile,
+            defaults: defaults
         )
         let needsPrefillTuning = persistedPrefill == nil
         return needsPrefillTuning

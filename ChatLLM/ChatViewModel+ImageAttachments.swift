@@ -14,7 +14,7 @@ import OSLog
 extension ChatViewModel {
 
     private var canUseNativeImageSupport: Bool {
-        let bridge = ModelBackendBridge.shared
+        let bridge = backendBridge
         guard bridge.selectedBackend == .mlx else { return false }
         guard let model = bridge.modelManager?.currentModel else { return false }
         return model.supportsNativeImages
@@ -39,32 +39,29 @@ extension ChatViewModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
         
-        // Ensure any previous stream is fully finished
-        guard await waitForStreamToFinish() else { return }
-        guard !isGenerating, !Task.isCancelled,
-              let generationID = beginGenerationLifecycle() else { return }
-        defer { endGenerationLifecycle(generationID) }
-
-        if canUseNativeImageSupport {
-            await sendWithNativeImage(
-                userPrompt: userPrompt,
-                image: image,
-                detections: detections,
-                analysisResult: analysisResult,
-                generationID: generationID,
-                regenerateTitle: regenerateTitle,
-                editedUserMessageID: editedUserMessageID
-            )
-        } else {
-            await sendWithVisionFallback(
-                userPrompt: userPrompt,
-                image: image,
-                detections: detections,
-                analysisResult: analysisResult,
-                generationID: generationID,
-                regenerateTitle: regenerateTitle,
-                editedUserMessageID: editedUserMessageID
-            )
+        guard !isRegenerating else { return }
+        await runGeneration { generationID in
+            if self.canUseNativeImageSupport {
+                await self.sendWithNativeImage(
+                    userPrompt: userPrompt,
+                    image: image,
+                    detections: detections,
+                    analysisResult: analysisResult,
+                    generationID: generationID,
+                    regenerateTitle: regenerateTitle,
+                    editedUserMessageID: editedUserMessageID
+                )
+            } else {
+                await self.sendWithVisionFallback(
+                    userPrompt: userPrompt,
+                    image: image,
+                    detections: detections,
+                    analysisResult: analysisResult,
+                    generationID: generationID,
+                    regenerateTitle: regenerateTitle,
+                    editedUserMessageID: editedUserMessageID
+                )
+            }
         }
     }
 
@@ -107,6 +104,7 @@ extension ChatViewModel {
             )
             return
         }
+        guard isGenerationActive(generationID) else { return }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
 
         guard isGenerationActive(generationID) else { return }
@@ -206,6 +204,7 @@ extension ChatViewModel {
                 to: userMsg
             )
         }
+        guard isGenerationActive(generationID) else { return }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
 
         guard isGenerationActive(generationID) else { return }

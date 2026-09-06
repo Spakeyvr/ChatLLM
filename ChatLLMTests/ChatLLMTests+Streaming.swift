@@ -39,9 +39,9 @@ extension ChatLLMTests {
     }
 
     @Test func streamingReasoningUpdateKeepsPostSearchReasoningOutOfAnswerBubble() throws {
-        let originalBackend = ModelBackendBridge.shared.selectedBackend
-        ModelBackendBridge.shared.selectedBackend = .mlx
-        defer { ModelBackendBridge.shared.selectedBackend = originalBackend }
+        let originalBackend = testEnvironment.bridge.selectedBackend
+        testEnvironment.bridge.selectedBackend = .mlx
+        defer { testEnvironment.bridge.selectedBackend = originalBackend }
 
         let viewModel = try makeViewModel()
         let conversation = viewModel.conversation
@@ -88,9 +88,9 @@ extension ChatLLMTests {
     }
 
     @Test func streamingReasoningUpdateShowsAnswerAfterPostSearchReasoningTurnsIntoAnswer() throws {
-        let originalBackend = ModelBackendBridge.shared.selectedBackend
-        ModelBackendBridge.shared.selectedBackend = .mlx
-        defer { ModelBackendBridge.shared.selectedBackend = originalBackend }
+        let originalBackend = testEnvironment.bridge.selectedBackend
+        testEnvironment.bridge.selectedBackend = .mlx
+        defer { testEnvironment.bridge.selectedBackend = originalBackend }
 
         let viewModel = try makeViewModel()
         let conversation = viewModel.conversation

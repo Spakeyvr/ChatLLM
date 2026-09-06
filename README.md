@@ -111,7 +111,18 @@ The repository includes:
 - unit tests in `ChatLLMTests`
 - UI tests in `ChatLLMUITests`
 
-Run them from Xcode with `Product > Test`.
+Run them from Xcode with `Product > Test`. For a faster unit-only check, add
+`-only-testing:ChatLLMTests` to the simulator `xcodebuild test` command.
+
+Unit tests construct chat view models through the fixture factories in
+`ChatLLMTests+Factories.swift`. Each test owns a backend bridge, a disposable
+preferences domain, and temporary model storage; fixture model managers do not
+restore background downloads, and fixture view models do not read the Keychain.
+Use these factories instead of production singletons when adding tests.
+
+Cancellation tests cover preparation, streaming, reasoning, pending web searches,
+regeneration, and switching chats. Math tests load the actual bundled WebView and
+verify environment rendering and local font loading.
 
 ## Notes for Contributors
 

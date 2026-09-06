@@ -47,7 +47,7 @@ extension ChatLLMTests {
         message.beginGenerationCapture(backend: "Test", modelName: nil, startedAt: startedAt)
         conversation.messages = [message]
 
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: TestLLMGenerator(),
             context: context,
             conversation: conversation

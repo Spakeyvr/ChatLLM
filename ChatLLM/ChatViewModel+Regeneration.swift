@@ -19,24 +19,19 @@ extension ChatViewModel {
 
     // MARK: - Scheduled Regeneration (Menu-Safe)
 
-    /// Schedule a regeneration that will execute even if the calling menu/task is cancelled.
-    /// Uses DispatchQueue to bypass Swift Concurrency's cancellation mechanism.
-    nonisolated func scheduleRegeneration(messageID: UUID, instruction: String?) {
-        // DispatchQueue scheduling is immune to Task cancellation from menu dismissal.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else {
-                return
-            }
-
-            // CRITICAL FIX (Bug 5): Capture self strongly; nil check already done above.
-            // Detached task has no parent and won't be cancelled by menu dismissal.
-            let viewModel = self
-            Task.detached { @MainActor in
-                if let instruction = instruction {
-                    await viewModel.regenerateReplacingAssistant(messageID: messageID, instruction: instruction)
-                } else {
-                    await viewModel.regenerateAfterAssistant(messageID: messageID)
-                }
+    /// A menu may disappear before this starts; the view model owns the delay
+    /// so stopping or leaving the chat still cancels the pending action.
+    func scheduleRegeneration(messageID: UUID, instruction: String?) {
+        guard isActive else { return }
+        scheduledRegenerationTask?.cancel()
+        scheduledRegenerationTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(300)) }
+            catch { return }
+            guard let self, self.isActive, !Task.isCancelled else { return }
+            if let instruction {
+                await self.regenerateReplacingAssistant(messageID: messageID, instruction: instruction)
+            } else {
+                await self.regenerateAfterAssistant(messageID: messageID)
             }
         }
     }
@@ -64,7 +59,8 @@ extension ChatViewModel {
             }
         }
 
-        guard await waitForStreamToFinish() else { return }
+        guard isActive, !Task.isCancelled, await waitForStreamToFinish(),
+              isActive, !Task.isCancelled else { return }
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             logger.warning("Regenerate failed: message not found")
@@ -115,7 +111,7 @@ extension ChatViewModel {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: precedingUserMessage, logContext: "regenerateAfterAssistant")
 
-        guard !Task.isCancelled else {
+        guard isActive, !Task.isCancelled else {
             logger.warning("Regenerate cancelled after reasoning evaluation")
             return
         }
@@ -147,7 +143,8 @@ extension ChatViewModel {
         isRegenerating = true
         defer { isRegenerating = false }
 
-        guard await waitForStreamToFinish() else { return }
+        guard isActive, !Task.isCancelled, await waitForStreamToFinish(),
+              isActive, !Task.isCancelled else { return }
 
         guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else {
             logger.warning("Regenerate with instruction failed: message not found")
@@ -174,7 +171,7 @@ extension ChatViewModel {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: trimmed, logContext: "regenerateReplacingAssistant")
 
-        guard !Task.isCancelled else {
+        guard isActive, !Task.isCancelled else {
             logger.warning("Regenerate with instruction cancelled after reasoning evaluation")
             return
         }
@@ -249,7 +246,8 @@ extension ChatViewModel {
     func deleteMessageAndMaybeTrim(_ message: Message) async {
         if isGenerating, let streamingID = streamingMessageID, streamingID == message.id {
             cancelGeneration()
-            guard await waitForStreamToFinish() else { return }
+            guard isActive, !Task.isCancelled, await waitForStreamToFinish(),
+              isActive, !Task.isCancelled else { return }
         }
 
         context.delete(message)

@@ -320,3 +320,42 @@ extension ChatLLMTests {
         #expect(MarkdownHeightCache.height(for: .init(text: "m0", fontSize: 16)) == nil)
     }
 }
+
+extension ChatLLMTests {
+    @Test func bareMathEnvironmentsRenderWhileCodeAndUnknownEnvironmentsStayLiteral() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update(#"""
+        \begin{align}
+        x_i &= 1 \\
+        y_i &= 2
+        \end{align}
+
+        \begin{equation*} E = mc^2 \end{equation*}
+
+        `\begin{align}literal\end{align}`
+
+        ```tex
+        \begin{equation}literal\end{equation}
+        ```
+        """#)
+        try await renderer.waitFor("document.querySelectorAll('.katex').length === 2")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('.katex-error').length") as? Int == 0)
+        #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.querySelectorAll('code')).every(e => e.textContent.includes('literal'))") as? Bool == true)
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(#"\begin{unknown}text\end{unknown}"#))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(#"\end{align}"#))
+    }
+
+    @Test func mathFontsLoadFromBundledDataWithoutRemoteRequests() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update(#"$$\mathbb{R} \quad \sum_{i=1}^{n} \frac{x_i}{\sqrt{2}}$$"#)
+        try await renderer.waitFor("document.querySelector('.katex') !== null && document.fonts.status === 'loaded'")
+        #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.fonts).some(f => f.family.includes('KaTeX') && f.status === 'loaded')") as? Bool == true)
+        #expect(try await renderer.webView.evaluateJavaScript("Array.from(document.fonts).every(f => f.status !== 'error')") as? Bool == true)
+        let html = try #require(RichMarkdownWebViewRepresentable.rendererHTML)
+        #expect(html.contains("data:font/woff2;base64,"))
+        #expect(!html.contains("url(fonts/"))
+        #expect(try await renderer.webView.evaluateJavaScript("performance.getEntriesByType('resource').every(r => !/^https?:/.test(r.name))") as? Bool == true)
+    }
+}

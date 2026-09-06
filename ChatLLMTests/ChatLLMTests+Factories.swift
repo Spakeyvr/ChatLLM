@@ -16,6 +16,36 @@ import FoundationModels
 @testable import ChatLLM
 
 extension ChatLLMTests {
+    func makeDeviceProfile(
+        isPhone: Bool,
+        physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory,
+        ramPrecautionsDisabledOverride: Bool? = false
+    ) -> MLXDeviceSupportProfile {
+        MLXDeviceSupportProfile(isPhone: isPhone, physicalMemoryBytes: physicalMemoryBytes,
+                               ramPrecautionsDisabledOverride: ramPrecautionsDisabledOverride)
+    }
+
+    func makeModelManager(deviceSupportProfile: MLXDeviceSupportProfile? = nil) -> MLXModelManager {
+        MLXModelManager(
+            deviceSupportProfile: deviceSupportProfile ?? makeDeviceProfile(isPhone: true),
+            defaults: testEnvironment.defaults,
+            documentsDirectory: testEnvironment.directory.appendingPathComponent(UUID().uuidString),
+            restoresBackgroundDownloads: false
+        )
+    }
+
+    func makeBackendBridge() -> ModelBackendBridge {
+        ModelBackendBridge(defaults: testEnvironment.defaults, modelManager: makeModelManager())
+    }
+
+    func makeIsolatedChatViewModel(
+        generator: LLMGenerator, context: SwiftData.ModelContext, conversation: Conversation
+    ) -> ChatViewModel {
+        ChatViewModel(generator: generator, context: context, conversation: conversation,
+                      backendBridge: testEnvironment.bridge, defaults: testEnvironment.defaults,
+                      observesAPIKeyChanges: false)
+    }
+
     // MARK: - Test helpers
     /// A persisted conversation seeded with finished turns, for editing tests.
     func makeChat(_ turns: [(MessageRole, String)]) throws -> ChatViewModel {
@@ -37,7 +67,7 @@ extension ChatLLMTests {
             )
         }
         try context.save()
-        return ChatViewModel(generator: TestLLMGenerator(), context: context, conversation: conversation)
+        return makeIsolatedChatViewModel(generator: TestLLMGenerator(), context: context, conversation: conversation)
     }
 
 
@@ -103,7 +133,7 @@ extension ChatLLMTests {
         )
         let context = ModelContext(container)
         let conversation = Conversation(title: "Test")
-        return ChatViewModel(
+        return makeIsolatedChatViewModel(
             generator: generator,
             context: context,
             conversation: conversation

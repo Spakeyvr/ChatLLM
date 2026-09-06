@@ -22,4 +22,5 @@ import FoundationModels
 @MainActor
 @Suite(.serialized)
 struct ChatLLMTests {
+    let testEnvironment = ChatTestEnvironment()
 }

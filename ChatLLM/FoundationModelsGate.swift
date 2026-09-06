@@ -1,32 +1,35 @@
-//
-//  FoundationModelsGate.swift
-//  ChatLLM
-//
-//  Replaces the Bool + sleep-loop pattern in ChatViewModel with a proper
-//  continuation-based queue that suspends callers without polling.
-//
+// Serializes Foundation Models sessions. Cancelled waiters leave the queue
+// immediately; only the owner may release an acquired permit.
+import Foundation
 
-/// Serializes access to Foundation Models so only one session is active at a time.
-/// Callers that arrive while the gate is held are suspended (not spin-waited)
-/// and resumed in FIFO order when the gate is released.
 actor FoundationModelsGate {
     private var isHeld = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
 
-    func acquire() async {
+    func acquire() async throws {
+        try Task.checkCancellation()
         if !isHeld {
             isHeld = true
-        } else {
-            await withCheckedContinuation { continuation in
-                waiters.append(continuation)
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append((id, continuation))
             }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
         }
     }
 
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
     func release() {
-        if let next = waiters.first {
-            waiters.removeFirst()
-            next.resume()
+        if !waiters.isEmpty {
+            waiters.removeFirst().continuation.resume()
         } else {
             isHeld = false
         }

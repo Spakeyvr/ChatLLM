@@ -75,31 +75,34 @@ class ModelBackendBridge: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard, modelManager: MLXModelManager? = nil) {
+        self.defaults = defaults
         // Migrate legacy "customCoreML" → "mlx"
-        if let saved = UserDefaults.standard.string(forKey: "selectedLLMBackend"),
+        if let saved = defaults.string(forKey: "selectedLLMBackend"),
            saved == "customCoreML" {
-            UserDefaults.standard.set("mlx", forKey: "selectedLLMBackend")
+            defaults.set("mlx", forKey: "selectedLLMBackend")
         }
 
         // Load saved backend preference
-        if let savedBackend = UserDefaults.standard.string(forKey: "selectedLLMBackend"),
+        if let savedBackend = defaults.string(forKey: "selectedLLMBackend"),
            let backend = Backend(rawValue: savedBackend) {
             self.selectedBackend = backend
         }
 
         // Load saved model ID
-        if let savedModelID = UserDefaults.standard.string(forKey: "selectedCustomModelID") {
+        if let savedModelID = defaults.string(forKey: "selectedCustomModelID") {
             let normalizedModelID = Self.legacyModelIDMap[savedModelID] ?? savedModelID
             if normalizedModelID != savedModelID {
-                UserDefaults.standard.set(normalizedModelID, forKey: "selectedCustomModelID")
+                defaults.set(normalizedModelID, forKey: "selectedCustomModelID")
             }
             self.selectedModelID = normalizedModelID
         }
 
         // Always create the manager so model availability can be checked
         // in the picker regardless of which backend is currently selected.
-        let manager = MLXModelManager()
+        let manager = modelManager ?? MLXModelManager(defaults: defaults)
         self.modelManager = manager
 
         // Keep selectedModelID in sync with whatever model actually loads.
@@ -130,9 +133,9 @@ class ModelBackendBridge: ObservableObject {
 
         let hasNonSystemMessages = conversation.messages.contains { $0.role != .system }
         let preferredBackend = conversation.preferredBackendRawValue.flatMap(Backend.init(rawValue:))
-            ?? (hasNonSystemMessages ? .foundationModels : Backend(rawValue: UserDefaults.standard.selectedLLMBackend))
+            ?? (hasNonSystemMessages ? .foundationModels : Backend(rawValue: defaults.selectedLLMBackend))
             ?? .foundationModels
-        let preferredModelID = conversation.preferredModelID ?? (hasNonSystemMessages ? nil : UserDefaults.standard.selectedCustomModelID)
+        let preferredModelID = conversation.preferredModelID ?? (hasNonSystemMessages ? nil : defaults.selectedCustomModelID)
 
         if conversation.preferredBackendRawValue != preferredBackend.rawValue && !hasNonSystemMessages {
             conversation.preferredBackendRawValue = preferredBackend.rawValue
@@ -163,7 +166,7 @@ class ModelBackendBridge: ObservableObject {
                 modelManager?.currentModel != nil ||
                 modelManager?.isLoading == true
             selectedBackend = .foundationModels
-            UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+            defaults.set(backend.rawValue, forKey: "selectedLLMBackend")
             persistSelectionToActiveConversation()
             guard shouldResetPipelines else { return }
             notifyPipelineReset(reason: "backend.foundationModels")
@@ -172,7 +175,7 @@ class ModelBackendBridge: ObservableObject {
             let modelIDToLoad = selectedModelID ?? modelManager?.availableModels.first(where: \.isAvailable)?.id
             guard let modelIDToLoad else {
                 selectedBackend = .mlx
-                UserDefaults.standard.set(backend.rawValue, forKey: "selectedLLMBackend")
+                defaults.set(backend.rawValue, forKey: "selectedLLMBackend")
                 persistSelectionToActiveConversation()
                 return
             }
@@ -188,7 +191,7 @@ class ModelBackendBridge: ObservableObject {
         }
 
         selectedModelID = modelID
-        UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
+        defaults.set(modelID, forKey: "selectedCustomModelID")
         persistSelectionToActiveConversation()
     }
 
@@ -209,8 +212,8 @@ class ModelBackendBridge: ObservableObject {
 
         selectedModelID = modelID
         selectedBackend = .mlx
-        UserDefaults.standard.set(modelID, forKey: "selectedCustomModelID")
-        UserDefaults.standard.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
+        defaults.set(modelID, forKey: "selectedCustomModelID")
+        defaults.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
         persistSelectionToActiveConversation()
 
         let isAlreadyLoaded = manager.currentModel?.id == modelID && !manager.isLoading

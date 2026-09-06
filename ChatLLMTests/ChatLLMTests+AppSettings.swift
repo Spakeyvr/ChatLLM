@@ -80,7 +80,7 @@ extension ChatLLMTests {
 
     @Test func userDefaultsRotorQuantDefaultsToEnabledWhenUnset() {
         let key = AppSettingsKeys.mlxEnableRotorQuant
-        let defaults = UserDefaults.standard
+        let defaults = testEnvironment.defaults
         let hadExistingValue = defaults.object(forKey: key) != nil
         let previousValue = defaults.bool(forKey: key)
 

@@ -244,3 +244,68 @@ internal final class CapturingFoundationGenerator: LLMGenerator {
         }
     }
 }
+
+
+/// Swift Testing creates a suite instance per test. Each owns disposable settings
+/// and model storage, including tests that construct multiple view models.
+@MainActor
+final class ChatTestEnvironment {
+    let suiteName = "ChatLLMTests." + UUID().uuidString
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let defaults: UserDefaults
+    lazy var bridge = ModelBackendBridge(defaults: defaults, modelManager: MLXModelManager(
+        deviceSupportProfile: MLXDeviceSupportProfile(isPhone: true, ramPrecautionsDisabledOverride: false),
+        defaults: defaults, documentsDirectory: directory, restoresBackgroundDownloads: false
+    ))
+
+    init() {
+        defaults = UserDefaults(suiteName: suiteName)!
+    }
+
+    deinit {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+@MainActor
+final class SequencedTestGenerator: LLMGenerator {
+    let streams: [AsyncThrowingStream<String, Error>]
+    var startedCount = 0
+    init(streams: [AsyncThrowingStream<String, Error>]) { self.streams = streams }
+    func isAvailable() -> Bool { true }
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        let index = startedCount
+        startedCount += 1
+        return streams[index]
+    }
+}
+
+/// A real URLSession request that stays pending until the caller cancels it.
+/// URLProtocol callbacks use a lock because they run off the test's main actor.
+final class BlockingSearchURLProtocol: URLProtocol, @unchecked Sendable {
+    final class State: @unchecked Sendable {
+        private let lock = NSLock()
+        private var started = false
+        private var stopped = false
+        func reset() { lock.withLock { started = false; stopped = false } }
+        func start() { lock.withLock { started = true } }
+        func stop() { lock.withLock { stopped = true } }
+        var didStart: Bool { lock.withLock { started } }
+        var didStop: Bool { lock.withLock { stopped } }
+    }
+    static let state = State()
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.state.start() }
+    override func stopLoading() { Self.state.stop() }
+}
+
+struct SearchCallingTestGenerator: LLMGenerator {
+    func isAvailable() -> Bool { true }
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        let tool = try #require(tools.first as? WebSearchTool)
+        _ = try await tool.call(arguments: .init(query: "test query"))
+        return AsyncThrowingStream { $0.finish() }
+    }
+}

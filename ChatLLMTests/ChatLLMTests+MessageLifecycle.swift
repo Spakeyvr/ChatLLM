@@ -97,7 +97,7 @@ extension ChatLLMTests {
         )
         let context = ModelContext(container)
         let conversation = Conversation(title: "Test")
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: PartialReasoningLLMGenerator(),
             context: context,
             conversation: conversation
@@ -165,7 +165,7 @@ extension ChatLLMTests {
         conversation.messages.append(message)
         try context.save()
 
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: TestLLMGenerator(),
             context: context,
             conversation: conversation
@@ -221,7 +221,7 @@ extension ChatLLMTests {
         conversation.messages.append(contentsOf: messages)
         try context.save()
 
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: TestLLMGenerator(),
             context: context,
             conversation: conversation
@@ -305,7 +305,7 @@ extension ChatLLMTests {
         )
         try context.save()
 
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: TestLLMGenerator(),
             context: context,
             conversation: conversation
@@ -354,7 +354,7 @@ extension ChatLLMTests {
         conversation.messages.append(userMessage)
         try context.save()
 
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: TestLLMGenerator(),
             context: context,
             conversation: conversation
@@ -380,7 +380,7 @@ extension ChatLLMTests {
         context.insert(conversation)
         try context.save()
 
-        let bridge = ModelBackendBridge.shared
+        let bridge = testEnvironment.bridge
         let originalBackend = bridge.selectedBackend
         let originalModelID = bridge.selectedModelID
         let originalConversation = bridge.activeConversation
@@ -403,8 +403,8 @@ extension ChatLLMTests {
     }
 
     @Test func bridgeDisplayNameUsesSelectedModelInsteadOfStaleLoadedModel() {
-        let bridge = ModelBackendBridge()
-        let manager = MLXModelManager()
+        let bridge = makeBackendBridge()
+        let manager = makeModelManager()
         let loadedModel = try! #require(manager.model(withID: "qwen3.5-4b-4bit-hybrid"))
 
         manager.currentModel = loadedModel
@@ -416,7 +416,7 @@ extension ChatLLMTests {
     }
 
     @Test func bridgeDisplayNameFallsBackForPersistedSmolLM3Selection() {
-        let bridge = ModelBackendBridge()
+        let bridge = makeBackendBridge()
         bridge.modelManager = nil
         bridge.selectedBackend = .mlx
         bridge.selectedModelID = "smollm3-3b-4bit"
@@ -425,8 +425,8 @@ extension ChatLLMTests {
     }
 
     @Test func reasoningAvailabilityTracksSelectedModelSupport() {
-        let bridge = ModelBackendBridge()
-        let manager = MLXModelManager()
+        let bridge = makeBackendBridge()
+        let manager = makeModelManager()
         let plainModel = MLXModelManager.MLXModelInfo(
             id: "plain-local-model",
             name: "Plain Local",
@@ -449,7 +449,7 @@ extension ChatLLMTests {
     }
 
     @Test func reasoningAvailabilityFallsBackForPersistedSmolLM3Selection() {
-        let bridge = ModelBackendBridge()
+        let bridge = makeBackendBridge()
         bridge.modelManager = nil
         bridge.selectedBackend = .mlx
         bridge.selectedModelID = "smollm3-3b-4bit"
@@ -508,7 +508,7 @@ extension ChatLLMTests {
         )
         let context = ModelContext(container)
         let conversation = Conversation(title: "Test")
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: BlockingLLMGenerator(),
             context: context,
             conversation: conversation
@@ -540,7 +540,7 @@ extension ChatLLMTests {
         )
         let context = ModelContext(container)
         let conversation = Conversation(title: "Test")
-        let viewModel = ChatViewModel(
+        let viewModel = makeIsolatedChatViewModel(
             generator: BlockingLLMGenerator(),
             context: context,
             conversation: conversation

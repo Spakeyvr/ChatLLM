@@ -24,18 +24,12 @@ import WebKit
 ///
 /// Do not delete the `RenderingAssets/` files: the native path cannot render
 /// KaTeX, and the WebView document inlines all four of them (see `makeHTML()`).
-/// Only `markdown-it.min.js` is load-critical there — if a KaTeX file is
-/// missing from the bundle the document silently renders everything *except*
-/// math, with no failure signal.
+/// All parser assets and WOFF2 fonts are required; a missing asset triggers the
+/// existing native fallback. Fonts are embedded as data URIs under the local CSP.
+/// Bare equation/align/alignat/gather/CD environments (including starred forms)
+/// use the same delimiter list for detection, Markdown protection and KaTeX.
 ///
-/// Known limitations a maintainer should not "fix" blindly:
-/// - KaTeX fonts are not bundled (the CSS references `fonts/KaTeX_*.woff2` that
-///   do not exist, and the CSP only allows `data:` fonts), so math renders with
-///   the CSS fallback (Times/serif). If fidelity ever matters, inline the fonts
-///   as `data:` URIs in `makeHTML()` — do not add remote font loads.
-/// - The detector also flags a bare `\begin{…}` environment, but KaTeX
-///   auto-render only handles `$$`, `\[`, and `\(`; a bare `\begin{align}…`
-///   triggers the WebView yet renders as literal text. Detection-only support.
+/// Known limitations:
 /// - Images are disabled in both paths: the native renderer reduces
 ///   `![alt](url)` to its alt text, while markdown-it's `image` rule is disabled
 ///   so the raw markup shows. Keep `RichMarkdownRenderingPolicy
@@ -186,6 +180,21 @@ nonisolated enum MarkdownHeightCache {
     }
 }
 
+/// KaTeX's supported standalone environments. Keep parsing and routing aligned.
+private enum RichMathDelimiters {
+    static let environments = ["equation", "equation*", "align", "align*", "alignat", "alignat*", "gather", "gather*", "CD"]
+    static let json: String = {
+        let delimiters: [[String: Any]] = [
+            ["left": "$$", "right": "$$", "display": true],
+            ["left": "\\[", "right": "\\]", "display": true],
+            ["left": "\\(", "right": "\\)", "display": false]
+        ] + environments.map {
+            ["left": "\\begin{\($0)}", "right": "\\end{\($0)}", "display": true]
+        }
+        return String(data: try! JSONSerialization.data(withJSONObject: delimiters), encoding: .utf8)!
+    }()
+}
+
 /// Decides whether a message needs the bundled KaTeX document.
 ///
 /// Only math does. Headings, lists, quotes, code, tables and inline emphasis are
@@ -209,7 +218,7 @@ enum RichTextFeatureDetector {
         let searchable = textOutsideCode(text)
         guard !searchable.isEmpty else { return false }
 
-        if searchable.contains("\\begin{") || searchable.contains("\\end{") {
+        if RichMathDelimiters.environments.contains(where: { searchable.contains("\\begin{\($0)}") }) {
             return true
         }
 
@@ -403,11 +412,10 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
 
     private static let markdownItJS: String? = bundledTextResource(named: "markdown-it.min", extension: "js")?
         .escapedInlineScript
-    private static let katexCSS: String = (bundledTextResource(named: "katex.min", extension: "css") ?? "")
-        .escapedInlineStyle
-    private static let katexJS: String = (bundledTextResource(named: "katex.min", extension: "js") ?? "")
+    private static let katexCSS: String? = bundledMathCSS()?.escapedInlineStyle
+    private static let katexJS: String? = bundledTextResource(named: "katex.min", extension: "js")?
         .escapedInlineScript
-    private static let katexAutoRenderJS: String = (bundledTextResource(named: "katex-auto-render.min", extension: "js") ?? "")
+    private static let katexAutoRenderJS: String? = bundledTextResource(named: "katex-auto-render.min", extension: "js")?
         .escapedInlineScript
 
     // A single document per WebView. Message text only crosses the argument bridge,
@@ -416,11 +424,7 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
 
     private static func makeHTML() -> String? {
         let disabledMarkdownRules = RichMarkdownRenderingPolicy.disabledMarkdownRulesJSON
-        guard let markdownItJS else { return nil }
-
-        let katexCSS = Self.katexCSS
-        let katexJS = Self.katexJS
-        let katexAutoRenderJS = Self.katexAutoRenderJS
+        guard let markdownItJS, let katexCSS, let katexJS, let katexAutoRenderJS else { return nil }
 
         return """
         <!doctype html>
@@ -567,9 +571,9 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
             md.disable(\(disabledMarkdownRules));
             // Protect math from Markdown's escape/emphasis rules before KaTeX
             // sees it. In particular, Markdown would strip \\( and \\[ delimiters.
+            const mathDelimiters = \(RichMathDelimiters.json);
             md.inline.ruler.before('escape', 'math', (state, silent) => {
-              const delimiters = [['$$', '$$'], ['\\\\(', '\\\\)'], ['\\\\[', '\\\\]']];
-              for (const [left, right] of delimiters) {
+              for (const {left, right} of mathDelimiters) {
                 if (!state.src.startsWith(left, state.pos)) continue;
                 const end = state.src.indexOf(right, state.pos + left.length);
                 if (end < 0) return false;
@@ -605,11 +609,7 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
                   throwOnError: false,
                   strict: 'ignore',
                   ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
-                  delimiters: [
-                    { left: '$$', right: '$$', display: true },
-                    { left: '\\\\[', right: '\\\\]', display: true },
-                    { left: '\\\\(', right: '\\\\)', display: false }
-                  ]
+                  delimiters: mathDelimiters
                 });
               }
               postHeight();
@@ -628,6 +628,26 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
         </body>
         </html>
         """
+    }
+
+    /// Use only the bundled WOFF2 source; other formats would leave dangling
+    /// relative URLs in a document loaded from an HTML string.
+    private static func bundledMathCSS() -> String? {
+        guard var css = bundledTextResource(named: "katex.min", extension: "css"),
+              let sources = try? NSRegularExpression(pattern: #"src:url\(fonts/(KaTeX_[^)]+)\.woff2\)[^;}]+"#) else { return nil }
+        let matches = sources.matches(in: css, range: NSRange(css.startIndex..., in: css))
+        guard !matches.isEmpty else { return nil }
+        for match in matches.reversed() {
+            guard let nameRange = Range(match.range(at: 1), in: css),
+                  let sourceRange = Range(match.range, in: css) else { return nil }
+            let name = String(css[nameRange])
+            let url = Bundle.main.url(forResource: name, withExtension: "woff2")
+                ?? Bundle.main.url(forResource: name, withExtension: "woff2", subdirectory: "RenderingAssets/Fonts")
+                ?? Bundle.main.url(forResource: name, withExtension: "woff2", subdirectory: "Fonts")
+            guard let url, let data = try? Data(contentsOf: url) else { return nil }
+            css.replaceSubrange(sourceRange, with: "src:url(data:font/woff2;base64,\(data.base64EncodedString())) format(\"woff2\")")
+        }
+        return css
     }
 
     private static func bundledTextResource(named name: String, extension fileExtension: String) -> String? {

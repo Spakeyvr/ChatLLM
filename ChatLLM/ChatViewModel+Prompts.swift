@@ -138,7 +138,7 @@ extension ChatViewModel {
     }
 
     func invalidateMLXConversationSession(reason: String) {
-        ModelBackendBridge.shared.modelManager?.invalidateConversationSession(
+        backendBridge.modelManager?.invalidateConversationSession(
             conversation.id,
             reason: reason
         )
@@ -161,17 +161,17 @@ extension ChatViewModel {
     }
 
     private func effectiveContextWindowTokenLimit() -> Int {
-        let bridge = ModelBackendBridge.shared
+        let bridge = backendBridge
         let model = bridge.selectedModelID.flatMap { bridge.modelManager?.model(withID: $0) } ??
             bridge.modelManager?.currentModel
         let deviceMaximum = MLXDeviceSupportProfile.current.maxContextWindowTokens(for: model)
-        return UserDefaults.standard.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
+        return defaults.mlxContextWindowTokens(deviceMaximum: deviceMaximum)
     }
 
     private func effectivePromptBudgetTokenLimit() -> Int {
         let contextLimit = effectiveContextWindowTokenLimit()
         let reservedOutputTokens = min(
-            UserDefaults.standard.mlxMaxOutputTokensLimit ?? 1_024,
+            defaults.mlxMaxOutputTokensLimit ?? 1_024,
             max(512, contextLimit / 2)
         )
         return max(
@@ -275,7 +275,7 @@ extension ChatViewModel {
             chatRole = .user
         }
         let tokenizedContentTokenCount: Int?
-        if let modelManager = ModelBackendBridge.shared.modelManager {
+        if let modelManager = backendBridge.modelManager {
             tokenizedContentTokenCount = await modelManager.tokenCountForLoadedModelText(
                 role: chatRole,
                 content: content

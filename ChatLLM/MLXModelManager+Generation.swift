@@ -105,13 +105,13 @@ extension MLXModelManager {
     }
 
     func configuredContextWindowLimit(for model: MLXModelInfo? = nil) -> Int {
-        UserDefaults.standard.mlxContextWindowTokens(
+        defaults.mlxContextWindowTokens(
             deviceMaximum: deviceSupportProfile.maxContextWindowTokens(for: model ?? currentModel)
         )
     }
 
     var shouldPreferRotorQuant: Bool {
-        UserDefaults.standard.mlxEnableRotorQuant
+        defaults.mlxEnableRotorQuant
     }
 
     func generateTextStream(
@@ -132,9 +132,9 @@ extension MLXModelManager {
             throw GenerationError.modelNotLoaded
         }
         let includesMedia = messages.contains { !$0.images.isEmpty || !$0.videos.isEmpty }
-        let configuredMaxOutputTokens = UserDefaults.standard.mlxMaxOutputTokensLimit
+        let configuredMaxOutputTokens = defaults.mlxMaxOutputTokensLimit
         let configuredContextWindow = configuredContextWindowLimit(for: currentModel)
-        let rotorQuantRequested = UserDefaults.standard.mlxEnableRotorQuant
+        let rotorQuantRequested = defaults.mlxEnableRotorQuant
         let generationConfiguration = Self.generationConfiguration(
             isEnabled: rotorQuantRequested,
             preferRotorQuant: shouldPreferRotorQuant,
@@ -175,7 +175,7 @@ extension MLXModelManager {
             includesMedia: includesMedia,
             currentModelID: currentModel.id,
             prefillStepSize: prefillStepSize,
-            repetitionPenalty: UserDefaults.standard.mlxRepetitionPenaltyValue
+            repetitionPenalty: defaults.mlxRepetitionPenaltyValue
         )
         let additionalContext: [String: any Sendable]? = ["enable_thinking": enableThinking]
         let processing = UserInput.Processing()

@@ -110,7 +110,8 @@ extension MLXModelManager {
         loadError = nil
         let recommendedPrefillStepSize = Self.persistedPrefillStepSize(
             for: model.id,
-            deviceSupportProfile: deviceSupportProfile
+            deviceSupportProfile: deviceSupportProfile,
+            defaults: defaults
         ) ?? Self.defaultPrefillStepSize
         let wiredMemoryCap = Self.recommendedWiredMemoryCapBytes(
             deviceSupportProfile: deviceSupportProfile

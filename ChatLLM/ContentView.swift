@@ -98,8 +98,7 @@ struct ContentView: View {
                 // the next "New Chat" tap is not blocked by the guard in startDraftChat().
                 if newColumn == .sidebar, draftConversation != nil, selection == nil {
                     draftConversation = nil
-                    currentViewModel?.cancelGeneration()
-                    currentViewModel?.flushPendingSaveForTeardown()
+                    currentViewModel?.deactivate()
                     currentViewModel = nil
                 }
             }
@@ -292,12 +291,11 @@ struct ContentView: View {
         }
         // Navigating to a real conversation discards any open draft.
         if newID != nil { draftConversation = nil }
-        ModelBackendBridge.shared.bindConversation(newSelection)
         if let currentVM = currentViewModel, currentVM.conversation.id != newID {
-            currentVM.cancelGeneration()
-            currentVM.flushPendingSaveForTeardown()
+            currentVM.deactivate()
             currentViewModel = nil
         }
+        ModelBackendBridge.shared.bindConversation(newSelection)
     }
     
     private func handleConversationsChange(_ oldConversations: [Conversation], _ newConversations: [Conversation]) {
@@ -319,8 +317,7 @@ struct ContentView: View {
             if !selectionExists {
                 // Current selection was deleted - clean up view model if it hasn't been already
                 if let currentVM = currentViewModel, currentVM.conversation.id == currentSelection.id {
-                    currentVM.cancelGeneration()
-                    currentVM.flushPendingSaveForTeardown()
+                    currentVM.deactivate()
                     currentViewModel = nil
                 }
                 
@@ -412,7 +409,10 @@ struct ContentView: View {
                 }
                 .task(id: convo.id) {
                     await MainActor.run {
-                        currentViewModel?.cancelGeneration()
+                        guard !Task.isCancelled, selection?.id == convo.id else { return }
+                        if currentViewModel?.conversation.id != convo.id {
+                            currentViewModel?.deactivate()
+                        }
                         currentViewModel = createViewModel(for: convo)
                     }
                 }
@@ -774,7 +774,7 @@ struct ContentView: View {
         guard draftConversation == nil else { return }
         AppHaptics.impact(.medium)
         Task { @MainActor in
-            currentViewModel?.cancelGeneration()
+            currentViewModel?.deactivate()
             let convo = Conversation(
                 title: String(localized: "New Chat"),
                 chatPreferences: storedChatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -876,7 +876,7 @@ struct ContentView: View {
         
         // Cancel any ongoing operations for this conversation - do this BEFORE updating selection
         if let currentVM = currentViewModel, currentVM.conversation.id == conversationID {
-            currentVM.cancelGeneration()
+            currentVM.deactivate()
             // Clear the view model reference immediately
             currentViewModel = nil
         }
@@ -1126,6 +1126,7 @@ struct ContentView: View {
                 errorMessage = String(localized: "Couldn't stop the active response. Please try deleting again.")
                 return false
             }
+            viewModel.deactivate()
             if currentViewModel === viewModel {
                 currentViewModel = nil
             }
