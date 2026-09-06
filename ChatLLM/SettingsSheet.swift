@@ -114,11 +114,16 @@ struct SettingsRow: View {
                     if let value { Text(value).font(.subheadline).foregroundStyle(.secondary) }
                 }
             } else {
-                Image(systemName: systemImage)
-                    .font(.system(size: iconSize * 0.57, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: iconSize, height: iconSize)
-                    .background(color, in: .rect(cornerRadius: iconSize * 0.23))
+                // Keep decorative icons from increasing the system's text row height.
+                Color.clear
+                    .frame(width: iconSize, height: 0)
+                    .overlay {
+                        Image(systemName: systemImage)
+                            .font(.system(size: iconSize * 0.57, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: iconSize, height: iconSize)
+                            .background(color, in: .rect(cornerRadius: iconSize * 0.23))
+                    }
                     .accessibilityHidden(true)
                 Text(title).foregroundStyle(.primary)
                 if let value {
