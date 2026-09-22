@@ -19,9 +19,9 @@ extension MLXModelManager {
             var packageDescription: String {
                 switch self {
                 case .standard:
-                    return "Standard package"
+                    return String(localized: "Standard package", bundle: .appLocalized)
                 case .qwenMultimodal:
-                    return "Full multimodal package"
+                    return String(localized: "Full multimodal package", bundle: .appLocalized)
                 }
             }
 
@@ -51,7 +51,7 @@ extension MLXModelManager {
         let parameters: String
         let downloadSizeLabel: String
         let loadPolicy: LoadPolicy
-        let description: String
+        private let descriptionValue: String.LocalizationValue
         let contextLength: Int
         var isAvailable: Bool
         let supportsReasoning: Bool
@@ -71,7 +71,7 @@ extension MLXModelManager {
             parameters: String,
             downloadSizeLabel: String,
             loadPolicy: LoadPolicy = .standard,
-            description: String,
+            description: String.LocalizationValue,
             contextLength: Int,
             isAvailable: Bool,
             supportsReasoning: Bool,
@@ -88,7 +88,7 @@ extension MLXModelManager {
             self.parameters = parameters
             self.downloadSizeLabel = downloadSizeLabel
             self.loadPolicy = loadPolicy
-            self.description = description
+            self.descriptionValue = description
             self.contextLength = contextLength
             self.isAvailable = isAvailable
             self.supportsReasoning = supportsReasoning
@@ -97,6 +97,10 @@ extension MLXModelManager {
             self.minimumPhoneMemoryBytes = minimumPhoneMemoryBytes
             self.minimumPhoneMemoryForToolCallsBytes = minimumPhoneMemoryForToolCallsBytes
             self.phoneContextWindowOverride = phoneContextWindowOverride
+        }
+
+        var description: String {
+            String(localized: descriptionValue, bundle: .appLocalized)
         }
 
         /// This checkpoint always opens a thinking block in its chat template.

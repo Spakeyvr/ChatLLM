@@ -177,9 +177,9 @@ nonisolated enum VisionDetectorError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            return "The provided image is invalid or cannot be processed."
+            return String(localized: "The provided image is invalid or cannot be processed.", bundle: .appLocalized)
         case .processingFailed(let message):
-            return "Object detection failed: \(message)"
+            return String(localized: "Object detection failed: \(message)", bundle: .appLocalized)
         }
     }
 }

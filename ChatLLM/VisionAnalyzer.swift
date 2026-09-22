@@ -896,11 +896,11 @@ nonisolated enum VisionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            return "The provided image is invalid or cannot be processed."
+            return String(localized: "The provided image is invalid or cannot be processed.", bundle: .appLocalized)
         case .analysisFailed:
-            return "Vision analysis failed to complete."
+            return String(localized: "Vision analysis failed to complete.", bundle: .appLocalized)
         case .noResults:
-            return "No analysis results were generated."
+            return String(localized: "No analysis results were generated.", bundle: .appLocalized)
         }
     }
 }

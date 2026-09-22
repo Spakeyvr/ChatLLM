@@ -128,7 +128,7 @@ struct SimpleTextComposer: View {
                     }
 
                     if isEditing {
-                        Button(String(localized: "Cancel edit"), action: onCancelEditing)
+                        Button("Cancel edit", action: onCancelEditing)
                             .font(.subheadline.weight(.semibold))
                             .buttonStyle(.bordered)
                             .buttonBorderShape(.capsule)
@@ -164,7 +164,7 @@ struct SimpleTextComposer: View {
                     .disabled(!isGenerating && !canSend)
                     .buttonStyle(SubtleGlassButtonStyle())
                     .buttonRepeatBehavior(.enabled)
-                    .accessibilityLabel(isGenerating ? String(localized: "Stop") : String(localized: "Send"))
+                    .accessibilityLabel(isGenerating ? String(localized: "Stop", bundle: .appLocalized) : String(localized: "Send", bundle: .appLocalized))
                     .accessibilityAddTraits(.isButton)
                 }
                 .padding(.horizontal, 6)
@@ -300,7 +300,7 @@ private struct AddOptionsSheet: View {
                         }
                     )) {
                         Label {
-                            Text(reasoningRequired ? "Reasoning (Always On)" : "Always Reason")
+                            Text(reasoningRequired ? LocalizedStringKey("Reasoning (Always On)") : LocalizedStringKey("Always Reason"))
                                 .font(.body)
                         } icon: {
                             Image(systemName: "brain.head.profile")
@@ -350,7 +350,7 @@ private struct AddOptionsSheet: View {
 
 private struct AttachTile: View {
     let icon: String
-    let label: String
+    let label: LocalizedStringKey
     let action: () -> Void
 
     var body: some View {

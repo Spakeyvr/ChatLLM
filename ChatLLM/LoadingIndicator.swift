@@ -13,7 +13,7 @@ import SwiftUI
 /// Just the animated text label — pair with your own spinner when you
 /// already render one (e.g. inside a toolbar capsule).
 struct LoadingDotsLabel: View {
-    var label: String = String(localized: "Loading")
+    var label: LocalizedStringKey = "Loading"
     var font: Font = .subheadline
     var color: Color = .secondary
 
@@ -21,7 +21,7 @@ struct LoadingDotsLabel: View {
     private let timer = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Text(label + String(repeating: ".", count: dotCount))
+        Text("\(Text(label))\(String(repeating: ".", count: dotCount))")
             .font(font)
             .foregroundStyle(color)
             .monospacedDigit()
@@ -34,7 +34,7 @@ struct LoadingDotsLabel: View {
 
 /// Spinner + animated label. Use for full-screen / empty-state loading.
 struct LoadingIndicator: View {
-    var label: String = String(localized: "Loading")
+    var label: LocalizedStringKey = "Loading"
 
     var body: some View {
         HStack(spacing: 8) {

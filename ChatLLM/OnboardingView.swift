@@ -13,7 +13,7 @@ struct OnboardingView: View {
         case tavily
         case mlx
 
-        var title: String {
+        var title: LocalizedStringKey {
             switch self {
             case .intro:
                 return "Welcome to ChatLLM"
@@ -43,10 +43,17 @@ struct OnboardingView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-                header
-                progressDots
-                content
-                Spacer(minLength: 0)
+                ScrollView {
+                    VStack(spacing: 24) {
+                        header
+                        progressDots
+                        content
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // Longer translations can scroll while navigation stays reachable.
+                // Each step starts at the top without resetting onboarding state.
+                .id(step)
                 footer
             }
             .padding(.horizontal, 24)
@@ -316,7 +323,7 @@ struct OnboardingView: View {
         }
     }
 
-    private func onboardingCard(title: String, systemImage: String, description: String) -> some View {
+    private func onboardingCard(title: LocalizedStringKey, systemImage: String, description: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: systemImage)
                 .font(.headline)
@@ -341,7 +348,7 @@ struct OnboardingView: View {
         .ignoresSafeArea()
     }
 
-    private var stepSubtitle: String {
+    private var stepSubtitle: LocalizedStringKey {
         switch step {
         case .intro:
             return "A quick tour so new users understand what the app can do."
@@ -352,7 +359,7 @@ struct OnboardingView: View {
         }
     }
 
-    private var primaryButtonTitle: String {
+    private var primaryButtonTitle: LocalizedStringKey {
         switch step {
         case .intro:
             return "Continue"

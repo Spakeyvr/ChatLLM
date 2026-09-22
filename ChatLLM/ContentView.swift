@@ -62,7 +62,7 @@ struct ContentView: View {
     var body: some View {
         rootContent
             // Apply selected language to entire UI
-            .environment(\.locale, Locale(identifier: appLanguage))
+            .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
             .background {
                 AppAppearanceOverride(appearance: appAppearance)
                     .frame(width: 0, height: 0)
@@ -111,7 +111,7 @@ struct ContentView: View {
             )
             .errorAlert(
                 isPresented: $isErrorAlertPresented,
-                message: errorMessage ?? String(localized: "An unknown error occurred."),
+                message: errorMessage ?? String(localized: "An unknown error occurred.", bundle: .appLocalized),
                 onDismiss: { 
                     isErrorAlertPresented = false
                     errorMessage = nil
@@ -404,7 +404,7 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 16) {
                     ProgressView()
-                    Text(String(localized: "Preparing chat…"))
+                    Text("Preparing chat…")
                         .foregroundStyle(.secondary)
                 }
                 .task(id: convo.id) {
@@ -583,9 +583,9 @@ struct ContentView: View {
                         Image(systemName: "magnifyingglass")
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
-                        Text(String(localized: "No matching chats"))
+                        Text("No matching chats")
                             .font(.headline)
-                        Text(String(localized: "Try adjusting your search terms"))
+                        Text("Try adjusting your search terms")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -612,7 +612,7 @@ struct ContentView: View {
                                                 rename(conversation)
                                             }
                                         } label: {
-                                            Label(String(localized: "Rename"), systemImage: "pencil")
+                                            Label("Rename", systemImage: "pencil")
                                         }
 
                                         Button(role: .destructive) {
@@ -620,7 +620,7 @@ struct ContentView: View {
                                                 delete(conversation)
                                             }
                                         } label: {
-                                            Label(String(localized: "Delete"), systemImage: "trash")
+                                            Label("Delete", systemImage: "trash")
                                         }
                                     }
                                     .swipeActions(edge: .trailing) {
@@ -629,7 +629,7 @@ struct ContentView: View {
                                                 delete(conversation)
                                             }
                                         } label: {
-                                            Label(String(localized: "Delete"), systemImage: "trash")
+                                            Label("Delete", systemImage: "trash")
                                         }
                                     }
                             }
@@ -672,7 +672,7 @@ struct ContentView: View {
                     DynamicHeightTextEditor(
                         text: $searchText,
                         height: .constant(0), // Not used anymore
-                        placeholder: String(localized: "Search chats")
+                        placeholder: String(localized: "Search chats", bundle: .appLocalized)
                     )
                     .focused($isSearchFocused)
                     .onChange(of: searchText) { _, newValue in
@@ -707,7 +707,7 @@ struct ContentView: View {
                                 .frame(width: 32, height: 32)
                                 .contentShape(Circle())
                         }
-                        .accessibilityLabel(String(localized: "Clear search"))
+                        .accessibilityLabel("Clear search")
                         .buttonStyle(.plain)
                     }
                 }
@@ -731,7 +731,7 @@ struct ContentView: View {
                     .contentShape(Circle())
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
-                    .accessibilityLabel(String(localized: "Settings"))
+                    .accessibilityLabel("Settings")
 
                     Button {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
@@ -747,7 +747,7 @@ struct ContentView: View {
                     .contentShape(Circle())
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
-                    .accessibilityLabel(String(localized: "New Chat"))
+                    .accessibilityLabel("New Chat")
                 }
                 .shadow(color: .clear.opacity(0.2), radius: 12, x: 0, y: 6)
             }
@@ -776,7 +776,7 @@ struct ContentView: View {
         Task { @MainActor in
             currentViewModel?.deactivate()
             let convo = Conversation(
-                title: String(localized: "New Chat"),
+                title: String(localized: "New Chat", bundle: .appLocalized),
                 chatPreferences: storedChatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             convo.reasoningMode = reasoningModeDefault
@@ -812,20 +812,20 @@ struct ContentView: View {
         
         // Localized inline rename via alert-style prompt
         let alert = UIAlertController(
-            title: String(localized: "Rename Chat"), 
-            message: String(localized: "Enter a new name for this conversation"), 
+            title: String(localized: "Rename Chat", bundle: .appLocalized),
+            message: String(localized: "Enter a new name for this conversation", bundle: .appLocalized),
             preferredStyle: .alert
         )
         
         alert.addTextField { textField in
             textField.text = conversation.title
-            textField.placeholder = String(localized: "Conversation Title")
+            textField.placeholder = String(localized: "Conversation Title", bundle: .appLocalized)
             textField.autocapitalizationType = .words
             textField.returnKeyType = .done
         }
         
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "Save"), style: .default) { _ in
+        alert.addAction(UIAlertAction(title: String(localized: "Cancel", bundle: .appLocalized), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "Save", bundle: .appLocalized), style: .default) { _ in
             guard let textField = alert.textFields?.first,
                   let newTitle = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !newTitle.isEmpty,
@@ -843,7 +843,7 @@ struct ContentView: View {
             } catch {
                 print("Failed to save renamed conversation: \(error)")
                 AppHaptics.notification(.error)
-                self.errorMessage = String(localized: "Failed to rename conversation. Please try again.")
+                self.errorMessage = String(localized: "Failed to rename conversation. Please try again.", bundle: .appLocalized)
             }
         })
         
@@ -901,7 +901,7 @@ struct ContentView: View {
         } catch {
             print("Failed to save after deleting conversation: \(error)")
             AppHaptics.notification(.error)
-            errorMessage = String(localized: "Failed to delete conversation. Please try again.")
+            errorMessage = String(localized: "Failed to delete conversation. Please try again.", bundle: .appLocalized)
             
             // Try to recover by reloading the context
             do {
@@ -964,7 +964,7 @@ struct ContentView: View {
         } catch {
             print("Failed to save after deleting all conversations: \(error)")
             AppHaptics.notification(.error)
-            errorMessage = String(localized: "Failed to delete all conversations. Please try again.")
+            errorMessage = String(localized: "Failed to delete all conversations. Please try again.", bundle: .appLocalized)
         }
     }
 
@@ -1009,7 +1009,7 @@ struct ContentView: View {
         } catch {
             print("Failed to save after deleting conversations except current: \(error)")
             AppHaptics.notification(.error)
-            errorMessage = String(localized: "Failed to delete conversations. Please try again.")
+            errorMessage = String(localized: "Failed to delete conversations. Please try again.", bundle: .appLocalized)
         }
     }
 
@@ -1062,7 +1062,7 @@ struct ContentView: View {
             exportURL = tempURL
             chatExport = ChatExport(url: tempURL)
         } catch {
-            errorMessage = String(localized: "Failed to export chats. Please try again.")
+            errorMessage = String(localized: "Failed to export chats. Please try again.", bundle: .appLocalized)
         }
     }
 
@@ -1123,7 +1123,7 @@ struct ContentView: View {
         while let viewModel = currentViewModel,
               conversationIDs.contains(viewModel.conversation.id) {
             guard await viewModel.cancelGenerationAndWait() else {
-                errorMessage = String(localized: "Couldn't stop the active response. Please try deleting again.")
+                errorMessage = String(localized: "Couldn't stop the active response. Please try deleting again.", bundle: .appLocalized)
                 return false
             }
             viewModel.deactivate()
@@ -1182,14 +1182,14 @@ private struct SettingsSheetContainer: View {
             )
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Done")) {
+                    Button("Done") {
                         onDismiss()
                     }
                     .accessibilityIdentifier("settings.done")
                 }
             }
         }
-        .environment(\.locale, Locale(identifier: draft.appLanguage))
+        .environment(\.locale, AppLanguage.resolve(draft.appLanguage).locale)
     }
 }
 
@@ -1304,18 +1304,18 @@ private extension View {
         onDeleteAll: @escaping () -> Void,
         onDeleteAllExceptCurrent: @escaping () -> Void
     ) -> some View {
-        alert(String(localized: "Delete previous chats?"), isPresented: isPresented) {
+        alert("Delete previous chats?", isPresented: isPresented) {
             if hasSelection && canDeleteAllExceptCurrent {
-                Button(String(localized: "Delete All Chats Except Current"), role: .destructive) {
+                Button("Delete All Chats Except Current", role: .destructive) {
                     onDeleteAllExceptCurrent()
                 }
             }
-            Button(String(localized: "Delete All Chats"), role: .destructive) {
+            Button("Delete All Chats", role: .destructive) {
                 onDeleteAll()
             }
-            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text(String(localized: "This will permanently remove your chat history from this device."))
+            Text("This will permanently remove your chat history from this device.")
         }
     }
     
@@ -1324,8 +1324,8 @@ private extension View {
         message: String,
         onDismiss: @escaping () -> Void
     ) -> some View {
-        alert(String(localized: "Error"), isPresented: isPresented) {
-            Button(String(localized: "OK")) {
+        alert("Error", isPresented: isPresented) {
+            Button("OK") {
                 onDismiss()
             }
         } message: {

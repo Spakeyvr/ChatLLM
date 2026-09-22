@@ -62,9 +62,9 @@ class ModelBackendBridge: ObservableObject {
         var description: String {
             switch self {
             case .foundationModels:
-                return "Uses Apple's on-device language model with system-level optimization"
+                return String(localized: "Uses Apple's on-device language model with system-level optimization", bundle: .appLocalized)
             case .mlx:
-                return "Run MLX-converted models locally via mlx-swift-lm"
+                return String(localized: "Run MLX-converted models locally via mlx-swift-lm", bundle: .appLocalized)
             }
         }
     }
@@ -210,7 +210,7 @@ class ModelBackendBridge: ObservableObject {
         guard let manager = modelManager,
               let model = manager.model(withID: modelID) else {
             modelManager?.unloadAllModels()
-            modelManager?.loadError = "Selected MLX model '\(modelID)' is no longer known. Choose another model."
+            modelManager?.loadError = String(localized: "Selected MLX model '\(modelID)' is no longer known. Choose another model.", bundle: .appLocalized)
             return
         }
         guard model.isAvailable else {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppearanceSettingsView: View {
     @Binding var settings: AppSettingsDraft
+    @Environment(\.locale) private var locale
 
     var body: some View {
         Form {
@@ -17,6 +18,14 @@ struct AppearanceSettingsView: View {
                 Text("Color Scheme")
             } footer: {
                 Text("System follows your device’s appearance.")
+            }
+            Section {
+                Picker("Language", selection: $settings.appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(verbatim: language.nativeName).tag(language.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.language")
             }
             Section("Message Preview") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -36,7 +45,7 @@ struct AppearanceSettingsView: View {
                 .accessibilityIdentifier("settings.messagePreview")
             }
             Section {
-                LabeledContent("Message Text Size", value: String(localized: "\(Int(settings.messageFontSize)) pt"))
+                LabeledContent("Message Text Size", value: String(localized: "\(Int(settings.messageFontSize)) pt", bundle: .appLocalized))
                 Slider(value: $settings.messageFontSize, in: 12...22, step: 1) {
                     Text("Message Text Size")
                 } minimumValueLabel: {
@@ -44,7 +53,7 @@ struct AppearanceSettingsView: View {
                 } maximumValueLabel: {
                     Image(systemName: "textformat.size.larger").accessibilityHidden(true)
                 }
-                .accessibilityValue(String(localized: "\(Int(settings.messageFontSize)) points"))
+                .accessibilityValue("\(Int(settings.messageFontSize)) points")
                 .accessibilityIdentifier("settings.messageTextSize")
                 Button("Reset Text Size") { settings.messageFontSize = 16 }
                     .disabled(settings.messageFontSize == 16)
@@ -52,7 +61,7 @@ struct AppearanceSettingsView: View {
                 Text("Adjusts user and assistant messages. Settings and other controls follow your device’s text size.")
             }
         }
-        .navigationTitle("Appearance")
+        .navigationTitle(String(localized: "Appearance", bundle: .appLocalized, locale: locale))
         .navigationBarTitleDisplayMode(.inline)
     }
 }

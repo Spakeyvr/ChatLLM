@@ -311,6 +311,76 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testInterfaceLanguageSwitchesImmediatelyAndPersists() throws {
+        let app = launchApp()
+        openSettings(in: app)
+        app.buttons["settings.appearance"].tap()
+
+        for (name, title, appearance, done) in [
+            ("Deutsch", "Einstellungen", "Darstellung", "Fertig"),
+            ("Español", "Ajustes", "Apariencia", "Listo"),
+            ("English", "Settings", "Appearance", "Done")
+        ] {
+            app.buttons["settings.language"].tap()
+            app.buttons[name].tap()
+            XCTAssertTrue(app.navigationBars[appearance].waitForExistence(timeout: 5))
+            captureSettingsScreenshot("appearance-\(name)", in: app)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["settings.appearance"].label.contains(appearance))
+            XCTAssertEqual(app.buttons["settings.done"].label, done)
+            captureSettingsScreenshot("language-\(name)", in: app)
+            app.buttons["settings.appearance"].tap()
+        }
+
+        app.buttons["settings.language"].tap()
+        app.buttons["Español"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["settings.done"].tap()
+        app.terminate()
+        let relaunched = launchApp(resetAppState: false)
+        let settings = relaunched.buttons["Ajustes"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        XCTAssertTrue(relaunched.navigationBars["Ajustes"].waitForExistence(timeout: 5))
+        XCTAssertEqual(relaunched.buttons["settings.done"].label, "Listo")
+        relaunched.buttons["settings.appearance"].tap()
+        XCTAssertTrue(relaunched.buttons["settings.language"].label.contains("Español"))
+    }
+
+    @MainActor
+    func testLocalizedOnboardingAndModelSetup() throws {
+        for (language, welcome, localModels) in [
+            ("de", "Willkommen bei ChatLLM", "Lokale Modelle"),
+            ("es", "Te damos la bienvenida a ChatLLM", "Modelos locales")
+        ] {
+            let app = XCUIApplication()
+            app.launchArguments = [
+                "-ui-test-reset-app-state", "-ui-test-fake-mlx-downloads",
+                "-appLanguage", language
+            ]
+            app.launch()
+            XCTAssertTrue(app.staticTexts[welcome].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["onboarding.intro.continue"].isHittable)
+            captureSettingsScreenshot("onboarding-\(language)", in: app)
+            app.scrollViews.firstMatch.swipeUp()
+            let finalCard = language == "de"
+                ? "Füge einen Tavily-API-Schlüssel hinzu, damit der Assistent im Web nach aktuellen Informationen suchen kann."
+                : "Añade una clave de API de Tavily para que el asistente busque información actual en la web."
+            XCTAssertTrue(app.staticTexts[finalCard].isHittable)
+            XCTAssertTrue(app.buttons["onboarding.intro.continue"].isHittable)
+            captureSettingsScreenshot("onboarding-scrolled-\(language)", in: app)
+            app.buttons["onboarding.intro.continue"].tap()
+            XCTAssertTrue(app.buttons["onboarding.tavily.continue"].waitForExistence(timeout: 5))
+            app.buttons["onboarding.tavily.continue"].tap()
+            XCTAssertTrue(app.staticTexts[localModels].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["onboarding.finish"].isHittable)
+            captureSettingsScreenshot("models-\(language)", in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testSettingsAppearanceAndDetailNavigation() throws {
         let app = launchApp()
         openSettings(in: app)

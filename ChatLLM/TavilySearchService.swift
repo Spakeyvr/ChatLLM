@@ -116,11 +116,11 @@ enum TavilySearchError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidQuery: "Enter a search query under 400 characters."
-        case .invalidAPIKey: "The Tavily API key is missing or invalid."
-        case .networkError(let error): "Web search failed: \(error.localizedDescription)"
-        case .noResults: "No relevant web results were found."
-        case .decodingError: "Tavily returned a response ChatLLM could not read."
+        case .invalidQuery: String(localized: "Enter a search query under 400 characters.", bundle: .appLocalized)
+        case .invalidAPIKey: String(localized: "The Tavily API key is missing or invalid.", bundle: .appLocalized)
+        case .networkError(let error): String(localized: "Web search failed: \(error.localizedDescription)", bundle: .appLocalized)
+        case .noResults: String(localized: "No relevant web results were found.", bundle: .appLocalized)
+        case .decodingError: String(localized: "Tavily returned a response ChatLLM could not read.", bundle: .appLocalized)
         }
     }
 }
@@ -255,7 +255,7 @@ actor TavilySearchService: WebSearchProviding {
     private func validate(response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TavilySearchError.networkError(
-                NSError(domain: "Tavily", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid server response"])
+                NSError(domain: "Tavily", code: -1, userInfo: [NSLocalizedDescriptionKey: String(localized: "Invalid server response", bundle: .appLocalized)])
             )
         }
         guard (200...299).contains(httpResponse.statusCode) else {

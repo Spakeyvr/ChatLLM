@@ -10,7 +10,7 @@ import SwiftUI
 // MARK: - Inline thinking indicator shown during streaming
 
 struct InlineThinkingView: View {
-    var text: String = "Thinking…"
+    var text: String = String(localized: "Thinking…", bundle: .appLocalized)
     let onTap: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shimmerOffset: CGFloat = -0.4
@@ -69,6 +69,7 @@ struct InlineThinkingView: View {
 // MARK: - Step-by-Step Reasoning Sheet
 
 struct StepByStepReasoningSheet: View {
+    @Environment(\.locale) private var locale
     let reasoning: String
     let searchInvocations: [SearchInvocation]?
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
@@ -193,7 +194,7 @@ struct StepByStepReasoningSheet: View {
         .sheet(item: $selectedInvocation) { invocation in
             SourcesSheetView(
                 invocations: [invocation],
-                title: String(localized: "Search Results")
+                title: String(localized: "Search Results", bundle: .appLocalized, locale: locale)
             )
         }
     }
@@ -220,27 +221,29 @@ struct RawReasoningChunkView: View {
 // MARK: - Search step card for reasoning flow (display only — parent owns the sheet)
 
 struct SearchStepCard: View {
+    @Environment(\.locale) private var locale
     let invocation: SearchInvocation
     let onTap: () -> Void
 
     private var statusTitle: String {
         switch invocation.status {
-        case .searching: "Searching the web"
-        case .completed: "Searched the web"
-        case .failed: "Web search failed"
+        case .searching: String(localized: "Searching the web", bundle: .appLocalized, locale: locale)
+        case .completed: String(localized: "Searched the web", bundle: .appLocalized, locale: locale)
+        case .failed: String(localized: "Web search failed", bundle: .appLocalized, locale: locale)
         }
     }
 
     private var statusDetail: String {
         switch invocation.status {
         case .searching:
-            return "Waiting for results…"
+            return String(localized: "Waiting for results…", bundle: .appLocalized, locale: locale)
         case .completed:
             let count = invocation.sourceCount
-            let duration = invocation.durationMilliseconds.map { " · \($0) ms" } ?? ""
-            return "\(count) source\(count == 1 ? "" : "s")\(duration)"
+            let sources = String(localized: "\(count) sources", bundle: .appLocalized, locale: locale)
+            guard let duration = invocation.durationMilliseconds else { return sources }
+            return String(localized: "\(sources) · \(duration) ms", bundle: .appLocalized, locale: locale)
         case .failed:
-            return invocation.errorDescription ?? "Search could not be completed."
+            return invocation.errorDescription ?? String(localized: "Search could not be completed.", bundle: .appLocalized, locale: locale)
         }
     }
 

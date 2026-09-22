@@ -1,10 +1,11 @@
 import SwiftUI
 
 struct SettingsSheet: View {
-    static let mlxRotorQuantInfoMessage = String(localized: "Enabled by default for persistent MLX text and image chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Tool and low-memory turns use safer uncompressed or bounded caches.")
-    static let mlxRotorQuantAccessibilityHint = String(localized: "Enabled by default for supported persistent MLX text and image chats. Tool and low-memory turns use safer cache modes.")
-    static let mlxRotorQuantExperimentalTitle = String(localized: "RotorQuant Experimental")
-    static let mlxRotorQuantExperimentalMessage = String(localized: "RotorQuant is very early and in beta. It can reduce KV-cache memory, but speed and stability are still being tuned.")
+    @Environment(\.locale) private var locale
+    static var mlxRotorQuantInfoMessage: String { String(localized: "Enabled by default for persistent MLX text and image chats, RotorQuant uses IsoQuant block rotations with 3-bit keys, 2-bit values, exact prefill buffering, and per-layer deterministic rotation parameters to reduce memory use. Tool and low-memory turns use safer uncompressed or bounded caches.", bundle: .appLocalized) }
+    static var mlxRotorQuantAccessibilityHint: String { String(localized: "Enabled by default for supported persistent MLX text and image chats. Tool and low-memory turns use safer cache modes.", bundle: .appLocalized) }
+    static var mlxRotorQuantExperimentalTitle: String { String(localized: "RotorQuant Experimental", bundle: .appLocalized) }
+    static var mlxRotorQuantExperimentalMessage: String { String(localized: "RotorQuant is very early and in beta. It can reduce KV-cache memory, but speed and stability are still being tuned.", bundle: .appLocalized) }
 
     @Binding var settings: AppSettingsDraft
     let hasChats: Bool
@@ -32,7 +33,7 @@ struct SettingsSheet: View {
                 NavigationLink(value: Destination.webSearch) {
                     SettingsRow("Web Search", systemImage: "globe", color: .blue,
                                 value: settings.tavilyApiKey.isEmpty
-                                    ? String(localized: "Set Up") : String(localized: "Configured"))
+                                    ? String(localized: "Set Up", bundle: .appLocalized) : String(localized: "Configured", bundle: .appLocalized))
                 }
                 .accessibilityIdentifier("settings.webSearch")
             }
@@ -54,7 +55,7 @@ struct SettingsSheet: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Settings")
+        .navigationTitle(String(localized: "Settings", bundle: .appLocalized, locale: locale))
         .navigationBarTitleDisplayMode(.large)
         .navigationDestination(for: Destination.self) { destination in
             switch destination {
@@ -79,9 +80,9 @@ struct SettingsSheet: View {
 
     private var appearanceSummary: String {
         switch settings.appAppearance {
-        case "light": String(localized: "Light")
-        case "dark": String(localized: "Dark")
-        default: String(localized: "System")
+        case "light": String(localized: "Light", bundle: .appLocalized)
+        case "dark": String(localized: "Dark", bundle: .appLocalized)
+        default: String(localized: "System", bundle: .appLocalized)
         }
     }
 }

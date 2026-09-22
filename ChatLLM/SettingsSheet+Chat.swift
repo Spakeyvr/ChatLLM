@@ -20,7 +20,7 @@ struct ChatSettingsView: View {
                 } label: {
                     LabeledContent {
                         Text(settings.chatPreferences.isEmpty
-                             ? String(localized: "Not Set") : String(localized: "Custom"))
+                             ? String(localized: "Not Set", bundle: .appLocalized) : String(localized: "Custom", bundle: .appLocalized))
                             .foregroundStyle(.secondary)
                     } label: {
                         Text("Response Preferences")

@@ -250,6 +250,8 @@ internal final class CapturingFoundationGenerator: LLMGenerator {
 /// and model storage, including tests that construct multiple view models.
 @MainActor
 final class ChatTestEnvironment {
+    // String assertions must be deterministic even after localized UI tests.
+    private let previousInterfaceLanguage = UserDefaults.standard.string(forKey: AppSettingsKeys.appLanguage)
     let suiteName = "ChatLLMTests." + UUID().uuidString
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let defaults: UserDefaults
@@ -259,10 +261,12 @@ final class ChatTestEnvironment {
     ))
 
     init() {
+        UserDefaults.standard.set("en", forKey: AppSettingsKeys.appLanguage)
         defaults = UserDefaults(suiteName: suiteName)!
     }
 
     deinit {
+        UserDefaults.standard.set(previousInterfaceLanguage, forKey: AppSettingsKeys.appLanguage)
         UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
         try? FileManager.default.removeItem(at: directory)
     }

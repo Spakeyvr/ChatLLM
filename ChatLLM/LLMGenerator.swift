@@ -46,7 +46,7 @@ extension LLMRequest {
 
 nonisolated private func makeSafetyBlockedError() -> NSError {
     NSError(domain: "OnDeviceLLMGenerator", code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "Apple's safety system blocked this response. Try rephrasing your request."])
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "Apple's safety system blocked this response. Try rephrasing your request.", bundle: .appLocalized)])
 }
 
 final class OnDeviceLLMGenerator: LLMGenerator {
@@ -83,7 +83,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "On‑device model unavailable on this device."])
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "On‑device model unavailable on this device.", bundle: .appLocalized)])
         }
         let session = Self.makeSession(for: request, tools: tools)
 

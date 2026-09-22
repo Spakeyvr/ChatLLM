@@ -65,11 +65,11 @@ private struct MLXSettingsView: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Context Window", value: String(localized: "\(Int(contextTokens.wrappedValue)) tokens"))
+                LabeledContent("Context Window", value: String(localized: "\(Int(contextTokens.wrappedValue)) tokens", bundle: .appLocalized))
                 Slider(value: contextTokens, in: 512...Double(deviceMaximum), step: 512) {
                     Text("Context Window")
                 }
-                .accessibilityValue(String(localized: "\(Int(contextTokens.wrappedValue)) tokens"))
+                .accessibilityValue("\(Int(contextTokens.wrappedValue)) tokens")
             } footer: {
                 Text("How much conversation a local MLX model can use. This device supports up to \(deviceMaximum) tokens.")
             }
@@ -81,11 +81,11 @@ private struct MLXSettingsView: View {
                 ))
                 .accessibilityIdentifier("settings.unlimitedOutput")
                 if settings.mlxMaxOutputTokens != 0 {
-                    LabeledContent("Maximum Output", value: String(localized: "\(settings.mlxMaxOutputTokens) tokens"))
+                    LabeledContent("Maximum Output", value: String(localized: "\(settings.mlxMaxOutputTokens) tokens", bundle: .appLocalized))
                     Slider(value: outputTokens, in: 512...1024, step: 32) {
                         Text("Maximum Output")
                     }
-                    .accessibilityValue(String(localized: "\(settings.mlxMaxOutputTokens) tokens"))
+                    .accessibilityValue("\(settings.mlxMaxOutputTokens) tokens")
                 }
             } footer: {
                 Text("Shorter responses usually use less memory and finish sooner. Unlimited removes the output cap.")

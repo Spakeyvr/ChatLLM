@@ -66,7 +66,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
               normalizedMemoryBytes < minimumBytes else {
             return nil
         }
-        return "\(model.displayName) requires an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM."
+        return String(localized: "\(model.displayName) requires an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM.", bundle: .appLocalized)
     }
 
     func toolCallIssue(for model: MLXModelManager.MLXModelInfo) -> String? {
@@ -77,7 +77,7 @@ struct MLXDeviceSupportProfile: Equatable, Sendable {
               normalizedMemoryBytes < minimumBytes else {
             return nil
         }
-        return "Web search and tool calls for \(model.displayName) require an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM."
+        return String(localized: "Web search and tool calls for \(model.displayName) require an iPhone with at least \(Self.formattedGigabytes(minimumBytes)) GB of RAM.", bundle: .appLocalized)
     }
 
     var maxContextWindowTokens: Int {

@@ -16,6 +16,7 @@ import SafariServices
 import ImageIO
 
 struct ChatView: View {
+    @Environment(\.locale) private var locale
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
@@ -218,7 +219,7 @@ struct ChatView: View {
                         .foregroundStyle(canStartNewChat ? .primary : .secondary)
                 }
                 .disabled(!canStartNewChat)
-                .accessibilityLabel(String(localized: "New Chat"))
+                .accessibilityLabel("New Chat")
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -283,7 +284,7 @@ struct ChatView: View {
                     await MainActor.run {
                         selectedPhotoItem = nil
                     }
-                    await handleError(ImageError.invalidFormat, title: "Photo Import Failed", retry: nil)
+                    await handleError(ImageError.invalidFormat, title: String(localized: "Photo Import Failed", bundle: .appLocalized), retry: nil)
                     return
                 }
                 await prepareSelectedImage(image)
@@ -315,7 +316,7 @@ struct ChatView: View {
                 do {
                     try await handleFileImporterResult(result)
                 } catch {
-                    await handleError(error, title: "File Import Failed", retry: nil)
+                    await handleError(error, title: String(localized: "File Import Failed", bundle: .appLocalized), retry: nil)
                 }
             }
         }
@@ -373,7 +374,7 @@ struct ChatView: View {
     private var composer: some View {
         ComposerView(
             text: $inputText,
-            placeholder: String(localized: "Ask anything"),
+            placeholder: String(localized: "Ask anything", bundle: .appLocalized, locale: locale),
             focusRequest: composerFocusRequest,
             isEditing: editingSession != nil,
             canSend: selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -637,13 +638,13 @@ struct ChatView: View {
         var errorDescription: String? {
             switch self {
             case .noData:
-                return String(localized: "Could not load the selected image.")
+                return String(localized: "Could not load the selected image.", bundle: .appLocalized)
             case .invalidFormat:
-                return String(localized: "The selected file is not a valid image.")
+                return String(localized: "The selected file is not a valid image.", bundle: .appLocalized)
             case .accessDenied:
-                return String(localized: "Access to the file was denied.")
+                return String(localized: "Access to the file was denied.", bundle: .appLocalized)
             case .ocrFailed:
-                return String(localized: "Failed to extract text from the image.")
+                return String(localized: "Failed to extract text from the image.", bundle: .appLocalized)
             }
         }
     }

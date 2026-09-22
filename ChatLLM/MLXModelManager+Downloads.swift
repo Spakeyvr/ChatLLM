@@ -179,7 +179,7 @@ extension MLXModelManager {
         let hasWeights = contents.contains { $0.hasSuffix(".safetensors") }
         guard hasConfig, hasWeights else {
             throw NSError(domain: "MLXModelDownload", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Downloaded model is incomplete. Missing config.json or safetensors weights."
+                NSLocalizedDescriptionKey: String(localized: "Downloaded model is incomplete. Missing config.json or safetensors weights.", bundle: .appLocalized)
             ])
         }
     }

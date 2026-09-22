@@ -20,6 +20,7 @@ private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?(
 // MARK: - Conversation Row
 
 struct ConversationRow: View {
+    @Environment(\.locale) private var locale
     let conversation: Conversation
 
     private var messagePreview: MessagePreview {
@@ -74,7 +75,7 @@ struct ConversationRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(conversation.title.isEmpty ? String(localized: "Untitled") : conversation.title)
+                Text(conversation.title.isEmpty ? String(localized: "Untitled", bundle: .appLocalized, locale: locale) : conversation.title)
                     .font(.headline)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
@@ -83,7 +84,7 @@ struct ConversationRow: View {
                     Image(systemName: "brain.head.profile")
                         .font(.caption2)
                         .foregroundStyle(.blue)
-                        .accessibilityLabel(String(localized: "Reasoning mode"))
+                        .accessibilityLabel("Reasoning mode")
                 }
 
                 Spacer(minLength: 0)
@@ -97,7 +98,7 @@ struct ConversationRow: View {
                     .lineLimit(2) // Allow 2 lines for better preview
                     .foregroundStyle(.secondary)
             case .empty:
-                Text(String(localized: "No messages yet"))
+                Text("No messages yet")
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
                     .italic()

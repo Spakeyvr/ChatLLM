@@ -14,7 +14,7 @@ struct WebSearchSettingsView: View {
                     showingKeyEditor = true
                 } label: {
                     LabeledContent("API Key", value: settings.tavilyApiKey.isEmpty
-                                   ? String(localized: "Set Up") : String(localized: "Edit"))
+                                   ? String(localized: "Set Up", bundle: .appLocalized) : String(localized: "Edit", bundle: .appLocalized))
                 }
                 .accessibilityIdentifier("settings.editAPIKey")
                 if !settings.tavilyApiKey.isEmpty {

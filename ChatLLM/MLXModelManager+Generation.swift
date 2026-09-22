@@ -237,11 +237,11 @@ extension MLXModelManager {
         var errorDescription: String? {
             switch self {
             case .modelNotLoaded:
-                return "No MLX model is loaded. Select the MLX backend and wait for the model to finish loading."
+                return String(localized: "No MLX model is loaded. Select the MLX backend and wait for the model to finish loading.", bundle: .appLocalized)
             case .invalidChatHistory:
-                return "The MLX chat history is empty, so generation cannot start."
+                return String(localized: "The MLX chat history is empty, so generation cannot start.", bundle: .appLocalized)
             case .missingToolDispatch:
-                return "The model emitted a tool call, but no MLX tool dispatcher was configured."
+                return String(localized: "The model emitted a tool call, but no MLX tool dispatcher was configured.", bundle: .appLocalized)
             case .unsupportedToolTemplate(let message):
                 return message
             }

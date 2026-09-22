@@ -47,7 +47,7 @@ struct AppSettingsDraft: Equatable {
                 ?? defaults.string(forKey: AppSettingsKeys.legacyDefaultSystemPrompt)
                 ?? "",
             appAppearance: defaults.string(forKey: AppSettingsKeys.appAppearance) ?? "system",
-            appLanguage: defaults.string(forKey: AppSettingsKeys.appLanguage) ?? "en",
+            appLanguage: AppLanguage.resolve(defaults.string(forKey: AppSettingsKeys.appLanguage) ?? "en").rawValue,
             tavilyApiKey: TavilyAPIKeyStore.currentKey(
                 userDefaults: defaults,
                 service: TavilyAPIKeyStore.service,

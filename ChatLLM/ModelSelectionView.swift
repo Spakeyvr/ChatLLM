@@ -86,7 +86,7 @@ struct ModelSelectionView: View {
             do {
                 try modelManager.deleteModel(model)
             } catch {
-                modelManager.loadError = "Delete failed: \(error.localizedDescription)"
+                modelManager.loadError = String(localized: "Delete failed: \(error.localizedDescription)", bundle: .appLocalized)
             }
         }
     }
@@ -245,9 +245,9 @@ struct ModelInfoSheet: View {
                 Section("Overview") {
                     InfoRow(label: "Name", value: model.name)
                     InfoRow(label: "Parameters", value: model.parameters)
-                    InfoRow(label: "Context Length", value: "\(model.contextLength) tokens")
-                    InfoRow(label: "Status", value: model.isAvailable ? "Available" : "Not Available")
-                    InfoRow(label: "Reasoning", value: model.supportsReasoning ? "Supported" : "Not supported")
+                    InfoRow(label: "Context Length", value: String(localized: "\(model.contextLength) tokens", bundle: .appLocalized))
+                    InfoRow(label: "Status", value: model.isAvailable ? String(localized: "Available", bundle: .appLocalized) : String(localized: "Not Available", bundle: .appLocalized))
+                    InfoRow(label: "Reasoning", value: model.supportsReasoning ? String(localized: "Supported", bundle: .appLocalized) : String(localized: "Not supported", bundle: .appLocalized))
                     InfoRow(label: "Package", value: model.loadPolicy.packageDescription)
                     if let architectureHint = model.loadPolicy.architectureHint {
                         InfoRow(label: "Architecture", value: architectureHint)
@@ -279,7 +279,7 @@ struct ModelInfoSheet: View {
 }
 
 struct InfoRow: View {
-    let label: String
+    let label: LocalizedStringKey
     let value: String
 
     var body: some View {

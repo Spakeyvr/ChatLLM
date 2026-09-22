@@ -348,11 +348,11 @@ nonisolated final class BackgroundModelDownloadSession: NSObject, @unchecked Sen
             switch self {
             case .badResponse(let statusCode):
                 if let statusCode {
-                    return "The model server returned HTTP \(statusCode)."
+                    return String(localized: "The model server returned HTTP \(statusCode).", bundle: .appLocalized)
                 }
-                return "The model server returned an unexpected response."
+                return String(localized: "The model server returned an unexpected response.", bundle: .appLocalized)
             case .missingTaskDescription:
-                return "The background model download lost its destination information."
+                return String(localized: "The background model download lost its destination information.", bundle: .appLocalized)
             }
         }
     }

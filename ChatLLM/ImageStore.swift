@@ -29,7 +29,7 @@ actor ImageStore {
         guard image.size.width > 0 && image.size.height > 0 && image.scale > 0 else {
             logger.error("Error: Cannot save image with invalid dimensions or scale: \(image.size.width)x\(image.size.height) @ \(image.scale)x")
             throw NSError(domain: "ImageStore", code: -2, userInfo: [
-                NSLocalizedDescriptionKey: "Image has invalid dimensions or scale"
+                NSLocalizedDescriptionKey: String(localized: "Image has invalid dimensions or scale", bundle: .appLocalized)
             ])
         }
         
@@ -37,7 +37,7 @@ actor ImageStore {
         guard image.cgImage != nil else {
             logger.error("Error: Image has no CGImage backing")
             throw NSError(domain: "ImageStore", code: -3, userInfo: [
-                NSLocalizedDescriptionKey: "Image has no bitmap data"
+                NSLocalizedDescriptionKey: String(localized: "Image has no bitmap data", bundle: .appLocalized)
             ])
         }
 
@@ -46,7 +46,7 @@ actor ImageStore {
             scaled.jpegData(compressionQuality: jpegQuality)
         }) else {
             logger.error("Error: JPEG encoding failed for image")
-            throw NSError(domain: "ImageStore", code: -1, userInfo: [NSLocalizedDescriptionKey: "JPEG encoding failed"])
+            throw NSError(domain: "ImageStore", code: -1, userInfo: [NSLocalizedDescriptionKey: String(localized: "JPEG encoding failed", bundle: .appLocalized)])
         }
         
         let dir = try directory()
@@ -71,7 +71,7 @@ actor ImageStore {
     ) async throws -> URL {
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw NSError(domain: "ImageStore", code: -4, userInfo: [
-                NSLocalizedDescriptionKey: "Source image not found for inference variant"
+                NSLocalizedDescriptionKey: String(localized: "Source image not found for inference variant", bundle: .appLocalized)
             ])
         }
 
@@ -237,7 +237,7 @@ actor ImageStore {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, sourceOptions) else {
             throw NSError(domain: "ImageStore", code: -5, userInfo: [
-                NSLocalizedDescriptionKey: "Unable to read image source for inference variant"
+                NSLocalizedDescriptionKey: String(localized: "Unable to read image source for inference variant", bundle: .appLocalized)
             ])
         }
 
@@ -256,14 +256,14 @@ actor ImageStore {
 
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             throw NSError(domain: "ImageStore", code: -6, userInfo: [
-                NSLocalizedDescriptionKey: "Unable to create thumbnail for inference variant"
+                NSLocalizedDescriptionKey: String(localized: "Unable to create thumbnail for inference variant", bundle: .appLocalized)
             ])
         }
 
         let renderedImage = UIImage(cgImage: thumbnail)
         guard let data = renderedImage.jpegData(compressionQuality: jpegQuality) else {
             throw NSError(domain: "ImageStore", code: -7, userInfo: [
-                NSLocalizedDescriptionKey: "Unable to encode inference variant"
+                NSLocalizedDescriptionKey: String(localized: "Unable to encode inference variant", bundle: .appLocalized)
             ])
         }
 

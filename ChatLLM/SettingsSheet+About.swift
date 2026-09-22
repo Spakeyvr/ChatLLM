@@ -27,7 +27,7 @@ struct AboutSettingsView: View {
                 Text("Get help, report a problem, or share an idea for ChatLLM.")
             }
             Section {
-                LabeledContent("Release Channel", value: String(localized: "Beta"))
+                LabeledContent("Release Channel", value: String(localized: "Beta", bundle: .appLocalized))
             } footer: {
                 Text("ChatLLM is in beta. Features may change, and you may encounter bugs. Your feedback helps improve the app.")
             }

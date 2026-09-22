@@ -421,13 +421,13 @@ actor ModelDownloader {
 
         var errorDescription: String? {
             switch self {
-            case .badResponse:       return "The server returned an unexpected response. Check your internet connection."
-            case .noFilesFound:      return "No files found for this model on HuggingFace."
-            case .badURL(let file):  return "Could not construct download URL for file: \(file)"
+            case .badResponse:       return String(localized: "The server returned an unexpected response. Check your internet connection.", bundle: .appLocalized)
+            case .noFilesFound:      return String(localized: "No files found for this model on HuggingFace.", bundle: .appLocalized)
+            case .badURL(let file):  return String(localized: "Could not construct download URL for file: \(file)", bundle: .appLocalized)
             case .invalidRemotePath(let file):
-                return "The server returned an unexpected file path for: \(file)"
+                return String(localized: "The server returned an unexpected file path for: \(file)", bundle: .appLocalized)
             case .incorrectFileSize(let file, let expected, let actual):
-                return "Downloaded file '\(file)' has the wrong size (expected \(expected) bytes, received \(actual) bytes)."
+                return String(localized: "Downloaded file '\(file)' has the wrong size (expected \(expected) bytes, received \(actual) bytes).", bundle: .appLocalized)
             }
         }
     }

@@ -29,7 +29,7 @@ extension MLXModelManager {
         }
         guard model.isAvailable else {
             loadError = compatibilityError(for: model) ??
-                "\(model.displayName) is not downloaded. Download it before loading."
+                String(localized: "\(model.displayName) is not downloaded. Download it before loading.", bundle: .appLocalized)
             return
         }
 
@@ -101,7 +101,7 @@ extension MLXModelManager {
             if let compatibilityError = compatibilityError(for: model) {
                 loadError = compatibilityError
             } else {
-                loadError = "Model '\(model.localDirName)' not found in Documents/Models/. Use the Download button to fetch it."
+                loadError = String(localized: "Model '\(model.localDirName)' not found in Documents/Models/. Use the Download button to fetch it.", bundle: .appLocalized)
             }
             return
         }
@@ -236,7 +236,7 @@ extension MLXModelManager {
                     self.pendingModelToLoad = nil
                     self.loadTask = nil
                     self.activeLoadID = nil
-                    self.loadError = "Failed to load model: \(error.localizedDescription)"
+                    self.loadError = String(localized: "Failed to load model: \(error.localizedDescription)", bundle: .appLocalized)
                 }
                 self.tearDownCurrentModel(reason: "load failure for \(model.id)")
                 self.logger.error("MLX model load error: \((error as NSError).localizedDescription, privacy: .public)")

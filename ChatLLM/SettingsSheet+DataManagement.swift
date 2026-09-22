@@ -59,7 +59,7 @@ struct PrivacySettingsView: View {
         }
         .navigationTitle("Privacy & Data")
         .navigationBarTitleDisplayMode(.inline)
-        .alert(deletion == .deleteAll ? String(localized: "Delete All Chats?") : String(localized: "Delete Other Chats?"),
+        .alert(deletion == .deleteAll ? String(localized: "Delete All Chats?", bundle: .appLocalized) : String(localized: "Delete Other Chats?", bundle: .appLocalized),
                isPresented: $showingDeletionConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
@@ -67,8 +67,8 @@ struct PrivacySettingsView: View {
             }
         } message: {
             Text(deletion == .deleteAll
-                 ? String(localized: "All conversations and their attachments will be permanently deleted. This cannot be undone.")
-                 : String(localized: "All conversations except the current one will be permanently deleted. If no chat is selected, the most recent chat is kept. This cannot be undone."))
+                 ? String(localized: "All conversations and their attachments will be permanently deleted. This cannot be undone.", bundle: .appLocalized)
+                 : String(localized: "All conversations except the current one will be permanently deleted. If no chat is selected, the most recent chat is kept. This cannot be undone.", bundle: .appLocalized))
         }
     }
 }

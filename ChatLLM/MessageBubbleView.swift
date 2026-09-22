@@ -10,10 +10,10 @@ import SwiftData
 import UIKit
 import SafariServices
 
-// MARK: - Localization Constants (Performance Optimization)
+// MARK: - Localized status strings
 enum Strings {
-    static let thinking = String(localized: "Thinking…")
-    static let loading = String(localized: "Loading…")
+    static var thinking: String { String(localized: "Thinking…", bundle: .appLocalized) }
+    static var loading: String { String(localized: "Loading…", bundle: .appLocalized) }
 }
 
 // MARK: - Shared error callout
@@ -93,6 +93,7 @@ extension URL: @retroactive Identifiable {
 // MARK: - Performance-optimized message cell view
 
 struct MessageCellView: View {
+    @Environment(\.locale) private var locale
     let message: Message
     @ObservedObject var viewModel: ChatViewModel
     let onEdit: (Message) -> Void
@@ -121,7 +122,7 @@ struct MessageCellView: View {
 
         guard let legacyText = extractSourcesFromMessage(), !legacyText.isEmpty else { return [] }
         return [SearchInvocation(
-            query: message.searchQuery?.isEmpty == false ? message.searchQuery! : String(localized: "Saved web search"),
+            query: message.searchQuery?.isEmpty == false ? message.searchQuery! : String(localized: "Saved web search", bundle: .appLocalized, locale: locale),
             results: legacyText
         )]
     }
@@ -160,7 +161,7 @@ struct MessageCellView: View {
                         }
                         .accessibilityActions {
                             if message.role == .user {
-                                Button(String(localized: "Edit")) {
+                                Button("Edit") {
                                     onEdit(message)
                                 }
                             }
@@ -186,13 +187,13 @@ struct MessageCellView: View {
                     onConcise: {
                         viewModel.scheduleRegeneration(
                             messageID: message.id,
-                            instruction: String(localized: "Please answer again, but be more concise.")
+                            instruction: "Please answer again, but be more concise."
                         )
                     },
                     onFormal: {
                         viewModel.scheduleRegeneration(
                             messageID: message.id,
-                            instruction: String(localized: "Please answer again using a formal tone.")
+                            instruction: "Please answer again using a formal tone."
                         )
                     },
                     developerModeEnabled: developerModeEnabled && message.role == .assistant,
@@ -331,6 +332,7 @@ struct StandardMessageBubble: View {
 // MARK: - Reasoning mode message bubble with modern design
 
 struct ReasoningMessageBubble: View {
+    @Environment(\.locale) private var locale
     let message: Message
     @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
     @ObservedObject var viewModel: ChatViewModel
@@ -399,11 +401,11 @@ struct ReasoningMessageBubble: View {
         let reasoningStatusText: String? = {
             if hasCompletedReasoning {
                 if let duration = message.reasoningDuration ?? message.generationDuration {
-                    return "Thought for \(ThoughtDurationFormatter.string(for: duration))"
+                    return String(localized: "Thought for \(ThoughtDurationFormatter.string(for: duration))", bundle: .appLocalized, locale: locale)
                 }
-                return "Thought"
+                return String(localized: "Thought", bundle: .appLocalized, locale: locale)
             }
-            return isCurrentlyStreaming ? "Thinking…" : nil
+            return isCurrentlyStreaming ? String(localized: "Thinking…", bundle: .appLocalized, locale: locale) : nil
         }()
 
         HStack(alignment: .bottom, spacing: 8) {
@@ -665,7 +667,7 @@ struct SourcesSheetView: View {
             Text(invocation.query)
                 .font(.body.weight(.medium))
                 .textSelection(.enabled)
-            Text("\(invocation.sourceCount) source\(invocation.sourceCount == 1 ? "" : "s")")
+            Text("\(invocation.sourceCount) sources")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -792,6 +794,7 @@ private struct SourceIcon: View {
 // MARK: - Developer diagnostics
 
 private struct DeveloperMessageSheet: View {
+    @Environment(\.locale) private var locale
     let message: Message
 
     private static let dateFormatter: DateFormatter = {
@@ -803,7 +806,7 @@ private struct DeveloperMessageSheet: View {
 
     private var rawText: String {
         let raw = message.developerRawText
-        return raw.isEmpty ? String(localized: "No raw output captured for this message.") : raw
+        return raw.isEmpty ? String(localized: "No raw output captured for this message.", bundle: .appLocalized, locale: locale) : raw
     }
 
     var body: some View {
@@ -811,43 +814,43 @@ private struct DeveloperMessageSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(String(localized: "Stats"))
+                        Text("Stats")
                             .font(.headline)
 
-                        DeveloperStatRow(label: String(localized: "Backend"), value: message.generationBackend ?? "Unknown")
+                        DeveloperStatRow(label: String(localized: "Backend", bundle: .appLocalized, locale: locale), value: message.generationBackend ?? String(localized: "Unknown", bundle: .appLocalized, locale: locale))
 
                         if let generationModelName = message.generationModelName, !generationModelName.isEmpty {
-                            DeveloperStatRow(label: String(localized: "Model"), value: generationModelName)
+                            DeveloperStatRow(label: String(localized: "Model", bundle: .appLocalized, locale: locale), value: generationModelName)
                         }
 
                         if let startedAt = message.generationStartedAt {
                             DeveloperStatRow(
-                                label: String(localized: "Started"),
+                                label: String(localized: "Started", bundle: .appLocalized, locale: locale),
                                 value: Self.dateFormatter.string(from: startedAt)
                             )
                         }
 
                         if let completedAt = message.generationCompletedAt {
                             DeveloperStatRow(
-                                label: String(localized: "Finished"),
+                                label: String(localized: "Finished", bundle: .appLocalized, locale: locale),
                                 value: Self.dateFormatter.string(from: completedAt)
                             )
                         }
 
                         if let duration = message.generationDuration {
-                            DeveloperStatRow(label: String(localized: "Duration"), value: String(format: "%.2fs", duration))
+                            DeveloperStatRow(label: String(localized: "Duration", bundle: .appLocalized, locale: locale), value: String(format: "%.2fs", duration))
                         }
 
                         if let estimatedOutputTokenCount = message.estimatedOutputTokenCount {
-                            DeveloperStatRow(label: String(localized: "Est. output tokens"), value: "\(estimatedOutputTokenCount)")
+                            DeveloperStatRow(label: String(localized: "Est. output tokens", bundle: .appLocalized, locale: locale), value: "\(estimatedOutputTokenCount)")
                         }
 
                         if let estimatedTokensPerSecond = message.estimatedTokensPerSecond {
-                            DeveloperStatRow(label: String(localized: "Est. tokens/sec"), value: String(format: "%.2f", estimatedTokensPerSecond))
+                            DeveloperStatRow(label: String(localized: "Est. tokens/sec", bundle: .appLocalized, locale: locale), value: String(format: "%.2f", estimatedTokensPerSecond))
                         }
 
-                        DeveloperStatRow(label: String(localized: "Raw chars"), value: "\(message.developerRawText.count)")
-                        DeveloperStatRow(label: String(localized: "Visible chars"), value: "\(message.displayText.count)")
+                        DeveloperStatRow(label: String(localized: "Raw chars", bundle: .appLocalized, locale: locale), value: "\(message.developerRawText.count)")
+                        DeveloperStatRow(label: String(localized: "Visible chars", bundle: .appLocalized, locale: locale), value: "\(message.displayText.count)")
                     }
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -857,7 +860,7 @@ private struct DeveloperMessageSheet: View {
                     )
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(String(localized: "Raw Output"))
+                        Text("Raw Output")
                             .font(.headline)
 
                         Text(rawText)
@@ -873,7 +876,7 @@ private struct DeveloperMessageSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle(String(localized: "Developer"))
+            .navigationTitle("Developer")
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.fraction(0.5), .large])
@@ -909,20 +912,20 @@ struct MessageContextMenuView: View {
         Button {
             deferMenuSafe { onCopy(message.userVisibleText) }
         } label: {
-            Label(String(localized: "Copy"), systemImage: "doc.on.doc")
+            Label("Copy", systemImage: "doc.on.doc")
         }
 
         Button {
             deferMenuSafe { onShare(message.userVisibleText) }
         } label: {
-            Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+            Label("Share", systemImage: "square.and.arrow.up")
         }
 
         if message.role == .user {
             Button {
                 deferMenuSafe { onEdit(message) }
             } label: {
-                Label(String(localized: "Edit"), systemImage: "pencil.circle")
+                Label("Edit", systemImage: "pencil.circle")
             }
         }
     }
@@ -953,7 +956,7 @@ struct MessageSwipeActionsView: View {
                 onCopy(message.userVisibleText)
             }
         } label: {
-            Label(String(localized: "Copy"), systemImage: "doc.on.doc")
+            Label("Copy", systemImage: "doc.on.doc")
         }
         .tint(.green)
 
@@ -965,7 +968,7 @@ struct MessageSwipeActionsView: View {
                 onShare(message.userVisibleText)
             }
         } label: {
-            Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+            Label("Share", systemImage: "square.and.arrow.up")
         }
         .tint(.blue)
 
@@ -977,7 +980,7 @@ struct MessageSwipeActionsView: View {
                     onEdit(message)
                 }
             } label: {
-                Label(String(localized: "Edit"), systemImage: "pencil")
+                Label("Edit", systemImage: "pencil")
             }
             .tint(.orange)
         }
@@ -987,6 +990,7 @@ struct MessageSwipeActionsView: View {
 // MARK: - Enhanced Assistant Actions Bar
 
 struct AssistantActionsBar: View {
+    @Environment(\.locale) private var locale
     let messageID: UUID
     var isGenerating: Bool
     var isStreamingForThisMessage: Bool
@@ -1011,13 +1015,13 @@ struct AssistantActionsBar: View {
             Group {
                 Menu {
                     Button(action: onTryAgain) {
-                        Label(String(localized: "Try again"), systemImage: "arrow.triangle.2.circlepath")
+                        Label("Try again", systemImage: "arrow.triangle.2.circlepath")
                     }
                     Button(action: onConcise) {
-                        Label(String(localized: "More concise"), systemImage: "text.justify.leading")
+                        Label("More concise", systemImage: "text.justify.leading")
                     }
                     Button(action: onFormal) {
-                        Label(String(localized: "More formal"), systemImage: "textformat.abc")
+                        Label("More formal", systemImage: "textformat.abc")
                     }
                 } label: {
                     Image(systemName: "arrow.triangle.2.circlepath")
@@ -1025,7 +1029,7 @@ struct AssistantActionsBar: View {
                 }
                 // Removed .menuStyle(.borderlessButton) – flaky in scrollable cells
                 .disabled(!canAct)
-                .accessibilityLabel(String(localized: "Regenerate"))
+                .accessibilityLabel("Regenerate")
             }
 
             if developerModeEnabled {
@@ -1035,7 +1039,7 @@ struct AssistantActionsBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAct)
-                .accessibilityLabel(String(localized: "Developer"))
+                .accessibilityLabel("Developer")
             }
 
             if !sourceInvocations.isEmpty {
@@ -1043,7 +1047,7 @@ struct AssistantActionsBar: View {
                     .sheet(isPresented: $showSources) {
                         SourcesSheetView(
                             invocations: sourceInvocations,
-                            title: String(localized: "Sources")
+                            title: String(localized: "Sources", bundle: .appLocalized, locale: locale)
                         )
                     }
             }
@@ -1095,7 +1099,7 @@ struct MessageImageAttachmentView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.blue)
 
-                                Text("\(detections.count) object\(detections.count == 1 ? "" : "s") detected")
+                                Text("\(detections.count) objects detected")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }

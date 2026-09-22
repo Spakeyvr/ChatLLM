@@ -145,7 +145,7 @@ extension MLXModelManager {
                 isInstalled: true,
                 isCompatible: false,
                 compatibilityError:
-                    "Installed model '\(info.localDirName)' is missing processor metadata for native image support. Re-download \(info.localDirName) to enable native images."
+                    String(localized: "Installed model '\(info.localDirName)' is missing processor metadata for native image support. Re-download \(info.localDirName) to enable native images.", bundle: .appLocalized)
             )
         }
 
@@ -154,7 +154,7 @@ extension MLXModelManager {
                 isInstalled: true,
                 isCompatible: false,
                 compatibilityError:
-                    "Installed model '\(info.localDirName)' is incompatible with native image support (processor '\(detectedProcessorClass)'). Re-download \(info.localDirName) to get the correct multimodal files."
+                    String(localized: "Installed model '\(info.localDirName)' is incompatible with native image support (processor '\(detectedProcessorClass)'). Re-download \(info.localDirName) to get the correct multimodal files.", bundle: .appLocalized)
             )
         }
 

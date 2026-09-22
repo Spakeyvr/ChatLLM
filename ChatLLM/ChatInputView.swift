@@ -57,13 +57,14 @@ struct ComposerView: View {
             reasoningRequired: reasoningRequired
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(String(localized: "Message composer"))
+        .accessibilityLabel("Message composer")
     }
 }
 
 // MARK: - Navigation title component - Liquid Glass & Centered Fix
 
 struct NavigationTitleView: View {
+    @Environment(\.locale) private var locale
     let title: String
     let isReasoningEnabled: Bool
     let isSmartReasoningEnabled: Bool
@@ -86,7 +87,7 @@ struct NavigationTitleView: View {
         } else if let current = modelBackendBridge.currentModelDisplayName {
             return current
         } else {
-            return "Select Model"
+            return String(localized: "Select Model", bundle: .appLocalized, locale: locale)
         }
     }
 
@@ -168,7 +169,7 @@ struct NavigationTitleView: View {
             }
 
             if isSwitching {
-                LoadingDotsLabel(label: String(localized: "Loading"), font: .headline)
+                LoadingDotsLabel(font: .headline)
             } else {
                 Text(displayName)
                     .font(.headline)
