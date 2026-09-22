@@ -358,7 +358,7 @@ template <
 
           STEEL_PRAGMA_UNROLL
           for (short jj = 0; jj < stile_t::MMAFrag_t::kElemsPerFrag; jj++) {
-            if constexpr (is_bool) {
+            if (is_bool) {
               Stile.frag_at(i, j)[jj] =
                   mfrag[jj] ? Stile.frag_at(i, j)[jj] : neg_inf;
             } else {
@@ -428,7 +428,7 @@ template <
       for (short id = 0; id < TD; id++) {
         STEEL_PRAGMA_UNROLL
         for (short ik = 0; ik < TK; ik++) {
-          if constexpr (BD == 128) {
+          if (BD == 128) {
             simdgroup_barrier(mem_flags::mem_none);
           }
 
@@ -438,7 +438,7 @@ template <
           Vtile.template load<T, 1, 1, LDV_tgp, 1>(
               &Vs[Vs_offset + kk * LDV_tgp + dd]);
 
-          if constexpr (BD == 128) {
+          if (BD == 128) {
             simdgroup_barrier(mem_flags::mem_none);
           }
 

@@ -418,7 +418,6 @@ struct ReasoningMessageBubble: View {
                         text: reasoningStatusText,
                         onTap: hasReasoningContent ? { showReasoningSheet = true } : nil
                     )
-                    .accessibilityIdentifier("message.thought")
                 }
 
                 // Final answer section — only shown when there is content to display

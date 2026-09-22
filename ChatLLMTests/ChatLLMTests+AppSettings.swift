@@ -357,12 +357,13 @@ extension ChatLLMTests {
 
         // Repetition penalty lives in 1.0...1.5, and 1.0 reads back as "off".
         #expect(defaults.mlxRepetitionPenalty == 1.0)
+        #expect(defaults.mlxRepetitionPenaltyValue == nil)
         defaults.mlxRepetitionPenalty = 2.0
         #expect(defaults.mlxRepetitionPenalty == 1.5)
         #expect(defaults.mlxRepetitionPenaltyValue == Float(1.5))
         defaults.mlxRepetitionPenalty = 0.5
         #expect(defaults.mlxRepetitionPenalty == 1.0)
-        #expect(defaults.mlxRepetitionPenaltyValue == nil)
+        #expect(defaults.mlxRepetitionPenaltyValue == Float(1.0))
 
         // The context window defers to the device maximum until it is set,
         // then stays inside 512...deviceMaximum.

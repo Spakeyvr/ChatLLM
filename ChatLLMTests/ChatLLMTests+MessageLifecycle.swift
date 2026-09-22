@@ -415,13 +415,13 @@ extension ChatLLMTests {
         #expect(bridge.currentModelDisplayName == "Qwen 3.5 (0.8B (4-bit))")
     }
 
-    @Test func bridgeDisplayNameFallsBackForPersistedSmolLM3Selection() {
+    @Test func bridgeDisplayNameFallsBackForPersistedLFM25Selection() {
         let bridge = makeBackendBridge()
         bridge.modelManager = nil
         bridge.selectedBackend = .mlx
-        bridge.selectedModelID = "smollm3-3b-4bit"
+        bridge.selectedModelID = "lfm2.5-2.6b-4bit"
 
-        #expect(bridge.currentModelDisplayName == "SmolLM3 (3B (4-bit))")
+        #expect(bridge.currentModelDisplayName == "LFM2.5 (2.6B (4-bit))")
     }
 
     @Test func reasoningAvailabilityTracksSelectedModelSupport() {
@@ -448,11 +448,11 @@ extension ChatLLMTests {
         #expect(!bridge.reasoningAvailable)
     }
 
-    @Test func reasoningAvailabilityFallsBackForPersistedSmolLM3Selection() {
+    @Test func reasoningAvailabilityFallsBackForPersistedLFM25Selection() {
         let bridge = makeBackendBridge()
         bridge.modelManager = nil
         bridge.selectedBackend = .mlx
-        bridge.selectedModelID = "smollm3-3b-4bit"
+        bridge.selectedModelID = "lfm2.5-2.6b-4bit"
 
         #expect(bridge.reasoningAvailable)
     }

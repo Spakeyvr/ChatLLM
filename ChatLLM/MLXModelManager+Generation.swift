@@ -127,6 +127,7 @@ extension MLXModelManager {
         guard let container, let currentModel else {
             throw GenerationError.modelNotLoaded
         }
+        let enableThinking = currentModel.requiresReasoning || enableThinking
         await cancelDeferredTuningBeforeGeneration(for: currentModel)
         guard self.container === container, self.currentModel?.id == currentModel.id else {
             throw GenerationError.modelNotLoaded
@@ -350,7 +351,7 @@ extension MLXModelManager {
         return .none
     }
 
-    nonisolated private static func makeGenerateParameters(
+    nonisolated internal static func makeGenerateParameters(
         maxTokens: Int?,
         maxKVSize: Int?,
         cacheCompression: CacheCompressionMode,
@@ -361,6 +362,20 @@ extension MLXModelManager {
         repetitionPenalty: Float?
     ) -> GenerateParameters {
         let isQwen35Model = currentModelID.hasPrefix("qwen3.5-")
+
+        // LiquidAI's generation_config.json: temperature 0.1, top-k 50, repetition 1.1.
+        if currentModelID == "lfm2.5-2.6b-4bit" {
+            return GenerateParameters(
+                maxTokens: maxTokens,
+                maxKVSize: maxKVSize,
+                cacheCompression: cacheCompression.generateParametersCompression,
+                temperature: 0.1,
+                topP: 1.0,
+                topK: 50,
+                repetitionPenalty: repetitionPenalty ?? 1.1,
+                prefillStepSize: prefillStepSize
+            )
+        }
 
         if enableThinking && isQwen35Model {
             let qwen35ThinkingTemperature: Float = includesMedia ? 0.6 : 1.0

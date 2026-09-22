@@ -5,14 +5,14 @@ ChatLLM is a SwiftUI iPhone and iPad app for fully local chat with on-device lan
 It supports two backends:
 
 - `Apple Intelligence` via `FoundationModels`
-- `MLX` via locally downloaded Qwen 3.5 multimodal models and SmolLM3 text models
+- `MLX` via locally downloaded Qwen 3.5 multimodal models and LFM2.5 text models
 
 The app also includes optional web search with Tavily, image attachments, Vision-based image analysis, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
 
 ## Features
 
 - On-device chat with Apple Foundation Models when supported by the device
-- Local MLX model execution with downloadable Qwen 3.5 and SmolLM3 models
+- Local MLX model execution with downloadable Qwen 3.5 and LFM2.5 models
 - Per-chat backend/model selection before a conversation starts
 - Reasoning mode and smart reasoning support
 - Optional Tavily-powered web search for time-sensitive answers
@@ -42,9 +42,15 @@ The app currently exposes these downloadable local models:
 - `Qwen 3.5 4B (4-bit hybrid)` about `2.66 GB`
 - `Qwen 3.5 2B (4-bit)` about `1.75 GB`
 - `Qwen 3.5 0.8B (4-bit)` about `625 MB`
-- `SmolLM3 3B (4-bit)` about `1.75 GB`
+- `LFM2.5 2.6B (4-bit)` about `1.60 GB`
 
-The Qwen models are configured as multimodal MLX models with reasoning support and native image support. SmolLM3 is configured as a text-only MLX model with reasoning support.
+The Qwen models are configured as multimodal MLX models with reasoning support and native image support. LFM2.5 is text-only with always-on reasoning and native tool calling.
+
+LFM2.5 uses [LiquidAI/LFM2.5-2.6B-MLX-4bit](https://huggingface.co/LiquidAI/LFM2.5-2.6B-MLX-4bit).
+This official 4-bit package retains LiquidAI's 6-bit embedding exception. Its
+131,072-token architecture limit remains subject to the app's device memory and
+context limits. Existing SmolLM selections migrate to LFM; users download the new
+weights through Manage Models. Conversation history is preserved.
 
 ## Optional Setup
 
@@ -100,7 +106,7 @@ Key app files:
 - `SwiftUI` drives the entire interface
 - `SwiftData` stores conversations, messages, and attachments
 - `FoundationModels` powers Apple Intelligence chats when available
-- `MLX` powers downloadable local Qwen models
+- `MLX` powers downloadable local Qwen and LFM models
 - `Vision` handles OCR and image analysis fallback
 - `UserDefaults` and Keychain store user settings and the Tavily API key
 
@@ -123,6 +129,36 @@ Use these factories instead of production singletons when adding tests.
 Cancellation tests cover preparation, streaming, reasoning, pending web searches,
 regeneration, and switching chats. Math tests load the actual bundled WebView and
 verify environment rendering and local font loading.
+
+### Real LFM simulator checks
+
+Download LFM2.5 through Manage Models in the chosen simulator first. These opt-in
+tests use actual model weights and GPU generation; the search integration mocks
+only Tavily's HTTP response so no API key is needed. Run with parallel testing
+disabled to use that simulator's installed model directory:
+
+```sh
+TEST_RUNNER_CHATLLM_RUN_LFM_INTEGRATION=1 xcodebuild \
+  -project ChatLLM.xcodeproj -scheme ChatLLM \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -parallel-testing-enabled NO \
+  '-only-testing:ChatLLMTests/ChatLLMTests/lfmRealModelSearchRoundTrip()' \
+  -only-testing:ChatLLMUITests/ChatLLMLFMIntegrationTests test
+```
+
+The UI check verifies a real answer, the reasoning sheet, and a contextual
+follow-up. Physical-device memory/performance and authenticated Tavily access
+require separate device/network checks.
+
+App and test targets treat compiler warnings as errors. The vendored Cmlx target
+has one explicit exception for upstream 64-to-32-bit conversion diagnostics;
+this is a scoped diagnostic policy, not a claim that upstream narrowing was
+eliminated. Deprecation and Swift concurrency diagnostics remain enabled.
+See `Vendor/mlx-swift/README-ChatLLM.md` for the local compatibility patches.
+
+App and test targets skip App Intents metadata extraction because they declare
+no App Intents. Remove `LM_SKIP_METADATA_EXTRACTION` from a target if adding
+App Intents or App Shortcuts to it.
 
 ## Notes for Contributors
 

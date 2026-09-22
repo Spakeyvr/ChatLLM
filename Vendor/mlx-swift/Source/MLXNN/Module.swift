@@ -285,8 +285,6 @@ open class Module {
                 }
                 return isAllNone ? .none : .array(result)
 
-            default:
-                fatalError("Unexpected leaf \(vk) = \(v)")
             }
         }
 
@@ -1393,9 +1391,9 @@ public enum ModuleValue {
 
     public var wrappedValue: T {
         get {
-            // note: this gives a warning but it does in fact do something
-            // in the case where this is e.g. ParameterInfo<MLXArray?>
-            if let value = value as? T {
+            // Preserve an absent optional parameter (ParameterInfo<MLXArray?>)
+            // as Optional.none while requiring nonoptional values to be set.
+            if let value = (value as Any) as? T {
                 return value
             } else {
                 return value!
@@ -1506,9 +1504,9 @@ private protocol TypeErasedSetterProvider {
 
     public var wrappedValue: T {
         get {
-            // note: this gives a warning but it does in fact do something
-            // in the case where this is e.g. ModuleInfo<Linear?>
-            if let module = module as? T {
+            // Preserve an absent optional child (ModuleInfo<Linear?>) as
+            // Optional.none while requiring nonoptional children to be set.
+            if let module = (module as Any) as? T {
                 return module
             } else {
                 return module!
@@ -1549,7 +1547,7 @@ private protocol TypeErasedSetterProvider {
         unowned var info: ModuleInfo<T>
 
         func updateModule(_ value: Any) throws {
-            if let value = value as? T {
+            if let value = (value as Any) as? T {
                 info.module = value
             } else if let value = value as? [Module] {
                 // try to recast as a tuple, e.g.

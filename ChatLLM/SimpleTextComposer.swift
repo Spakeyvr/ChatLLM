@@ -53,6 +53,7 @@ struct SimpleTextComposer: View {
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
+    var reasoningRequired: Bool = false
 
     @AppStorage(AppSettingsKeys.sendOnReturn) private var sendOnReturn = false
 
@@ -119,7 +120,8 @@ struct SimpleTextComposer: View {
                             toolCallsLockedDisabled: toolCallsLockedDisabled,
                             isReasoningEnabled: $isReasoningEnabled,
                             isSmartReasoningEnabled: $isSmartReasoningEnabled,
-                            reasoningAvailable: reasoningAvailable
+                            reasoningAvailable: reasoningAvailable,
+                            reasoningRequired: reasoningRequired
                         )
                         .presentationDetents([.medium])
                         .presentationDragIndicator(.visible)
@@ -232,6 +234,7 @@ private struct AddOptionsSheet: View {
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool
+    var reasoningRequired: Bool
 
     var body: some View {
         NavigationStack {
@@ -290,14 +293,14 @@ private struct AddOptionsSheet: View {
                         .padding(.horizontal, 20)
 
                     Toggle(isOn: Binding(
-                        get: { isReasoningEnabled },
+                        get: { reasoningRequired || isReasoningEnabled },
                         set: { newValue in
                             if newValue { isSmartReasoningEnabled = false }
                             isReasoningEnabled = newValue
                         }
                     )) {
                         Label {
-                            Text("Always Reason")
+                            Text(reasoningRequired ? "Reasoning (Always On)" : "Always Reason")
                                 .font(.body)
                         } icon: {
                             Image(systemName: "brain.head.profile")
@@ -306,13 +309,13 @@ private struct AddOptionsSheet: View {
                                 .foregroundStyle(.blue)
                         }
                     }
-                    .disabled(!reasoningAvailable || isSmartReasoningEnabled)
+                    .disabled(reasoningRequired || !reasoningAvailable || isSmartReasoningEnabled)
                     .tint(.blue)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
 
                     Toggle(isOn: Binding(
-                        get: { isSmartReasoningEnabled },
+                        get: { !reasoningRequired && isSmartReasoningEnabled },
                         set: { newValue in
                             if newValue { isReasoningEnabled = false }
                             isSmartReasoningEnabled = newValue
@@ -328,7 +331,7 @@ private struct AddOptionsSheet: View {
                                 .foregroundStyle(.purple)
                         }
                     }
-                    .disabled(!reasoningAvailable || isReasoningEnabled)
+                    .disabled(reasoningRequired || !reasoningAvailable || isReasoningEnabled)
                     .tint(.purple)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)

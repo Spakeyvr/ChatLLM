@@ -413,13 +413,13 @@ final class ChatViewModel: ObservableObject {
             return try await shouldUseReasoningForPrompt(prompt)
         } catch {
             logger.warning("Error determining reasoning mode\(logContext.isEmpty ? "" : " for \(logContext)"), using conversation fallback: \(error)")
-            return conversation.reasoningMode || conversation.smartReasoningMode
+            return backendBridge.reasoningRequired || conversation.reasoningMode || conversation.smartReasoningMode
         }
     }
 
     internal func resolvedReasoningMode(for userMessage: Message?, logContext: String) async -> Bool {
         guard let userMsg = userMessage else {
-            return conversation.reasoningMode || conversation.smartReasoningMode
+            return backendBridge.reasoningRequired || conversation.reasoningMode || conversation.smartReasoningMode
         }
         return await resolvedReasoningMode(for: userMsg.text, logContext: logContext)
     }

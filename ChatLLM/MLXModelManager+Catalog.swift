@@ -17,7 +17,8 @@ extension MLXModelManager {
     /// them; they are removed at startup instead of stranding gigabytes in
     /// Documents.
     nonisolated private static let obsoleteModelDirNames = [
-        "Qwen3.5-4B-MLX-mixed36"
+        "Qwen3.5-4B-MLX-mixed36",
+        "SmolLM3-3B-MLX-4bit"
     ]
 
     static let modelDefinitions: [MLXModelInfo] = [
@@ -74,15 +75,15 @@ extension MLXModelManager {
             phoneContextWindowOverride: [8: 4_096, 12: 6_144]
         ),
         MLXModelInfo(
-            id: "smollm3-3b-4bit",
-            name: "SmolLM3",
-            localDirName: "SmolLM3-3B-MLX-4bit",
-            hfRepoId: "mlx-community/SmolLM3-3B-4bit",
-            parameters: "3B (4-bit)",
-            downloadSizeLabel: "1.75 GB",
+            id: "lfm2.5-2.6b-4bit",
+            name: "LFM2.5",
+            localDirName: "LFM2.5-2.6B-MLX-4bit",
+            hfRepoId: "LiquidAI/LFM2.5-2.6B-MLX-4bit",
+            parameters: "2.6B (4-bit)",
+            downloadSizeLabel: "1.60 GB",
             loadPolicy: .standard,
-            description: "SmolLM3 3B text model with native reasoning.",
-            contextLength: 65536,
+            description: "LiquidAI LFM2.5 2.6B text model with always-on reasoning and tool calling.",
+            contextLength: 131072,
             isAvailable: false,
             supportsReasoning: true,
             supportsNativeImages: false,

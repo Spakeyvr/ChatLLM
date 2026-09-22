@@ -158,9 +158,9 @@ extension ChatLLMTests {
         #expect(scope == .none)
     }
 
-    @Test func smolLM3ToolResponsesUseNativeToolRole() {
+    @Test func lfm25ToolResponsesUseNativeToolRole() {
         let manager = makeModelManager()
-        let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
+        let model = try! #require(manager.model(withID: "lfm2.5-2.6b-4bit"))
 
         let content = MLXModelManager.toolResponsePromptContent(
             for: model,

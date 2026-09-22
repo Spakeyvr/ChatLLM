@@ -332,7 +332,7 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
     static let toolName = "webSearch"
     static let toolDescription = "Search the web for current information. Use for breaking news, today's events, real-time data, current prices or versions, or when the user explicitly asks to search."
 
-    struct MLXArguments: Codable, Sendable {
+    nonisolated struct MLXArguments: Codable, Sendable {
         var query: String
     }
 

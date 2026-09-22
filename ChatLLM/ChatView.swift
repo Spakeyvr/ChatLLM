@@ -202,8 +202,8 @@ struct ChatView: View {
             ToolbarItem(placement: .principal) {
                 NavigationTitleView(
                     title: viewModel.conversation.title,
-                    isReasoningEnabled: viewModel.conversation.reasoningMode,
-                    isSmartReasoningEnabled: viewModel.conversation.smartReasoningMode,
+                    isReasoningEnabled: modelBackendBridge.reasoningRequired || viewModel.conversation.reasoningMode,
+                    isSmartReasoningEnabled: !modelBackendBridge.reasoningRequired && viewModel.conversation.smartReasoningMode,
                     reasoningAvailable: modelBackendBridge.reasoningAvailable,
                     hasMessages: !sortedMessages.isEmpty,
                     modelBackendBridge: modelBackendBridge
@@ -409,7 +409,8 @@ struct ChatView: View {
                 get: { viewModel.conversation.smartReasoningMode },
                 set: { viewModel.setSmartReasoningMode($0) }
             ),
-            reasoningAvailable: modelBackendBridge.reasoningAvailable
+            reasoningAvailable: modelBackendBridge.reasoningAvailable,
+            reasoningRequired: modelBackendBridge.reasoningRequired
         )
     }
 

@@ -26,7 +26,7 @@ extension ChatViewModel {
         let backendBridge = self.backendBridge
         guard backendBridge.reasoningAvailable else { return false }
 
-        if conversation.reasoningMode { return true }
+        if backendBridge.reasoningRequired || conversation.reasoningMode { return true }
         guard conversation.smartReasoningMode else { return false }
 
         // Smart reasoning currently uses a local heuristic and only runs for MLX/Qwen thinking models.

@@ -67,23 +67,23 @@ extension ChatLLMTests {
         #expect(manager.toolCallIssue(for: model) == nil)
     }
 
-    @Test func smolLM3ModelDefinitionMatchesDownloadMetadata() {
+    @Test func lfm25ModelDefinitionMatchesDownloadMetadata() {
         let manager = makeModelManager()
-        let model = try! #require(manager.model(withID: "smollm3-3b-4bit"))
+        let model = try! #require(manager.model(withID: "lfm2.5-2.6b-4bit"))
 
-        #expect(model.name == "SmolLM3")
-        #expect(model.localDirName == "SmolLM3-3B-MLX-4bit")
-        #expect(model.hfRepoId == "mlx-community/SmolLM3-3B-4bit")
-        #expect(model.parameters == "3B (4-bit)")
-        #expect(model.downloadSizeLabel == "1.75 GB")
+        #expect(model.name == "LFM2.5")
+        #expect(model.localDirName == "LFM2.5-2.6B-MLX-4bit")
+        #expect(model.hfRepoId == "LiquidAI/LFM2.5-2.6B-MLX-4bit")
+        #expect(model.parameters == "2.6B (4-bit)")
+        #expect(model.downloadSizeLabel == "1.60 GB")
         #expect(model.loadPolicy == .standard)
-        #expect(model.contextLength == 65_536)
+        #expect(model.contextLength == 131_072)
         #expect(model.supportsReasoning)
         #expect(!model.supportsNativeImages)
         #expect(model.requiredProcessorClass == nil)
     }
 
-    @Test func smolLM3PhoneMemoryLimitsGateModelAndToolCalls() {
+    @Test func lfm25PhoneMemoryLimitsGateModelAndToolCalls() {
         let fourGigabyteProfile = makeDeviceProfile(
             isPhone: true,
             physicalMemoryBytes: 4 * MLXDeviceSupportProfile.gibibyte
@@ -100,9 +100,9 @@ extension ChatLLMTests {
         let fourGigabyteManager = makeModelManager(deviceSupportProfile: fourGigabyteProfile)
         let sixGigabyteManager = makeModelManager(deviceSupportProfile: sixGigabyteProfile)
         let eightGigabyteManager = makeModelManager(deviceSupportProfile: eightGigabyteProfile)
-        let fourGigabyteModel = try! #require(fourGigabyteManager.model(withID: "smollm3-3b-4bit"))
-        let sixGigabyteModel = try! #require(sixGigabyteManager.model(withID: "smollm3-3b-4bit"))
-        let eightGigabyteModel = try! #require(eightGigabyteManager.model(withID: "smollm3-3b-4bit"))
+        let fourGigabyteModel = try! #require(fourGigabyteManager.model(withID: "lfm2.5-2.6b-4bit"))
+        let sixGigabyteModel = try! #require(sixGigabyteManager.model(withID: "lfm2.5-2.6b-4bit"))
+        let eightGigabyteModel = try! #require(eightGigabyteManager.model(withID: "lfm2.5-2.6b-4bit"))
 
         #expect(!fourGigabyteProfile.supportsModel(fourGigabyteModel))
         #expect(fourGigabyteProfile.availabilityIssue(for: fourGigabyteModel)?.contains("6 GB") == true)

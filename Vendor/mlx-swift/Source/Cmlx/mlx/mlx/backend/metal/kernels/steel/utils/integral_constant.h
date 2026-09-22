@@ -103,13 +103,26 @@ void dispatch_bool(bool v, F f) {
   }
 }
 
+// Metal's C++14 dialect needs specialization rather than if constexpr to
+// terminate template recursion without instantiating the inactive branch.
+template <int start, int stop, int step, bool active = (start < stop)>
+struct ConstForLoop {
+  template <typename F>
+  static constexpr void call(F f) {
+    f(Int<start>{});
+    ConstForLoop<start + step, stop, step>::call(f);
+  }
+};
+
+template <int start, int stop, int step>
+struct ConstForLoop<start, stop, step, false> {
+  template <typename F>
+  static constexpr void call(F) {}
+};
+
 template <int start, int stop, int step, typename F>
 constexpr void const_for_loop(F f) {
-  if constexpr (start < stop) {
-    constexpr auto idx = Int<start>{};
-    f(idx);
-    const_for_loop<start + step, stop, step, F>(f);
-  }
+  ConstForLoop<start, stop, step>::call(f);
 }
 
 #undef integral_const_binop

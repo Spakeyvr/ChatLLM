@@ -16,7 +16,8 @@ import SwiftData
 class ModelBackendBridge: ObservableObject {
     private static let legacyModelIDMap: [String: String] = [
         "qwen3.5-4b-4bit": "qwen3.5-4b-4bit-hybrid",
-        "qwen3.5-4b-mixed36": "qwen3.5-4b-4bit-hybrid"
+        "qwen3.5-4b-mixed36": "qwen3.5-4b-4bit-hybrid",
+        "smollm3-3b-4bit": "lfm2.5-2.6b-4bit"
     ]
 
     // MARK: - Published Properties
@@ -135,7 +136,11 @@ class ModelBackendBridge: ObservableObject {
         let preferredBackend = conversation.preferredBackendRawValue.flatMap(Backend.init(rawValue:))
             ?? (hasNonSystemMessages ? .foundationModels : Backend(rawValue: defaults.selectedLLMBackend))
             ?? .foundationModels
-        let preferredModelID = conversation.preferredModelID ?? (hasNonSystemMessages ? nil : defaults.selectedCustomModelID)
+        let savedModelID = conversation.preferredModelID ?? (hasNonSystemMessages ? nil : defaults.selectedCustomModelID)
+        let preferredModelID = savedModelID.map { Self.legacyModelIDMap[$0] ?? $0 }
+        if preferredModelID != savedModelID {
+            conversation.preferredModelID = preferredModelID
+        }
 
         if conversation.preferredBackendRawValue != preferredBackend.rawValue && !hasNonSystemMessages {
             conversation.preferredBackendRawValue = preferredBackend.rawValue
@@ -145,6 +150,10 @@ class ModelBackendBridge: ObservableObject {
         }
 
         if preferredBackend == .mlx {
+            // Restore the chat's selection even when its model is unavailable.
+            // Reopening a migrated chat must still wait for the new download.
+            selectedModelID = preferredModelID
+            selectedBackend = .mlx
             if let preferredModelID {
                 switchToMLXModel(preferredModelID, source: "conversation.bind")
             } else {
@@ -185,6 +194,7 @@ class ModelBackendBridge: ObservableObject {
 
     /// Select a specific model by ID
     func selectModel(_ modelID: String, source: String = "unknown") {
+        let modelID = Self.legacyModelIDMap[modelID] ?? modelID
         if selectedBackend == .mlx {
             switchToMLXModel(modelID, source: source)
             return
@@ -196,6 +206,7 @@ class ModelBackendBridge: ObservableObject {
     }
 
     func switchToMLXModel(_ modelID: String, source: String = "unknown") {
+        let modelID = Self.legacyModelIDMap[modelID] ?? modelID
         guard let manager = modelManager,
               let model = manager.model(withID: modelID) else {
             modelManager?.unloadAllModels()
@@ -246,7 +257,7 @@ class ModelBackendBridge: ObservableObject {
 
     /// Known model families that support reasoning/thinking mode.
     /// Used as fallback when modelManager isn't available but a model ID is stored.
-    private static let knownReasoningPrefixes = ["qwen", "smollm3"]
+    private static let knownReasoningPrefixes = ["qwen", "lfm2.5"]
 
     /// Reasoning is only exposed for MLX models that support it.
     var reasoningAvailable: Bool {
@@ -258,6 +269,11 @@ class ModelBackendBridge: ObservableObject {
         }
         guard let modelID = selectedModelID else { return false }
         return Self.knownReasoningPrefixes.contains(where: { modelID.contains($0) })
+    }
+
+    var reasoningRequired: Bool {
+        selectedBackend == .mlx &&
+            (selectedMLXModel?.requiresReasoning ?? (selectedModelID == "lfm2.5-2.6b-4bit"))
     }
 
     var foundationModelsAvailable: Bool {
@@ -278,8 +294,8 @@ class ModelBackendBridge: ObservableObject {
             return "Qwen 3.5 (4B)"
         case "qwen3.5-2b-4bit":
             return "Qwen 3.5 (2B)"
-        case "smollm3-3b-4bit":
-            return "SmolLM3 (3B (4-bit))"
+        case "lfm2.5-2.6b-4bit":
+            return "LFM2.5 (2.6B (4-bit))"
         default:
             return modelID
         }
@@ -386,8 +402,10 @@ extension UserDefaults {
     }
 
     var mlxRepetitionPenaltyValue: Float? {
-        let penalty = Float(mlxRepetitionPenalty)
-        return penalty > 1.0 ? penalty : nil
+        // Only an unset preference defers to the model's default. An explicit
+        // 1.0 must survive as the user's request to disable the penalty.
+        guard object(forKey: AppSettingsKeys.mlxRepetitionPenalty) != nil else { return nil }
+        return Float(mlxRepetitionPenalty)
     }
 
     var selectedLLMBackend: String {

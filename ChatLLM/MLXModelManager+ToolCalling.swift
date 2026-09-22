@@ -171,7 +171,7 @@ extension MLXModelManager {
             support = .supported
         } else {
             support = .unsupported(
-                "Installed model '\(model.localDirName)' does not expose a tool-aware chat template. Re-download or update this Qwen 3.5 MLX model package to enable MLX tool calling."
+                "Installed model '\(model.localDirName)' does not expose a tool-aware chat template. Re-download or update this MLX model package to enable MLX tool calling."
             )
         }
 
@@ -188,6 +188,10 @@ extension MLXModelManager {
         modelType: String?
     ) -> ToolCallFormat? {
         let lowered = packageContents.lowercased()
+
+        if lowered.contains("<|tool_call_start|>") && lowered.contains("<|tool_call_end|>") {
+            return .lfm2
+        }
 
         if lowered.contains("<function=") && lowered.contains("<parameter=") {
             return .xmlFunction

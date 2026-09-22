@@ -30,6 +30,7 @@ struct ComposerView: View {
     @Binding var isReasoningEnabled: Bool
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool = false
+    var reasoningRequired: Bool = false
 
     var body: some View {
         SimpleTextComposer(
@@ -52,7 +53,8 @@ struct ComposerView: View {
             toolCallsLockedDisabled: toolCallsLockedDisabled,
             isReasoningEnabled: $isReasoningEnabled,
             isSmartReasoningEnabled: $isSmartReasoningEnabled,
-            reasoningAvailable: reasoningAvailable
+            reasoningAvailable: reasoningAvailable,
+            reasoningRequired: reasoningRequired
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(String(localized: "Message composer"))

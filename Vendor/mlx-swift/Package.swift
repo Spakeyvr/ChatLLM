@@ -87,6 +87,11 @@ import PackageDescription
 
     let cxxSettings: [CXXSetting] = [
         .headerSearchPath("metal-cpp"),
+        // MLX uses 32-bit dimensions and 64-bit element counts throughout its
+        // upstream C++ API. Xcode enables this additional diagnostic for SwiftPM
+        // targets; keep the upstream conversion policy local to Cmlx. Swift and
+        // deprecated-API diagnostics remain enabled.
+        .unsafeFlags(["-Wno-shorten-64-to-32"]),
 
         .define("MLX_USE_ACCELERATE"),
         .define("ACCELERATE_NEW_LAPACK"),

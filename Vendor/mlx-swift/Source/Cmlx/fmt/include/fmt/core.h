@@ -448,8 +448,11 @@ template <typename Char> class basic_string_view {
       const std::basic_string<Char, Traits, Alloc>& s) noexcept
       : data_(s.data()), size_(s.size()) {}
 
-  template <typename S, FMT_ENABLE_IF(std::is_same<
-                                      S, detail::std_string_view<Char>>::value)>
+  // Defer the standard-library view until conversion is requested. Merely
+  // instantiating fmt's UTF-8 enum view must not instantiate the removed
+  // nonstandard std::char_traits specialization in modern libc++.
+  template <typename S, typename C = Char,
+            FMT_ENABLE_IF(std::is_same<S, detail::std_string_view<C>>::value)>
   FMT_CONSTEXPR basic_string_view(S s) noexcept
       : data_(s.data()), size_(s.size()) {}
 

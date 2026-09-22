@@ -81,7 +81,7 @@ public enum JSONValue: Hashable, Codable, Sendable {
         }
     }
 
-    public var anyValue: Any {
+    public var anyValue: any Sendable {
         switch self {
         case .null:
             return NSNull()

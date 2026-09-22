@@ -133,6 +133,20 @@ extension MLXModelManager {
                     "MLX container load start: id=\(model.id, privacy: .public) source=\(source, privacy: .public) path=\(modelURL.lastPathComponent, privacy: .public)"
                 )
                 let loaded = try await loadModelContainer(directory: modelURL)
+                #if targetEnvironment(simulator)
+                // CoreSimulator's Metal compiler cannot lower BF16 kernels. Widen
+                // only floating BF16 parameters exactly; packed 4/6-bit weights
+                // stay quantized and physical devices retain native BF16 execution.
+                try await loaded.perform { context in
+                    let parameters = context.model.parameters().mapValues { value in
+                        guard value.dtype == .bfloat16 else { return value }
+                        let widened = value.asType(.float32, stream: .cpu)
+                        widened.eval()
+                        return widened
+                    }
+                    try context.model.update(parameters: parameters, verify: [.all])
+                }
+                #endif
                 try Task.checkCancellation()
                 guard self.activeLoadID == loadID else {
                     self.logger.notice("MLX container load discarded before install: stale load id=\(model.id, privacy: .public)")

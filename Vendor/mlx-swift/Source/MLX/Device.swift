@@ -123,7 +123,7 @@ public final class Device: @unchecked Sendable, Equatable {
 
     /// Use a device scoped to a task.
     static public func withDefaultDevice<R>(
-        _ device: Device, _ body: () async throws -> R
+        _ device: Device, _ body: nonisolated(nonsending) () async throws -> R
     ) async rethrows -> R {
         try await $_tlDefaultDevice.withValue(device, operation: body)
     }

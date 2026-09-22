@@ -70,7 +70,7 @@ public struct GemmaFunctionParser: ToolCallParser, Sendable {
 
             // Try JSON decode, fallback to string
             if let data = value.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data)
+                let json = try? JSONDecoder().decode(JSONValue.self, from: data).anyValue
             {
                 arguments[key] = json
             } else {

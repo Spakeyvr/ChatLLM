@@ -98,7 +98,7 @@ public final class Stream: @unchecked Sendable, Equatable {
 
     /// Set the ``StreamOrDevice/default`` scoped to a Task.
     public static func withNewDefaultStream<R>(
-        device: Device? = nil, _ body: () async throws -> R
+        device: Device? = nil, _ body: nonisolated(nonsending) () async throws -> R
     ) async rethrows -> R {
         let device = device ?? Device.defaultDevice()
         return try await $defaultStream.withValue(Stream(device), operation: body)

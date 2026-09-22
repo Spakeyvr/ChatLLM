@@ -10,7 +10,7 @@ import Foundation
 /// Reference: Python's `ast.literal_eval` / `json.loads` pattern
 func deserialize(_ value: String) -> any Sendable {
     if let data = value.data(using: .utf8),
-        let json = try? JSONSerialization.jsonObject(with: data)
+        let json = try? JSONDecoder().decode(JSONValue.self, from: data).anyValue
     {
         return json
     }
@@ -157,7 +157,7 @@ func convertValueWithTypes(_ value: String, types: [String]) -> any Sendable {
 
         case "object", "array":
             if let data = value.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data)
+                let json = try? JSONDecoder().decode(JSONValue.self, from: data).anyValue
             {
                 return json
             }
@@ -169,7 +169,7 @@ func convertValueWithTypes(_ value: String, types: [String]) -> any Sendable {
 
     // Fallback: try JSON parse, then return as string
     if let data = value.data(using: .utf8),
-        let json = try? JSONSerialization.jsonObject(with: data)
+        let json = try? JSONDecoder().decode(JSONValue.self, from: data).anyValue
     {
         return json
     }
@@ -219,7 +219,7 @@ func convertParameterValue(
     // Object/Array types - JSON decode
     if ["object", "array"].contains(type) || type.hasPrefix("dict") || type.hasPrefix("list") {
         if let data = value.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data)
+            let json = try? JSONDecoder().decode(JSONValue.self, from: data).anyValue
         {
             return json
         }

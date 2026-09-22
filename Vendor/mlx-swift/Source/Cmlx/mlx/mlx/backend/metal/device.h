@@ -3,6 +3,7 @@
 #pragma once
 
 #include <Metal/Metal.hpp>
+#include <TargetConditionals.h>
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
@@ -266,7 +267,7 @@ MLX_API Device& device(mlx::core::Device);
 std::unique_ptr<void, std::function<void(void*)>> new_scoped_memory_pool();
 
 inline bool is_nax_available() {
-#ifdef MLX_METAL_NO_NAX
+#if defined(MLX_METAL_NO_NAX) || TARGET_OS_SIMULATOR
   return false;
 #else
   auto _check_nax = []() {

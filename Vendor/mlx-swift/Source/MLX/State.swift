@@ -101,7 +101,7 @@ public func withRandomState<R>(_ state: MLXRandom.RandomState, body: () throws -
 }
 
 /// Use the given ``MLXRandom/RandomState`` scoped to the current task and body.
-public func withRandomState<R>(_ state: MLXRandom.RandomState, body: () async throws -> R)
+public func withRandomState<R>(_ state: MLXRandom.RandomState, body: nonisolated(nonsending) () async throws -> R)
     async rethrows -> R
 {
     try await MLXRandom.$taskLocalRandomState.withValue(state, operation: body)

@@ -20,10 +20,14 @@ struct InlineThinkingView: View {
             if let onTap {
                 Button(action: onTap) {
                     thinkingLabel(animatesGlow: false)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("message.thought")
             } else {
                 thinkingLabel(animatesGlow: true)
+                    .accessibilityIdentifier("message.thought")
             }
         }
     }
