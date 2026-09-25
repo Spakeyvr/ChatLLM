@@ -99,43 +99,30 @@ struct NavigationTitleView: View {
             // No messages yet: allow model selection
             Menu {
                 // Apple Foundation
-                Button {
-                    modelBackendBridge.selectBackend(.foundationModels, source: "chat-input.foundation")
-                } label: {
-                    HStack {
-                        Text("Apple Foundation")
-                        if !modelBackendBridge.foundationModelsAvailable {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(.orange)
-                        }
-                        if modelBackendBridge.selectedBackend == .foundationModels {
-                            Image(systemName: "checkmark")
+                if modelBackendBridge.foundationModelsAvailable {
+                    Button {
+                        modelBackendBridge.selectBackend(.foundationModels, source: "chat-input.foundation")
+                    } label: {
+                        HStack {
+                            Text("Apple Foundation")
+                            if modelBackendBridge.selectedBackend == .foundationModels {
+                                Image(systemName: "checkmark")
+                            }
                         }
                     }
                 }
-                .disabled(!modelBackendBridge.foundationModelsAvailable)
 
-                // MLX Models
-                ForEach(modelManager?.availableModels ?? [], id: \.id) { model in
-                    if model.isAvailable {
-                        Button {
-                            modelBackendBridge.switchToMLXModel(model.id, source: "chat-input.model")
-                        } label: {
-                            HStack {
-                                Text("\(model.name) (\(model.parameters))")
-                                if modelBackendBridge.selectedBackend == .mlx && modelBackendBridge.selectedModelID == model.id {
-                                    Image(systemName: "checkmark")
-                                }
+                // MLX Models (only downloaded, compatible ones; the rest live in Manage Models)
+                ForEach(modelManager?.installedModels ?? [], id: \.id) { model in
+                    Button {
+                        modelBackendBridge.switchToMLXModel(model.id, source: "chat-input.model")
+                    } label: {
+                        HStack {
+                            Text("\(model.name) (\(model.parameters))")
+                            if modelBackendBridge.selectedBackend == .mlx && modelBackendBridge.selectedModelID == model.id {
+                                Image(systemName: "checkmark")
                             }
                         }
-                    } else {
-                        Button { } label: {
-                            HStack {
-                                Text("\(model.name) (\(model.parameters))")
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                            }
-                        }
-                        .disabled(true)
                     }
                 }
 

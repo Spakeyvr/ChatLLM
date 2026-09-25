@@ -68,6 +68,11 @@ extension MLXModelManager {
     func model(withID id: String) -> MLXModelInfo? {
         availableModels.first(where: { $0.id == id })
     }
+
+    /// Models that are downloaded and compatible, i.e. selectable in the model picker.
+    var installedModels: [MLXModelInfo] {
+        availableModels.filter(\.isAvailable)
+    }
     func cancelCurrentLoad(reason: String = "cancelled", tearDownModel: Bool = true) {
         loadTask?.cancel()
         loadTask = nil

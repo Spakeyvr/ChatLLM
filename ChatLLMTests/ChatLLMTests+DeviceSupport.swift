@@ -28,6 +28,17 @@ extension ChatLLMTests {
         #expect(profile.availabilityIssue(for: model)?.contains("8 GB") == true)
     }
 
+    @Test func modelPickerListsOnlyInstalledModels() {
+        let manager = makeModelManager()
+        #expect(!manager.availableModels.isEmpty)
+        #expect(manager.installedModels.isEmpty)
+
+        let installedID = manager.availableModels[0].id
+        manager.availableModels[0].isAvailable = true
+
+        #expect(manager.installedModels.map(\.id) == [installedID])
+    }
+
     @Test func qwen4BEnablesToolCallsAtEightGigabytesOnIPhone() {
         let profile = makeDeviceProfile(
             isPhone: true,
