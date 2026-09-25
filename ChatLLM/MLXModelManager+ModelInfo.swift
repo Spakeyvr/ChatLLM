@@ -48,6 +48,9 @@ extension MLXModelManager {
         let name: String
         let localDirName: String
         let hfRepoId: String
+        /// Hugging Face commit the download is pinned to, so an upstream push
+        /// cannot change or mix the files a given app build installs.
+        let hfRevision: String
         let parameters: String
         let downloadSizeLabel: String
         let loadPolicy: LoadPolicy
@@ -68,6 +71,7 @@ extension MLXModelManager {
             name: String,
             localDirName: String,
             hfRepoId: String,
+            hfRevision: String = "main",
             parameters: String,
             downloadSizeLabel: String,
             loadPolicy: LoadPolicy = .standard,
@@ -85,6 +89,7 @@ extension MLXModelManager {
             self.name = name
             self.localDirName = localDirName
             self.hfRepoId = hfRepoId
+            self.hfRevision = hfRevision
             self.parameters = parameters
             self.downloadSizeLabel = downloadSizeLabel
             self.loadPolicy = loadPolicy

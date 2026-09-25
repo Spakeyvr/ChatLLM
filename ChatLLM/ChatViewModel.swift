@@ -153,6 +153,9 @@ final class ChatViewModel: ObservableObject {
     private let firstTokenTimeout: Duration = .seconds(30)
     private let chunkTimeout: Duration = .seconds(20)
     private let reasoningChunkTimeout: Duration = .seconds(30)
+    // Covers a Tavily search including its retry (see TavilySearchService:
+    // two 15 s requests plus a bounded Retry-After wait).
+    private let webSearchTimeout: Duration = .seconds(60)
 
     // MARK: - Coalesced saving with optimized debouncing
     var pendingSaveTask: Task<Void, Never>?
@@ -265,7 +268,7 @@ final class ChatViewModel: ObservableObject {
         // then "succeeds" without persisting anything; say so loudly rather
         // than letting the durability guarantees silently evaporate.
         if context.container.configurations.contains(where: \.isStoredInMemoryOnly) {
-            logger.error("SwiftData opened the in-memory fallback store; conversation persistence is NOT durable for this launch (original store was quarantined).")
+            logger.error("SwiftData opened the in-memory fallback store; conversation persistence is NOT durable for this launch (the on-disk store could not be opened).")
         }
     }
 
@@ -593,6 +596,10 @@ final class ChatViewModel: ObservableObject {
     /// Own the full turn, including image preparation and title generation, so
     /// cancellation and deletion wait for every stage that can write messages.
     internal func runGeneration(_ operation: @escaping @MainActor (UUID) async -> Void) async {
+        // A new turn must never preempt a running one: waitForStreamToFinish()
+        // force-cancels a task that outlives its timeout. Callers that intend to
+        // replace a turn call cancelGeneration() first, which clears this flag.
+        guard !isGenerating else { return }
         guard await waitForStreamToFinish(), !isGenerating, !Task.isCancelled,
               let id = beginGenerationLifecycle() else { return }
         let task = Task { @MainActor in
@@ -1101,7 +1108,8 @@ final class ChatViewModel: ObservableObject {
     ) {
         target.generationError = message
         if clearVisibleContent {
-            target.text = "Generation failed: \(message)"
+            // The error callout renders `generationError`; keep `text` empty.
+            target.text = ""
             target.finalAnswer = nil
             target.reasoning = nil
         }
@@ -1157,8 +1165,15 @@ final class ChatViewModel: ObservableObject {
 
             while !Task.isCancelled {
                 let nextEvent: StreamEvent?
+                // A search start/finish emits .searchActivityChanged, so the
+                // timeout is re-evaluated as soon as a search begins.
+                let eventTimeout: Duration = if preparation.webSearchBridge?.hasSearchInProgress == true {
+                    webSearchTimeout
+                } else {
+                    result.wroteAny ? activeChunkTimeout : firstTokenTimeout
+                }
                 do {
-                    nextEvent = try await withTimeout(result.wroteAny ? activeChunkTimeout : firstTokenTimeout) {
+                    nextEvent = try await withTimeout(eventTimeout) {
                         try await iterator.next()
                     }
                 } catch let timeout as GenerationTimeoutError {
@@ -1496,9 +1511,9 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        if let generationError = target.generationError,
-           !hasAnyVisibleContent {
-            target.text = "Generation failed: \(generationError)"
+        if target.generationError != nil, !hasAnyVisibleContent {
+            // The error callout renders `generationError`; drop whitespace-only text.
+            target.text = ""
         }
 
         if !target.text.isEmpty {

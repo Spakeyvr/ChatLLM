@@ -257,6 +257,8 @@ extension ChatViewModel {
         return Array(keptSnapshots.reversed())
     }
 
+    /// Matches failed turns saved before `generationError` was persisted,
+    /// when the error was written into `text` behind this English prefix.
     private static func isFailedGenerationPlaceholder(_ snapshot: MessageSnapshot) -> Bool {
         snapshot.role == .assistant && snapshot.text.hasPrefix("Generation failed:")
     }

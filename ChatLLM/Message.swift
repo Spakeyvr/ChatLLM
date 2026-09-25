@@ -94,7 +94,9 @@ final class Message {
     var generationCompletedAt: Date?
     var reasoningStartedAt: Date?
     var reasoningCompletedAt: Date?
-    @Transient var generationError: String?  // ephemeral; not persisted
+    // Persisted so a failed turn still shows its (localized) error callout
+    // after relaunch, instead of storing an English sentinel in `text`.
+    var generationError: String?
     @Transient var streamingReasoningPhase: ReasoningStreamPhase?
     @Transient var postToolReasoningStartCloseTagCount: Int?
 

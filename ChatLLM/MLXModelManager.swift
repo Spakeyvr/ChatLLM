@@ -62,6 +62,9 @@ final class MLXModelManager: ObservableObject {
     var loadTask: Task<Void, Never>?
     let downloader = ModelDownloader()
     var downloaderTask: Task<Void, Never>?
+    /// Identifies the download started most recently. A superseded task must
+    /// not reset state or cancel transfers that belong to a newer download.
+    var activeDownloadRunID: UUID?
     private var memoryWarningCancellable: AnyCancellable?
     private var appWillResignActiveCancellable: AnyCancellable?
     private var appDidEnterBackgroundCancellable: AnyCancellable?

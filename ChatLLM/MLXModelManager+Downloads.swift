@@ -76,6 +76,9 @@ extension MLXModelManager {
         let targetDir = modelsDir.appendingPathComponent(model.localDirName, isDirectory: true)
         let tempDir = partialDownloadDirectory(for: model, in: modelsDir)
 
+        let runID = UUID()
+        activeDownloadRunID = runID
+
         downloaderTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -83,66 +86,69 @@ extension MLXModelManager {
                 self.cleanupLegacyPartialDownloads(for: model, in: modelsDir)
                 try await self.downloader.download(
                     repoId: model.hfRepoId,
+                    revision: model.hfRevision,
                     to: tempDir,
                     onProgress: { [weak self] progress in
                         Task { @MainActor [weak self] in
-                            self?.downloadProgress = progress
+                            guard let self, self.activeDownloadRunID == runID else { return }
+                            self.downloadProgress = progress
                         }
                     }
                 )
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.activeDownloadRunID == runID else { return }
                 try self.validateDownloadedModel(at: tempDir)
                 if FileManager.default.fileExists(atPath: targetDir.path) {
                     try FileManager.default.removeItem(at: targetDir)
                 }
                 try FileManager.default.moveItem(at: tempDir, to: targetDir)
-                await MainActor.run {
-                    self.downloadProgress = 1.0
-                    self.isDownloading = false
-                    self.activeDownloadModelID = nil
-                    self.downloadErrorModelID = nil
-                    self.defaults.removeObject(
-                        forKey: Self.activeBackgroundDownloadModelIDKey
-                    )
-                    self.refreshModelAvailability()
-                    self.startLoading(modelID: model.id, source: "download_complete")
-                }
+                self.activeDownloadRunID = nil
+                self.downloaderTask = nil
+                self.downloadProgress = 1.0
+                self.isDownloading = false
+                self.activeDownloadModelID = nil
+                self.downloadErrorModelID = nil
+                self.defaults.removeObject(
+                    forKey: Self.activeBackgroundDownloadModelIDKey
+                )
+                self.refreshModelAvailability()
+                self.startLoading(modelID: model.id, source: "download_complete")
                 self.logger.notice("Model downloaded: \(model.displayName, privacy: .public)")
-            } catch is CancellationError {
+            } catch {
+                // Cancelling the background URLSession task surfaces as
+                // URLError(.cancelled), not CancellationError.
+                let wasCancelled = Task.isCancelled ||
+                    error is CancellationError ||
+                    (error as? URLError)?.code == .cancelled
+                // cancelDownload() or a newer download already owns the state
+                // (and the same transfer IDs); leave both untouched.
+                guard self.activeDownloadRunID == runID else { return }
+                self.activeDownloadRunID = nil
+                self.downloaderTask = nil
                 BackgroundModelDownloadSession.shared.cancelTransfers(
                     withIDPrefix: model.hfRepoId + "/"
                 )
-                await MainActor.run {
-                    self.isDownloading = false
-                    self.activeDownloadModelID = nil
+                self.isDownloading = false
+                self.activeDownloadModelID = nil
+                self.defaults.removeObject(
+                    forKey: Self.activeBackgroundDownloadModelIDKey
+                )
+                if wasCancelled {
                     self.downloadProgress = 0
                     self.downloadError = nil
                     self.downloadErrorModelID = nil
-                    self.defaults.removeObject(
-                        forKey: Self.activeBackgroundDownloadModelIDKey
-                    )
-                }
-                self.cleanupPartialDownload(at: tempDir)
-            } catch {
-                BackgroundModelDownloadSession.shared.cancelTransfers(
-                    withIDPrefix: model.hfRepoId + "/"
-                )
-                await MainActor.run {
-                    self.isDownloading = false
-                    self.activeDownloadModelID = nil
+                    self.cleanupPartialDownload(at: tempDir)
+                } else {
                     self.downloadError = error.localizedDescription
                     self.downloadErrorModelID = model.id
-                    self.defaults.removeObject(
-                        forKey: Self.activeBackgroundDownloadModelIDKey
-                    )
+                    self.logger.error("Model download failed: \((error as NSError).localizedDescription, privacy: .public)")
                 }
-                self.logger.error("Model download failed: \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
     }
 
     func cancelDownload() {
         let model = activeDownloadModel
+        activeDownloadRunID = nil
         downloaderTask?.cancel()
         downloaderTask = nil
         isDownloading = false

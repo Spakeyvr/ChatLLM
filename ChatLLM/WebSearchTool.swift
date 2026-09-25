@@ -54,7 +54,16 @@ struct WebSearchSource: Codable, Sendable, Identifiable, Equatable {
         self.faviconURL = faviconURL
     }
 
-    var resolvedURL: URL? { URL(string: url) }
+    /// Only web URLs: sources are untrusted, and SFSafariViewController raises
+    /// an exception for any other scheme.
+    nonisolated var resolvedURL: URL? {
+        guard let resolved = URL(string: url),
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return resolved
+    }
 
     var domainName: String {
         guard let host = resolvedURL?.host() else { return url }
@@ -352,6 +361,12 @@ final class AppWebSearchToolBridge: @unchecked Sendable {
 
     var searchLimitReached: Bool {
         lock.withLock { _searchLimitReached }
+    }
+
+    /// True while a search request is in flight. The model emits nothing
+    /// during that time, so stream timeouts must allow for network latency.
+    var hasSearchInProgress: Bool {
+        lock.withLock { _invocations.contains { $0.status == .searching } }
     }
 
     init(searchService: any WebSearchProviding) {

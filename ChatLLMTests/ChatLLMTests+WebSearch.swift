@@ -56,10 +56,10 @@ extension ChatLLMTests {
             url: URL(string: "https://api.tavily.com/search")!,
             statusCode: 429,
             httpVersion: nil,
-            headerFields: ["Retry-After": "60"]
+            headerFields: ["Retry-After": "5"]
         ))
 
-        #expect(TavilySearchService.retryDelay(for: response, attempt: 1) == .seconds(60))
+        #expect(TavilySearchService.retryDelay(for: response, attempt: 1) == .seconds(5))
     }
 
     @Test func tavilyKeyValidationIgnoresCancelledRequestCompletion() async {

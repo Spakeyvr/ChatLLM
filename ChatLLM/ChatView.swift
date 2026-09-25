@@ -47,6 +47,9 @@ struct ChatView: View {
     @State private var showImagePicker = false
     @State private var selectedImage: UIImage?
     @State private var selectedImageToken = UUID()
+    /// Set while an image send awaits Vision analysis, so a second tap cannot
+    /// start a duplicate send before the image is cleared from the composer.
+    @State private var isPreparingImageSend = false
     @State private var detectedObjects: [DetectedObject]?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var fullImageAnalysis: VisionAnalysisResult?
@@ -377,7 +380,7 @@ struct ChatView: View {
             placeholder: String(localized: "Ask anything", bundle: .appLocalized, locale: locale),
             focusRequest: composerFocusRequest,
             isEditing: editingSession != nil,
-            canSend: selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            canSend: !isPreparingImageSend && (selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
             isGenerating: viewModel.isGenerating,
             onSend: {
                 Task { await sendIfPossible() }
@@ -430,7 +433,9 @@ struct ChatView: View {
 
         // Check if we have an image to send
         if let image = selectedImage {
-            guard !viewModel.isGenerating else { return }
+            guard !viewModel.isGenerating, !isPreparingImageSend else { return }
+            isPreparingImageSend = true
+            defer { isPreparingImageSend = false }
 
             var analysis = fullImageAnalysis
             var detections = detectedObjects ?? []

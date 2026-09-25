@@ -163,7 +163,6 @@ struct SimpleTextComposer: View {
                     }
                     .disabled(!isGenerating && !canSend)
                     .buttonStyle(SubtleGlassButtonStyle())
-                    .buttonRepeatBehavior(.enabled)
                     .accessibilityLabel(isGenerating ? String(localized: "Stop", bundle: .appLocalized) : String(localized: "Send", bundle: .appLocalized))
                     .accessibilityAddTraits(.isButton)
                 }

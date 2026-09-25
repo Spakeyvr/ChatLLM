@@ -136,7 +136,8 @@ actor TavilySearchService: WebSearchProviding {
     nonisolated private static let liveCacheTTL: TimeInterval = 60
     nonisolated private static let standardCacheTTL: TimeInterval = 600
     nonisolated private static let retryableStatusCodes: Set<Int> = [429, 500, 502, 503, 504]
-    nonisolated private static let maximumRetryAfterSeconds: Double = 60
+    // Keep search + retry inside ChatViewModel's 60 s web-search stream timeout.
+    nonisolated private static let maximumRetryAfterSeconds: Double = 10
 
     private let apiKey: String
     private let baseURL = URL(string: "https://api.tavily.com/search")!
@@ -297,8 +298,7 @@ actor TavilySearchService: WebSearchProviding {
         let candidates = relevant.isEmpty ? ranked : relevant
 
         return candidates.compactMap { result in
-            guard seenURLs.insert(normalizedURL(result.url)).inserted else { return nil }
-            return WebSearchSource(
+            let source = WebSearchSource(
                 title: compactWhitespace(result.title) ?? result.url,
                 url: result.url,
                 snippet: compactWhitespace(result.content) ?? "",
@@ -306,6 +306,9 @@ actor TavilySearchService: WebSearchProviding {
                 publishedDate: compactWhitespace(result.publishedDate),
                 faviconURL: result.favicon
             )
+            guard source.resolvedURL != nil,
+                  seenURLs.insert(normalizedURL(result.url)).inserted else { return nil }
+            return source
         }
         .prefix(limit)
         .map { $0 }

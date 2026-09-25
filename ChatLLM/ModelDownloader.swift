@@ -5,13 +5,22 @@
 //  Downloads MLX model files from HuggingFace to the local Documents directory.
 //
 
+import CryptoKit
 import Foundation
 
 actor ModelDownloader {
 
+    struct RemoteFile: Sendable {
+        let name: String
+        let size: Int64
+        /// Present for LFS files (weights, large tokenizers); checked after download.
+        let sha256: String?
+    }
+
     private struct FilePlan {
         let name: String
         let size: Int64
+        let sha256: String?
         let remoteURL: URL
         let destinationURL: URL
         let temporaryURL: URL
@@ -33,8 +42,8 @@ actor ModelDownloader {
 
     // MARK: - File List
 
-    func fetchFileList(repoId: String) async throws -> [(name: String, size: Int64)] {
-        guard let url = Self.metadataURL(repoId: repoId) else {
+    func fetchFileList(repoId: String, revision: String?) async throws -> [RemoteFile] {
+        guard let url = Self.metadataURL(repoId: repoId, revision: revision) else {
             throw DownloadError.badResponse
         }
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -48,13 +57,17 @@ actor ModelDownloader {
         return siblings.compactMap { item in
             guard let name = item["rfilename"] as? String else { return nil }
             let directSize = item["size"] as? Int64 ?? 0
-            let lfsSize = (item["lfs"] as? [String: Any]).flatMap { $0["size"] as? Int64 } ?? 0
-            return (name: name, size: max(directSize, lfsSize))
+            let lfs = item["lfs"] as? [String: Any]
+            let lfsSize = lfs.flatMap { $0["size"] as? Int64 } ?? 0
+            let sha256 = (lfs?["sha256"] as? String)?.lowercased()
+            return RemoteFile(name: name, size: max(directSize, lfsSize), sha256: sha256)
         }
     }
 
-    internal static func metadataURL(repoId: String) -> URL? {
-        guard var components = URLComponents(string: "\(hfApiBase)/models/\(repoId)") else {
+    /// `revision` pins the listing to a commit; nil lists the default branch.
+    internal static func metadataURL(repoId: String, revision: String? = nil) -> URL? {
+        let revisionPath = revision.map { "/revision/\($0)" } ?? ""
+        guard var components = URLComponents(string: "\(hfApiBase)/models/\(repoId)\(revisionPath)") else {
             return nil
         }
         components.queryItems = [URLQueryItem(name: "blobs", value: "true")]
@@ -67,10 +80,11 @@ actor ModelDownloader {
     /// aggregate 0.0–1.0 progress via `onProgress`.
     func download(
         repoId: String,
+        revision: String,
         to targetDir: URL,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws {
-        let files = try await fetchFileList(repoId: repoId)
+        let files = try await fetchFileList(repoId: repoId, revision: revision)
         guard !files.isEmpty else { throw DownloadError.noFilesFound }
 
         let totalExpected = files.reduce(0) { $0 + $1.size }
@@ -87,6 +101,7 @@ actor ModelDownloader {
             let remotePathComponents = try Self.validatedRemotePathComponents(for: file.name)
             guard let fileURL = Self.resolveDownloadURL(
                 repoId: repoId,
+                revision: revision,
                 remotePathComponents: remotePathComponents
             ) else {
                 throw DownloadError.badURL(file: file.name)
@@ -100,6 +115,7 @@ actor ModelDownloader {
             return FilePlan(
                 name: file.name,
                 size: file.size,
+                sha256: file.sha256,
                 remoteURL: fileURL,
                 destinationURL: destURL,
                 temporaryURL: tempURL,
@@ -114,7 +130,8 @@ actor ModelDownloader {
             if try reuseCompletedFileIfPossible(
                 destination: plan.destinationURL,
                 temporary: plan.temporaryURL,
-                expectedSize: plan.size
+                expectedSize: plan.size,
+                expectedSHA256: plan.sha256
             ) {
                 let actualSize = Self.fileSize(at: plan.destinationURL) ?? plan.size
                 totalWritten += actualSize
@@ -193,6 +210,11 @@ actor ModelDownloader {
                     expected: plan.size,
                     actual: actualSize
                 )
+            }
+            if let expectedSHA256 = plan.sha256,
+               try Self.sha256Hex(of: plan.temporaryURL) != expectedSHA256 {
+                try? FileManager.default.removeItem(at: plan.temporaryURL)
+                throw DownloadError.checksumMismatch(file: plan.name)
             }
 
             try? FileManager.default.removeItem(at: plan.destinationURL)
@@ -283,16 +305,17 @@ actor ModelDownloader {
     private func reuseCompletedFileIfPossible(
         destination: URL,
         temporary: URL,
-        expectedSize: Int64
+        expectedSize: Int64,
+        expectedSHA256: String?
     ) throws -> Bool {
-        if Self.fileMatchesExpectedSize(at: destination, expectedSize: expectedSize) {
+        if try Self.fileMatches(at: destination, expectedSize: expectedSize, expectedSHA256: expectedSHA256) {
             return true
         }
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }
 
-        guard Self.fileMatchesExpectedSize(at: temporary, expectedSize: expectedSize) else {
+        guard try Self.fileMatches(at: temporary, expectedSize: expectedSize, expectedSHA256: expectedSHA256) else {
             if FileManager.default.fileExists(atPath: temporary.path) {
                 try FileManager.default.removeItem(at: temporary)
             }
@@ -303,12 +326,35 @@ actor ModelDownloader {
         return true
     }
 
-    private static func fileMatchesExpectedSize(at url: URL, expectedSize: Int64) -> Bool {
+    private static func fileMatches(
+        at url: URL,
+        expectedSize: Int64,
+        expectedSHA256: String?
+    ) throws -> Bool {
         guard FileManager.default.fileExists(atPath: url.path),
               let actualSize = fileSize(at: url) else {
             return false
         }
-        return expectedSize > 0 ? actualSize == expectedSize : actualSize > 0
+        let sizeMatches = expectedSize > 0 ? actualSize == expectedSize : actualSize > 0
+        guard sizeMatches else { return false }
+        guard let expectedSHA256 else { return true }
+        return try sha256Hex(of: url) == expectedSHA256
+    }
+
+    /// Streams the file so multi-gigabyte weights are never held in memory.
+    private static func sha256Hex(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            try Task.checkCancellation()
+            let chunk = try autoreleasepool {
+                try handle.read(upToCount: 8 * 1_048_576)
+            }
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private static func fileSize(at url: URL) -> Int64? {
@@ -379,6 +425,7 @@ actor ModelDownloader {
 
     private static func resolveDownloadURL(
         repoId: String,
+        revision: String,
         remotePathComponents: [String]
     ) -> URL? {
         let repoComponents = repoId
@@ -393,7 +440,7 @@ actor ModelDownloader {
             partialResult.appendingPathComponent(component, isDirectory: false)
         }
 
-        return (["resolve", "main"] + remotePathComponents).reduce(repoURL) { partialResult, component in
+        return (["resolve", revision] + remotePathComponents).reduce(repoURL) { partialResult, component in
             partialResult.appendingPathComponent(component, isDirectory: false)
         }
     }
@@ -418,6 +465,7 @@ actor ModelDownloader {
         case badURL(file: String)
         case invalidRemotePath(file: String)
         case incorrectFileSize(file: String, expected: Int64, actual: Int64)
+        case checksumMismatch(file: String)
 
         var errorDescription: String? {
             switch self {
@@ -428,6 +476,8 @@ actor ModelDownloader {
                 return String(localized: "The server returned an unexpected file path for: \(file)", bundle: .appLocalized)
             case .incorrectFileSize(let file, let expected, let actual):
                 return String(localized: "Downloaded file '\(file)' has the wrong size (expected \(expected) bytes, received \(actual) bytes).", bundle: .appLocalized)
+            case .checksumMismatch(let file):
+                return String(localized: "Downloaded file '\(file)' failed its integrity check. Try downloading the model again.", bundle: .appLocalized)
             }
         }
     }

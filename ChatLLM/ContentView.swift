@@ -59,8 +59,18 @@ struct ContentView: View {
         return defaults.string(forKey: AppSettingsKeys.legacyDefaultSystemPrompt) ?? ""
     }
 
+    @State private var showsStoreRecoveryAlert = PersistentStoreRecovery.openFailed
+
     var body: some View {
         rootContent
+            .alert("Chats Can't Be Saved", isPresented: $showsStoreRecoveryAlert) {
+                Button("Keep Existing Chats", role: .cancel) {}
+                Button("Start Fresh", role: .destructive) {
+                    PersistentStoreRecovery.discardUnreadableStore()
+                }
+            } message: {
+                Text("ChatLLM couldn't open your saved chats. New messages in this session won't be saved. Keep your existing chats to try again on the next launch, or start fresh with an empty history. A backup copy has been kept either way.")
+            }
             // Apply selected language to entire UI
             .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
             .background {
@@ -1042,6 +1052,9 @@ struct ContentView: View {
                 let visibleText = message.userVisibleText
                 if !visibleText.isEmpty {
                     exportText += visibleText + "\n"
+                }
+                if let generationError = message.generationError {
+                    exportText += "[Error: \(generationError)]\n"
                 }
                 for attachment in message.attachments where attachment.type == .image {
                     exportText += "[Image attachment: \(attachment.fileName)]\n"
