@@ -242,6 +242,30 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningAnotherChatAfterReturningToListShowsIt() throws {
+        let fixture = XCUIApplication()
+        fixture.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
+        fixture.launch()
+        XCTAssertTrue(fixture.buttons["message.sources"].waitForExistence(timeout: 5))
+        fixture.terminate()
+
+        // Relaunch without the demo selection so the chat list is the starting screen.
+        let app = launchApp(resetAppState: false)
+        let secondChatRow = app.staticTexts["Second Chat"]
+        XCTAssertTrue(secondChatRow.waitForExistence(timeout: 5))
+        secondChatRow.tap()
+        XCTAssertTrue(app.staticTexts["Second chat reply."].waitForExistence(timeout: 5))
+
+        app.navigationBars.buttons["BackButton"].tap()
+        let demoChatRow = app.staticTexts["Web Search Preview"]
+        XCTAssertTrue(demoChatRow.waitForExistence(timeout: 5))
+        demoChatRow.tap()
+
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Preparing chat…"].exists)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = XCUIApplication()

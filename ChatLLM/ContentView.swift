@@ -287,8 +287,28 @@ struct ContentView: View {
         ]
         conversation.messages = [userMessage, assistantMessage]
         modelContext.insert(conversation)
+        if arguments.contains("-ui-test-second-chat") {
+            seedSecondChatFixture()
+        }
         try? modelContext.save()
         return conversation
+    }
+
+    private func seedSecondChatFixture() {
+        let conversation = Conversation(title: "Second Chat")
+        conversation.messages = [
+            Message(role: .user, text: "Hello there", order: 0, conversation: conversation, isFinal: true),
+            Message(
+                role: .assistant,
+                text: "Second chat reply.",
+                order: 1,
+                conversation: conversation,
+                isFinal: true,
+                generationBackend: "Preview",
+                generationModelName: "UI Fixture"
+            )
+        ]
+        modelContext.insert(conversation)
     }
     
     private func handleSelectionChange(_ oldSelection: Conversation?, _ newSelection: Conversation?) {
@@ -306,6 +326,12 @@ struct ContentView: View {
             currentViewModel = nil
         }
         ModelBackendBridge.shared.bindConversation(newSelection)
+        // Build the chat as soon as it is selected. On iPhone the collapsed split view
+        // pushes the detail page right away; if ChatView only replaces the placeholder
+        // afterwards, a re-pushed page never refreshes and stays on "Preparing chat…".
+        if let newSelection {
+            currentViewModel = createViewModel(for: newSelection)
+        }
     }
     
     private func handleConversationsChange(_ oldConversations: [Conversation], _ newConversations: [Conversation]) {
