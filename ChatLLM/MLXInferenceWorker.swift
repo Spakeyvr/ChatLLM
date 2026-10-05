@@ -11,7 +11,6 @@
 import Foundation
 import CryptoKit
 import MLX
-import MLXNN
 import MLXLMCommon
 import MLXVLM
 import Tokenizers
