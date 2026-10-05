@@ -7,18 +7,6 @@
 
 import Foundation
 
-struct TavilyAutoParameters: Decodable, Sendable {
-    let topic: String?
-    let searchDepth: String?
-    let timeRange: String?
-
-    enum CodingKeys: String, CodingKey {
-        case topic
-        case searchDepth = "search_depth"
-        case timeRange = "time_range"
-    }
-}
-
 struct TavilySearchResult: Decodable, Identifiable, Sendable {
     var id = UUID()
     let title: String
@@ -48,15 +36,12 @@ struct TavilySearchResult: Decodable, Identifiable, Sendable {
 struct TavilySearchResponse: Decodable, Sendable {
     let query: String
     let results: [TavilySearchResult]
-    let answer: String?
-    let autoParameters: TavilyAutoParameters?
     let responseTime: Double?
     let requestID: String?
     let creditsUsed: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case query, results, answer, usage
-        case autoParameters = "auto_parameters"
+        case query, results, usage
         case responseTime = "response_time"
         case requestID = "request_id"
     }
@@ -69,8 +54,6 @@ struct TavilySearchResponse: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         query = try container.decode(String.self, forKey: .query)
         results = try container.decode([TavilySearchResult].self, forKey: .results)
-        answer = try container.decodeIfPresent(String.self, forKey: .answer)
-        autoParameters = try container.decodeIfPresent(TavilyAutoParameters.self, forKey: .autoParameters)
         if let numericResponseTime = try? container.decode(Double.self, forKey: .responseTime) {
             responseTime = numericResponseTime
         } else if let stringResponseTime = try? container.decode(String.self, forKey: .responseTime) {
