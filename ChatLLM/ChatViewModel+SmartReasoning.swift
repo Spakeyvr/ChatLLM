@@ -10,10 +10,10 @@ import os
 
 // Cached regexes for parseReasoningResponse (compiled once at app launch)
 // swiftlint:disable force_try
-private let _parseReasoningRegexes: [NSRegularExpression] = [
-    try! NSRegularExpression(pattern: #"<(?:thinking|think)>(.*?)</(?:thinking|think)>\s*(?:Final answer:\s*)?(.*?)$"#, options: [.dotMatchesLineSeparators]),
-    try! NSRegularExpression(pattern: #"<(?:thinking|think)>(.*?)</(?:thinking|think)>\s*(.*?)$"#, options: [.dotMatchesLineSeparators]),
-]
+private let _parseReasoningRegex = try! NSRegularExpression(
+    pattern: #"<(?:thinking|think)>(.*?)</(?:thinking|think)>\s*(?:Final answer:\s*)?(.*?)$"#,
+    options: [.dotMatchesLineSeparators]
+)
 
 // swiftlint:enable force_try
 
@@ -145,41 +145,39 @@ extension ChatViewModel {
         }
 
         // Full pattern match for both tag variants
-        for regex in _parseReasoningRegexes {
-            let range = NSRange(trimmedText.startIndex..<trimmedText.endIndex, in: trimmedText)
+        let range = NSRange(trimmedText.startIndex..<trimmedText.endIndex, in: trimmedText)
 
-            if let match = regex.firstMatch(in: trimmedText, options: [], range: range),
-               match.numberOfRanges >= 3 {
+        if let match = _parseReasoningRegex.firstMatch(in: trimmedText, options: [], range: range),
+           match.numberOfRanges >= 3 {
 
-                var reasoning: String? = nil
-                var finalAnswer: String? = nil
+            var reasoning: String? = nil
+            var finalAnswer: String? = nil
 
-                // Safely extract reasoning
-                let reasoningRange = match.range(at: 1)
-                if reasoningRange.location != NSNotFound,
-                   let swiftRange = Range(reasoningRange, in: trimmedText) {
-                    reasoning = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if reasoning?.isEmpty == true { reasoning = nil }
-                }
-
-                // Safely extract final answer
-                let answerRange = match.range(at: 2)
-                if answerRange.location != NSNotFound,
-                   let swiftRange = Range(answerRange, in: trimmedText) {
-                    finalAnswer = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if finalAnswer?.isEmpty == true { finalAnswer = nil }
-                }
-
-                // DEBUG: Log extracted values for short responses
-                if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
-                    logger.debug("parseReasoningResponse extracted: reasoning=\(reasoning?.count ?? 0, privacy: .public) finalAnswer=\(finalAnswer?.count ?? 0, privacy: .public)")
-                }
-
-                return (reasoning, finalAnswer)
+            // Safely extract reasoning
+            let reasoningRange = match.range(at: 1)
+            if reasoningRange.location != NSNotFound,
+               let swiftRange = Range(reasoningRange, in: trimmedText) {
+                reasoning = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if reasoning?.isEmpty == true { reasoning = nil }
             }
+
+            // Safely extract final answer
+            let answerRange = match.range(at: 2)
+            if answerRange.location != NSNotFound,
+               let swiftRange = Range(answerRange, in: trimmedText) {
+                finalAnswer = String(trimmedText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if finalAnswer?.isEmpty == true { finalAnswer = nil }
+            }
+
+            // DEBUG: Log extracted values for short responses
+            if (reasoning?.count ?? 0) < 200 || (finalAnswer?.count ?? 0) < 100 {
+                logger.debug("parseReasoningResponse extracted: reasoning=\(reasoning?.count ?? 0, privacy: .public) finalAnswer=\(finalAnswer?.count ?? 0, privacy: .public)")
+            }
+
+            return (reasoning, finalAnswer)
         }
 
-        // If all patterns failed, treat as final answer
+        // If the pattern failed, treat as final answer
         return (nil, trimmedText)
     }
 
@@ -260,10 +258,6 @@ extension ChatViewModel {
         return count
     }
 
-    private func parseReasoningResponseForSearchSession(_ text: String) -> (reasoning: String?, finalAnswer: String?) {
-        Self.parseReasoningResponseForSearchSessionText(text)
-    }
-
     private static func looksLikeReasoningContinuation(_ text: String) -> Bool {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return false }
@@ -288,7 +282,6 @@ extension ChatViewModel {
         return false
     }
 
-    // made internal so it can be called from extensions in other files
     internal func updateMessageWithReasoningContent(_ message: Message, fullText: String, finalize: Bool = false) {
         // DEBUG: Log if we're updating with empty/whitespace-only content
         if fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -343,7 +336,7 @@ extension ChatViewModel {
 
             let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
             let parsed = if isMLX && hasLiveSearches {
-                parseReasoningResponseForSearchSession(visiblePortion)
+                Self.parseReasoningResponseForSearchSessionText(visiblePortion)
             } else {
                 parseReasoningResponse(visiblePortion)
             }
