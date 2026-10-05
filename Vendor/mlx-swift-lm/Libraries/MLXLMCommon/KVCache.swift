@@ -443,11 +443,6 @@ private struct CentroidCodebook: Sendable {
     let boundaries: [Float]
 }
 
-private struct OrthogonalTransform: Sendable {
-    let matrix: [[Float]]
-    let transpose: [[Float]]
-}
-
 private struct SeededGaussianRandom: Sendable {
     private var state: UInt64
     private var spare: Double?
@@ -489,69 +484,6 @@ private struct SeededGaussianRandom: Sendable {
 }
 
 private enum CentroidQuantizationMath {
-    static func orthogonalTransform(dimension: Int, seed: UInt64) -> OrthogonalTransform {
-        precondition(dimension > 0, "Orthogonal transform requires a positive dimension")
-
-        var generator = SeededGaussianRandom(seed: seed)
-        var matrix = Array(
-            repeating: Array(repeating: Float(0), count: dimension),
-            count: dimension
-        )
-        for row in 0 ..< dimension {
-            for column in 0 ..< dimension {
-                matrix[row][column] = generator.nextGaussian()
-            }
-        }
-
-        var qColumns = Array(
-            repeating: Array(repeating: Float(0), count: dimension),
-            count: dimension
-        )
-
-        for column in 0 ..< dimension {
-            var vector = (0 ..< dimension).map { matrix[$0][column] }
-            for previous in 0 ..< column {
-                let projection = dot(vector, qColumns[previous])
-                for index in 0 ..< dimension {
-                    vector[index] -= projection * qColumns[previous][index]
-                }
-            }
-
-            var norm = sqrt(max(dot(vector, vector), Float(1e-12)))
-            if norm < 1e-6 {
-                vector = Array(repeating: Float(0), count: dimension)
-                vector[column] = 1
-                for previous in 0 ..< column {
-                    let projection = dot(vector, qColumns[previous])
-                    for index in 0 ..< dimension {
-                        vector[index] -= projection * qColumns[previous][index]
-                    }
-                }
-                norm = sqrt(max(dot(vector, vector), Float(1e-12)))
-            }
-
-            for index in 0 ..< dimension {
-                qColumns[column][index] = vector[index] / norm
-            }
-        }
-
-        var rotation = Array(
-            repeating: Array(repeating: Float(0), count: dimension),
-            count: dimension
-        )
-        var transpose = Array(
-            repeating: Array(repeating: Float(0), count: dimension),
-            count: dimension
-        )
-        for row in 0 ..< dimension {
-            for column in 0 ..< dimension {
-                rotation[row][column] = qColumns[column][row]
-                transpose[column][row] = rotation[row][column]
-            }
-        }
-        return OrthogonalTransform(matrix: rotation, transpose: transpose)
-    }
-
     static func codebook(dimension: Int, bits: Int) -> CentroidCodebook {
         precondition(dimension >= 3, "Centroid quantization requires dimension >= 3")
         precondition((1 ... 8).contains(bits), "MSE centroid stage supports 1-8 bits.")
@@ -680,35 +612,11 @@ private enum CentroidQuantizationMath {
         }
         return boundaries
     }
-
-    private static func dot(_ lhs: [Float], _ rhs: [Float]) -> Float {
-        zip(lhs, rhs).reduce(Float(0)) { partial, pair in
-            partial + pair.0 * pair.1
-        }
-    }
 }
 
 private enum QuantizationParameterStore {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var orthogonalTransforms: [String: OrthogonalTransform] = [:]
     nonisolated(unsafe) private static var codebooks: [String: CentroidCodebook] = [:]
-
-    static func orthogonalTransform(dimension: Int, seed: UInt64) -> OrthogonalTransform {
-        let key = "\(dimension)-\(seed)"
-        lock.lock()
-        if let cached = orthogonalTransforms[key] {
-            lock.unlock()
-            return cached
-        }
-        lock.unlock()
-
-        let transform = CentroidQuantizationMath.orthogonalTransform(dimension: dimension, seed: seed)
-
-        lock.lock()
-        orthogonalTransforms[key] = transform
-        lock.unlock()
-        return transform
-    }
 
     static func codebook(dimension: Int, bits: Int) -> CentroidCodebook {
         let key = "\(dimension)-\(bits)"
@@ -726,34 +634,6 @@ private enum QuantizationParameterStore {
         lock.unlock()
         return codebook
     }
-}
-
-private final class FullMatrixCentroidQuantizer {
-    let dimension: Int
-    let centroids: MLXArray
-    let inverseRotation: MLXArray
-
-    init(dimension: Int, bits: Int, seed: UInt64) {
-        precondition(dimension > 0, "Centroid migration requires a positive head dimension")
-        precondition((1 ... 8).contains(bits), "Centroid migration supports 1-8 bits.")
-        self.dimension = dimension
-        let codebook = QuantizationParameterStore.codebook(dimension: max(dimension, 3), bits: bits)
-        self.centroids = MLXArray(codebook.centroids).asType(.float32)
-        let transform = QuantizationParameterStore.orthogonalTransform(dimension: dimension, seed: seed)
-        self.inverseRotation = MLXArray(transform.transpose.flatMap { $0 }, [dimension, dimension])
-            .asType(.float32)
-    }
-
-    func dequantize(indices: MLXArray, norms: MLXArray, dtype: DType) -> MLXArray {
-        let shape = indices.shape
-        let flatCount = shape.reduce(1, *)
-        let flatIndices = indices.reshaped([flatCount])
-        let rotated = centroids[flatIndices].reshaped(shape)
-        let restoredUnit = matmul(rotated, inverseRotation)
-        let restored = restoredUnit * expandedDimensions(norms.asType(.float32), axis: -1)
-        return restored.asType(dtype)
-    }
-
 }
 
 private enum PackedCentroidIndices {
@@ -820,134 +700,6 @@ private enum PackedCentroidIndices {
 
 private func castIfNeeded(_ array: MLXArray, to dtype: DType) -> MLXArray {
     array.dtype == dtype ? array : array.asType(dtype)
-}
-
-private func serializedDType(_ name: String) -> DType {
-    switch name {
-    case "bfloat16":
-        return .bfloat16
-    case "float32":
-        return .float32
-    default:
-        return .float16
-    }
-}
-
-func migrateLegacyCompressedPromptCache(
-    state: [MLXArray],
-    metaState: [String]
-) throws -> KVCacheSimple {
-    guard [7, 10, 13].contains(metaState.count) else {
-        throw KVCacheError(message: "Invalid legacy compressed cache metadata")
-    }
-
-    let legacyKeyTotalBits: Int
-    let valueBits: Int
-    let seed: UInt64
-    let keyDimension: Int?
-    let valueDimension: Int?
-    let dtype: DType
-    let compressedCount: Int
-    let exactCount: Int
-
-    if metaState.count == 13 {
-        legacyKeyTotalBits = Int(metaState[2]) ?? 3
-        valueBits = Int(metaState[3]) ?? 2
-        seed = UInt64(metaState[4]) ?? 42
-        keyDimension = (Int(metaState[7]) ?? 0) > 0 ? Int(metaState[7]) : nil
-        valueDimension = (Int(metaState[8]) ?? 0) > 0 ? Int(metaState[8]) : nil
-        dtype = serializedDType(metaState[9])
-        compressedCount = Int(metaState[10]) ?? 0
-        exactCount = Int(metaState[11]) ?? 0
-    } else if metaState.count == 10 {
-        legacyKeyTotalBits = Int(metaState[2]) ?? 3
-        valueBits = 2
-        seed = UInt64(metaState[3]) ?? 42
-        keyDimension = (Int(metaState[4]) ?? 0) > 0 ? Int(metaState[4]) : nil
-        valueDimension = (Int(metaState[5]) ?? 0) > 0 ? Int(metaState[5]) : nil
-        dtype = serializedDType(metaState[6])
-        compressedCount = Int(metaState[7]) ?? 0
-        exactCount = Int(metaState[8]) ?? 0
-    } else {
-        legacyKeyTotalBits = Int(metaState[2]) ?? 3
-        valueBits = 2
-        seed = UInt64(metaState[3]) ?? 42
-        keyDimension = (Int(metaState[4]) ?? 0) > 0 ? Int(metaState[4]) : nil
-        valueDimension = (Int(metaState[5]) ?? 0) > 0 ? Int(metaState[5]) : nil
-        dtype = serializedDType(metaState[6])
-        compressedCount = Int(metaState[1]) ?? 0
-        exactCount = 0
-    }
-
-    var keyBlocks: [MLXArray] = []
-    var valueBlocks: [MLXArray] = []
-
-    if state.count == 2 {
-        keyBlocks.append(state[0].asType(dtype))
-        valueBlocks.append(state[1].asType(dtype))
-    } else if [6, 8].contains(state.count), compressedCount > 0 {
-        guard let keyDimension, let valueDimension else {
-            throw KVCacheError(message: "Legacy compressed cache is missing head dimensions")
-        }
-        let keyBits = max(1, legacyKeyTotalBits - 1)
-        let keyQuantizer = FullMatrixCentroidQuantizer(
-            dimension: keyDimension,
-            bits: keyBits,
-            seed: seed
-        )
-        let valueQuantizer = FullMatrixCentroidQuantizer(
-            dimension: valueDimension,
-            bits: valueBits,
-            seed: seed &+ 1
-        )
-        let keyIndices = PackedCentroidIndices.unpack(
-            state[0][.ellipsis, ..<compressedCount, 0...],
-            bitWidth: keyBits,
-            valueCount: keyDimension
-        )
-        let valueIndices = PackedCentroidIndices.unpack(
-            state[4][.ellipsis, ..<compressedCount, 0...],
-            bitWidth: valueBits,
-            valueCount: valueDimension
-        )
-        keyBlocks.append(
-            keyQuantizer.dequantize(
-                indices: keyIndices,
-                norms: state[1][.ellipsis, ..<compressedCount],
-                dtype: dtype
-            )
-        )
-        valueBlocks.append(
-            valueQuantizer.dequantize(
-                indices: valueIndices,
-                norms: state[5][.ellipsis, ..<compressedCount],
-                dtype: dtype
-            )
-        )
-        if state.count == 8, exactCount > 0 {
-            keyBlocks.append(state[6][.ellipsis, ..<exactCount, 0...].asType(dtype))
-            valueBlocks.append(state[7][.ellipsis, ..<exactCount, 0...].asType(dtype))
-        }
-    } else if state.isEmpty {
-        return KVCacheSimple()
-    } else {
-        throw KVCacheError(message: "Invalid legacy compressed cache state")
-    }
-
-    guard let firstKeys = keyBlocks.first, let firstValues = valueBlocks.first else {
-        return KVCacheSimple()
-    }
-
-    let migrated = KVCacheSimple()
-    if keyBlocks.count == 1 {
-        migrated.state = [firstKeys, firstValues]
-    } else {
-        migrated.state = [
-            concatenated(keyBlocks, axis: 2),
-            concatenated(valueBlocks, axis: 2),
-        ]
-    }
-    return migrated
 }
 
 private struct RotorQuantRotationParameters: Sendable {
@@ -3563,14 +3315,6 @@ public func loadPromptCache(
                 metaState: i < cacheInfo.count ? cacheInfo[i] : []
             )
             cache = RotorQuantKVCache()
-        case "TurboQuantKVCache":
-            caches.append(
-                try migrateLegacyCompressedPromptCache(
-                    state: cacheData[i],
-                    metaState: i < cacheInfo.count ? cacheInfo[i] : []
-                )
-            )
-            continue
         case "ChunkedKVCache":
             cache = ChunkedKVCache()
         case "MambaCache":

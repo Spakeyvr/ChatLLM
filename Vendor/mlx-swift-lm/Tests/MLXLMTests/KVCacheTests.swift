@@ -659,35 +659,6 @@ struct KVCacheTests {
     }
 
     @Test
-    func testLegacyTurboQuantPromptCacheMigratesToSimpleCache() throws {
-        let keyPackedWidth = (128 * 2 + 7) / 8
-        let valuePackedWidth = (128 * 2 + 7) / 8
-        let compressedKeys = MLXArray.zeros([1, 1, 1, keyPackedWidth], dtype: .uint8)
-        let keyNorms = MLXArray.ones([1, 1, 1], dtype: .float32)
-        let residualSigns = MLXArray.zeros([1, 1, 1, 16], dtype: .uint8)
-        let residualNorms = MLXArray.zeros([1, 1, 1], dtype: .float32)
-        let compressedValues = MLXArray.zeros([1, 1, 1, valuePackedWidth], dtype: .uint8)
-        let valueNorms = MLXArray.ones([1, 1, 1], dtype: .float32)
-        let exactKeys = patternedArray(shape: [1, 1, 1, 128])
-        let exactValues = patternedArray(shape: [1, 1, 1, 128])
-        let state = [
-            compressedKeys, keyNorms, residualSigns, residualNorms,
-            compressedValues, valueNorms, exactKeys, exactValues,
-        ]
-        let metaState = [
-            "256", "2", "3", "2", "42", "64", "0",
-            "128", "128", "float16", "1", "1", "128",
-        ]
-
-        let migrated = try migrateLegacyCompressedPromptCache(state: state, metaState: metaState)
-
-        #expect(migrated.offset == 2)
-        #expect(migrated.state.count == 2)
-        #expect(migrated.state[0].shape == [1, 1, 2, 128])
-        #expect(migrated.state[1].shape == [1, 1, 2, 128])
-    }
-
-    @Test
     func testMalformedRotorQuantPromptCacheThrowsInsteadOfCrashing() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
