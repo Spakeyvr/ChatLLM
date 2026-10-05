@@ -160,7 +160,7 @@ extension ChatViewModel {
         }
     }
 
-    private func effectiveContextWindowTokenLimit() -> Int {
+    func effectiveContextWindowTokenLimit() -> Int {
         let bridge = backendBridge
         let model = bridge.selectedModelID.flatMap { bridge.modelManager?.model(withID: $0) } ??
             bridge.modelManager?.currentModel
