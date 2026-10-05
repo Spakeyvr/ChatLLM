@@ -72,7 +72,6 @@ struct StepByStepReasoningSheet: View {
     @Environment(\.locale) private var locale
     let reasoning: String
     let searchInvocations: [SearchInvocation]?
-    @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
     @State private var selectedDetent: PresentationDetent = .medium
 

@@ -174,13 +174,8 @@ struct MessageCellView: View {
             // CRITICAL FIX (Bug 8): Use animation and transition to prevent flicker during regeneration
             if message.role == .assistant && hasContent && message.isFinal && !isCurrentlyStreaming {
                 AssistantActionsBar(
-                    messageID: message.id,
-                    isGenerating: viewModel.isGenerating,
-                    isStreamingForThisMessage: isCurrentlyStreaming,
                     canAct: canAct,
-                    isFinal: message.isFinal,
                     sourceInvocations: sourceInvocations,
-                    onStop: { viewModel.cancelGeneration() },
                     onTryAgain: {
                         viewModel.scheduleRegeneration(messageID: message.id, instruction: nil)
                     },
@@ -988,13 +983,8 @@ struct MessageSwipeActionsView: View {
 
 struct AssistantActionsBar: View {
     @Environment(\.locale) private var locale
-    let messageID: UUID
-    var isGenerating: Bool
-    var isStreamingForThisMessage: Bool
     var canAct: Bool
-    var isFinal: Bool
     var sourceInvocations: [SearchInvocation]
-    var onStop: () -> Void
     var onTryAgain: () -> Void
     var onConcise: () -> Void
     var onFormal: () -> Void

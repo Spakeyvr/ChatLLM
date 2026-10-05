@@ -18,7 +18,6 @@ struct ComposerView: View {
     let isGenerating: Bool
     let onSend: () -> Void
     let onStop: () -> Void
-    let onClear: () -> Void
     let onCancelEditing: () -> Void
     let onCamera: () -> Void
     let onPhotosPicker: () -> Void
@@ -40,7 +39,6 @@ struct ComposerView: View {
             isEditing: isEditing,
             onSend: onSend,
             onStop: onStop,
-            onClear: onClear,
             onCancelEditing: onCancelEditing,
             canSend: canSend,
             isGenerating: isGenerating,
@@ -65,10 +63,6 @@ struct ComposerView: View {
 
 struct NavigationTitleView: View {
     @Environment(\.locale) private var locale
-    let title: String
-    let isReasoningEnabled: Bool
-    let isSmartReasoningEnabled: Bool
-    let reasoningAvailable: Bool
     let hasMessages: Bool
 
     @ObservedObject var modelBackendBridge: ModelBackendBridge

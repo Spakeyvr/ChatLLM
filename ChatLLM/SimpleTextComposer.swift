@@ -39,7 +39,6 @@ struct SimpleTextComposer: View {
     var isEditing: Bool
     var onSend: () -> Void
     var onStop: () -> Void
-    var onClear: () -> Void
     var onCancelEditing: () -> Void
     var canSend: Bool
     var isGenerating: Bool

@@ -17,7 +17,6 @@ import ImageIO
 
 struct ChatView: View {
     @Environment(\.locale) private var locale
-    @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
     @ObservedObject var viewModel: ChatViewModel
@@ -205,10 +204,6 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 NavigationTitleView(
-                    title: viewModel.conversation.title,
-                    isReasoningEnabled: modelBackendBridge.reasoningRequired || viewModel.conversation.reasoningMode,
-                    isSmartReasoningEnabled: !modelBackendBridge.reasoningRequired && viewModel.conversation.smartReasoningMode,
-                    reasoningAvailable: modelBackendBridge.reasoningAvailable,
                     hasMessages: !sortedMessages.isEmpty,
                     modelBackendBridge: modelBackendBridge
                 )
@@ -387,9 +382,6 @@ struct ChatView: View {
             },
             onStop: {
                 viewModel.cancelGeneration()
-            },
-            onClear: {
-                inputText = ""
             },
             onCancelEditing: cancelEditing,
             onCamera: {

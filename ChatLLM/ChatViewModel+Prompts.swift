@@ -57,7 +57,6 @@ extension ChatViewModel {
         let role: MessageRole
         let text: String
         let isReasoningMode: Bool
-        let reasoning: String?
         let finalAnswer: String?
         let isFinal: Bool
         let attachments: [AttachmentSnapshot]
@@ -76,7 +75,6 @@ extension ChatViewModel {
                     role: message.role,
                     text: message.text,
                     isReasoningMode: message.isReasoningMode,
-                    reasoning: message.reasoning,
                     finalAnswer: message.finalAnswer,
                     isFinal: message.isFinal,
                     attachments: attachmentSnapshots
