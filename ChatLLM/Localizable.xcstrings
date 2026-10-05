@@ -906,28 +906,6 @@
         }
       }
     },
-    "Assistant" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Assistent"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Assistant"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Asistente"
-          }
-        }
-      }
-    },
     "Auto-Delete Chats" : {
       "localizations" : {
         "de" : {
@@ -1701,28 +1679,6 @@
         }
       }
     },
-    "Delete All Chats Except Current" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alle Chats außer dem aktuellen löschen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delete All Chats Except Current"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eliminar todos los chats excepto el actual"
-          }
-        }
-      }
-    },
     "Delete All Chats?" : {
       "localizations" : {
         "de" : {
@@ -1829,28 +1785,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "¿Eliminar los demás chats?"
-          }
-        }
-      }
-    },
-    "Delete previous chats?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bisherige Chats löschen?"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delete previous chats?"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "¿Eliminar los chats anteriores?"
           }
         }
       }
@@ -5246,28 +5180,6 @@
         }
       }
     },
-    "Run MLX-converted models locally via mlx-swift-lm" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Führt MLX-konvertierte Modelle lokal über mlx-swift-lm aus"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Run MLX-converted models locally via mlx-swift-lm"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ejecuta modelos convertidos a MLX de forma local mediante mlx-swift-lm"
-          }
-        }
-      }
-    },
     "Save" : {
       "localizations" : {
         "de" : {
@@ -6698,28 +6610,6 @@
         }
       }
     },
-    "This will permanently remove your chat history from this device." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dein Chatverlauf wird dauerhaft von diesem Gerät gelöscht."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This will permanently remove your chat history from this device."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se eliminará permanentemente tu historial de chats de este dispositivo."
-          }
-        }
-      }
-    },
     "Thought" : {
       "localizations" : {
         "de" : {
@@ -6980,50 +6870,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat sin título"
-          }
-        }
-      }
-    },
-    "User" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nutzer"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "User"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usuario"
-          }
-        }
-      }
-    },
-    "Uses Apple's on-device language model with system-level optimization" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nutzt Apples Sprachmodell auf dem Gerät mit Optimierung auf Systemebene"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Uses Apple's on-device language model with system-level optimization"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usa el modelo de lenguaje de Apple en el dispositivo con optimización del sistema"
           }
         }
       }

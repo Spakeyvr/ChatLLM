@@ -49,24 +49,6 @@ class ModelBackendBridge: ObservableObject {
                 return "MLX Models"
             }
         }
-
-        var icon: String {
-            switch self {
-            case .foundationModels:
-                return "apple.logo"
-            case .mlx:
-                return "brain.head.profile"
-            }
-        }
-
-        var description: String {
-            switch self {
-            case .foundationModels:
-                return String(localized: "Uses Apple's on-device language model with system-level optimization", bundle: .appLocalized)
-            case .mlx:
-                return String(localized: "Run MLX-converted models locally via mlx-swift-lm", bundle: .appLocalized)
-            }
-        }
     }
 
     // MARK: - Initialization

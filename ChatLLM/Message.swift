@@ -54,15 +54,6 @@ enum MessageRole: String, Codable, CaseIterable, Sendable {
     case system
     case user
     case assistant
-    
-    // Performance optimization: Pre-computed localized display names
-    var displayName: String {
-        switch self {
-        case .system: return String(localized: "System", bundle: .appLocalized)
-        case .user: return String(localized: "User", bundle: .appLocalized)
-        case .assistant: return String(localized: "Assistant", bundle: .appLocalized)
-        }
-    }
 
     var isAssistant: Bool { self == .assistant }
 }

@@ -25,7 +25,6 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var debouncedSearchText: String = ""
     @State private var searchDebounceTask: Task<Void, Never>?
-    @State private var showDeleteAllAlert: Bool = false
     @State private var showSettings: Bool = false
     @State private var pendingSettingsAction: SettingsDataAction?
     @State private var isLoading: Bool = false
@@ -111,13 +110,6 @@ struct ContentView: View {
                     currentViewModel = nil
                 }
             }
-            .deleteAllChatsAlert(
-                isPresented: $showDeleteAllAlert,
-                hasSelection: selection != nil,
-                canDeleteAllExceptCurrent: conversations.count > 1,
-                onDeleteAll: deleteAllChats,
-                onDeleteAllExceptCurrent: deleteAllExceptCurrent
-            )
             .errorAlert(
                 isPresented: $isErrorAlertPresented,
                 message: errorMessage ?? String(localized: "An unknown error occurred.", bundle: .appLocalized),
@@ -1299,28 +1291,6 @@ private struct DynamicHeightTextEditor: View {
 // MARK: - Lightweight View helpers to reduce body complexity
 
 private extension View {
-    func deleteAllChatsAlert(
-        isPresented: Binding<Bool>,
-        hasSelection: Bool,
-        canDeleteAllExceptCurrent: Bool,
-        onDeleteAll: @escaping () -> Void,
-        onDeleteAllExceptCurrent: @escaping () -> Void
-    ) -> some View {
-        alert("Delete previous chats?", isPresented: isPresented) {
-            if hasSelection && canDeleteAllExceptCurrent {
-                Button("Delete All Chats Except Current", role: .destructive) {
-                    onDeleteAllExceptCurrent()
-                }
-            }
-            Button("Delete All Chats", role: .destructive) {
-                onDeleteAll()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will permanently remove your chat history from this device.")
-        }
-    }
-    
     func errorAlert(
         isPresented: Binding<Bool>,
         message: String,
