@@ -198,7 +198,6 @@ extension MLXModelManager {
             sessionKey: sessionKey,
             model: currentModel,
             messages: messages,
-            enableThinking: enableThinking,
             additionalContext: additionalContext,
             processing: processing,
             tools: tools,
@@ -213,7 +212,6 @@ extension MLXModelManager {
                 onToken: onToken,
                 onToolCall: onToolCall
             )
-            latestPerformanceSample = response.performanceSample
             cleanupMemoryAfterGeneration()
             if !memoryConstrained {
                 await startDeferredTuningIfNeeded(container: container, model: currentModel)

@@ -43,26 +43,3 @@ nonisolated internal enum MLXCachePolicy: Equatable, Sendable {
         }
     }
 }
-
-nonisolated internal struct MLXKVBenchmarkMetadata: Sendable, Equatable {
-    let cachePolicy: MLXCachePolicy
-    let effectiveMaxKVSize: Int?
-    let prefillStepSize: Int
-}
-
-nonisolated internal struct MLXPerformanceSample: Sendable {
-    let conversationID: UUID
-    let modelID: String
-    let promptTokenCount: Int
-    let outputTokenCount: Int
-    let toolInvocationCount: Int
-    let timeToFirstToken: TimeInterval?
-    let totalLatency: TimeInterval
-    let promptTokensPerSecond: Double?
-    let decodeTokensPerSecond: Double?
-    let stopReason: GenerateStopReason?
-    let memoryBefore: Memory.Snapshot
-    let memoryAfter: Memory.Snapshot
-    let peakActiveBytes: Int
-    let kvBenchmarkMetadata: MLXKVBenchmarkMetadata
-}

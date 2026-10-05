@@ -5,7 +5,7 @@
 //  Manages MLX-based language models downloaded to Documents/Models/.
 //
 //  The manager body is split into Type+Concern extension files:
-//    MLXCachePolicy.swift              Shared cache-policy/benchmark/perf types
+//    MLXCachePolicy.swift              Shared cache-policy types
 //    MLXModelManager+ModelInfo.swift    MLXModelInfo and generation result types
 //    MLXModelManager+Catalog.swift      Model catalog, installation status, package metadata
 //    MLXModelManager+Downloads.swift    Download lifecycle and partial-download cleanup
@@ -16,8 +16,8 @@
 //    MLXModelManager+Memory.swift       Memory pressure handling and teardown
 //
 //  Stored state lives here; it is internal so the extension files can share it.
-//  Four published properties (pendingModelToLoad, activeDownloadModelID,
-//  downloadErrorModelID, latestPerformanceSample) intentionally lost their
+//  Three published properties (pendingModelToLoad, activeDownloadModelID,
+//  downloadErrorModelID) intentionally lost their
 //  private(set) qualifiers for the same reason: Swift has no module-scoped
 //  setter, so cross-file extensions must be able to write them.
 //
@@ -49,7 +49,6 @@ final class MLXModelManager: ObservableObject {
     @Published var activeDownloadModelID: String?
     @Published var downloadError: String?
     @Published var downloadErrorModelID: String?
-    @Published var latestPerformanceSample: MLXPerformanceSample?
 
 
     // MARK: - State
@@ -113,8 +112,7 @@ final class MLXModelManager: ObservableObject {
         MLXRuntimeConfiguration.configureForCurrentProcess()
         self.deviceSupportProfile = deviceSupportProfile ?? MLXDeviceSupportProfile.current
         self.inferenceWorker = MLXInferenceWorker(
-            subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM",
-            deviceSupportProfile: self.deviceSupportProfile
+            subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM"
         )
         removeObsoleteModelDirectories()
         availableModels = Self.modelDefinitions.map { definition in

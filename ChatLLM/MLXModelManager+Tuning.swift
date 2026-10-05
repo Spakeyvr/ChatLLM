@@ -338,8 +338,7 @@ extension MLXModelManager {
             await self.inferenceWorker.updateLoadedModelTuning(
                 modelID: model.id,
                 prefillStepSize: selectedPrefill.candidate,
-                activeBytesEstimate: selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes,
-                measurement: selectedMeasurement
+                activeBytesEstimate: selectedMeasurement.kvBytes + selectedMeasurement.workspaceBytes
             )
             await MainActor.run {
                 self.logger.notice(

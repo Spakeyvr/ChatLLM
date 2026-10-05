@@ -167,10 +167,8 @@ extension MLXModelManager {
                         model: model,
                         wiredMemoryPolicy: wiredMemoryPolicy,
                         reservationTicket: reservationTicket,
-                        weightBytes: weightBytes,
                         activeBytesEstimate: 0,
-                        prefillStepSize: recommendedPrefillStepSize,
-                        measurement: nil
+                        prefillStepSize: recommendedPrefillStepSize
                     )
                 )
                 guard !Task.isCancelled else {

@@ -107,10 +107,8 @@ nonisolated struct MLXLoadedModelState: @unchecked Sendable {
     let model: MLXModelManager.MLXModelInfo
     let wiredMemoryPolicy: MLXLMCommon.WiredSumPolicy
     var reservationTicket: MLX.WiredMemoryTicket?
-    var weightBytes: Int
     var activeBytesEstimate: Int
     var prefillStepSize: Int
-    var measurement: MLXLMCommon.WiredMemoryMeasurement?
 }
 
 nonisolated struct MLXInferenceRequest: @unchecked Sendable {
@@ -118,7 +116,6 @@ nonisolated struct MLXInferenceRequest: @unchecked Sendable {
     let sessionKey: MLXSessionKey
     let model: MLXModelManager.MLXModelInfo
     let messages: [Chat.Message]
-    let enableThinking: Bool
     let additionalContext: [String: any Sendable]?
     let processing: UserInput.Processing
     let tools: [MLXToolSpec]
@@ -128,7 +125,6 @@ nonisolated struct MLXInferenceRequest: @unchecked Sendable {
 
 nonisolated struct MLXInferenceResponse: Sendable {
     let toolInvocationCount: Int
-    let performanceSample: MLXPerformanceSample
 }
 
 nonisolated enum MLXPersistentSessionReleaseScope: Equatable, Sendable {
@@ -148,7 +144,6 @@ actor MLXInferenceWorker {
         let session: ChatSession
         let cacheConfiguration: SessionCacheConfiguration
         var visibleHistory: [MLXVisibleMessageSignature]
-        var latestPerformance: MLXPerformanceSample?
         var lastAccessed: Date
     }
 
@@ -174,9 +169,8 @@ actor MLXInferenceWorker {
     private var stateRevision: UInt64 = 0
     private let maxPersistentSessions = 2
 
-    init(subsystem: String, deviceSupportProfile: MLXDeviceSupportProfile) {
+    init(subsystem: String) {
         self.logger = Logger(subsystem: subsystem, category: "MLXInferenceWorker")
-        _ = deviceSupportProfile
     }
 
     func setLoadedModel(_ state: MLXLoadedModelState) async {
@@ -192,13 +186,11 @@ actor MLXInferenceWorker {
     func updateLoadedModelTuning(
         modelID: String,
         prefillStepSize: Int,
-        activeBytesEstimate: Int,
-        measurement: MLXLMCommon.WiredMemoryMeasurement?
+        activeBytesEstimate: Int
     ) {
         guard var loadedModel, loadedModel.model.id == modelID else { return }
         loadedModel.prefillStepSize = prefillStepSize
         loadedModel.activeBytesEstimate = max(0, activeBytesEstimate)
-        loadedModel.measurement = measurement
         self.loadedModel = loadedModel
     }
 
@@ -326,14 +318,11 @@ actor MLXInferenceWorker {
         reusableSession?.toolDispatch = nil
 
         Memory.peakMemory = 0
-        let memoryBefore = Memory.snapshot()
         let startedAt = Date()
         var firstTokenAt: Date?
         var assistantVisibleText = ""
-        var stopReason: GenerateStopReason?
         var cumulativePromptTokenCount = 0
         var cumulativeOutputTokenCount = 0
-        var cumulativePromptTime: TimeInterval = 0
         var cumulativeGenerationTime: TimeInterval = 0
         var activePromptContent = latestUserMessage.content
         var activePromptRole = latestUserMessage.role
@@ -347,11 +336,6 @@ actor MLXInferenceWorker {
         var explicitMessageHistory = Array(request.messages.dropLast())
         let toolInvocationState = ToolInvocationState()
         let effectiveCachePolicy = MLXModelManager.cachePolicy(for: request.params)
-        let kvBenchmarkMetadata = MLXKVBenchmarkMetadata(
-            cachePolicy: effectiveCachePolicy,
-            effectiveMaxKVSize: request.params.maxKVSize,
-            prefillStepSize: request.params.prefillStepSize
-        )
 
         let activeTicket = makeActiveInferenceTicket(from: loadedModel)
         MLXMemoryDiagnostics.log(self.logger, "generate.entry")
@@ -442,9 +426,7 @@ actor MLXInferenceWorker {
                 if let completionInfo {
                     cumulativePromptTokenCount += completionInfo.promptTokenCount
                     cumulativeOutputTokenCount += completionInfo.generationTokenCount
-                    cumulativePromptTime += completionInfo.promptTime
                     cumulativeGenerationTime += completionInfo.generateTime
-                    stopReason = completionInfo.stopReason
                 }
 
                 guard let emittedToolCall else {
@@ -548,31 +530,16 @@ actor MLXInferenceWorker {
 
         let finishedAt = Date()
         MLXMemoryDiagnostics.log(logger, "generate.end")
-        let memoryAfter = Memory.snapshot()
         let toolInvocationCount = await toolInvocationState.currentCount()
-        let performanceSample = MLXPerformanceSample(
-            conversationID: request.conversationID,
-            modelID: request.model.id,
-            promptTokenCount: cumulativePromptTokenCount,
-            outputTokenCount: max(
-                cumulativeOutputTokenCount,
-                max(0, Int(ceil(Double(assistantVisibleText.count) / 4.0)))
-            ),
-            toolInvocationCount: toolInvocationCount,
-            timeToFirstToken: firstTokenAt.map { $0.timeIntervalSince(startedAt) },
-            totalLatency: finishedAt.timeIntervalSince(startedAt),
-            promptTokensPerSecond: cumulativePromptTime > 0
-                ? Double(cumulativePromptTokenCount) / cumulativePromptTime
-                : nil,
-            decodeTokensPerSecond: cumulativeGenerationTime > 0
-                ? Double(cumulativeOutputTokenCount) / cumulativeGenerationTime
-                : nil,
-            stopReason: stopReason,
-            memoryBefore: memoryBefore,
-            memoryAfter: memoryAfter,
-            peakActiveBytes: Memory.peakMemory,
-            kvBenchmarkMetadata: kvBenchmarkMetadata
+        let outputTokenCount = max(
+            cumulativeOutputTokenCount,
+            max(0, Int(ceil(Double(assistantVisibleText.count) / 4.0)))
         )
+        let timeToFirstToken = firstTokenAt.map { $0.timeIntervalSince(startedAt) }
+        let totalLatency = finishedAt.timeIntervalSince(startedAt)
+        let decodeTokensPerSecond = cumulativeGenerationTime > 0
+            ? Double(cumulativeOutputTokenCount) / cumulativeGenerationTime
+            : nil
 
         var visibleHistory = request.messages.map { MLXVisibleMessageSignature(message: $0) }
         visibleHistory.append(
@@ -592,7 +559,6 @@ actor MLXInferenceWorker {
                     session: reusableSession,
                     cacheConfiguration: requestedCacheConfiguration,
                     visibleHistory: visibleHistory,
-                    latestPerformance: performanceSample,
                     lastAccessed: finishedAt
                 )
                 await evictPersistentSessionsIfNeeded()
@@ -606,13 +572,10 @@ actor MLXInferenceWorker {
         }
 
         logger.notice(
-            "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(performanceSample.promptTokenCount, privacy: .public) output_tokens=\(performanceSample.outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", performanceSample.timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", performanceSample.totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", performanceSample.decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(performanceSample.kvBenchmarkMetadata.effectiveMaxKVSize ?? -1, privacy: .public)"
+            "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(cumulativePromptTokenCount, privacy: .public) output_tokens=\(outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(request.params.maxKVSize ?? -1, privacy: .public)"
         )
 
-        return MLXInferenceResponse(
-            toolInvocationCount: toolInvocationCount,
-            performanceSample: performanceSample
-        )
+        return MLXInferenceResponse(toolInvocationCount: toolInvocationCount)
     }
 
     nonisolated static func generationStateIsCurrent(
