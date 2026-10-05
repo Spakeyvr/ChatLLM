@@ -112,7 +112,6 @@ final class ChatViewModel: ObservableObject {
 
     @Published var isGenerating = false
     @Published var streamingMessageID: UUID?
-    @Published var tavilyKeyMissing: Bool = false
 
     // Regeneration lock to prevent concurrent regenerations
     var isRegenerating = false

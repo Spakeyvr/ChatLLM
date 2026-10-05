@@ -9,22 +9,17 @@
 import Foundation
 import Vision
 import UIKit
-import Combine
 import OSLog
 
 /// Pure Vision Framework object detector
 /// Uses multiple Apple Vision APIs to detect objects without external ML models
-/// Nonisolated detection methods only read immutable configuration; UI-facing
-/// published state is explicitly MainActor-isolated.
-final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
+/// Nonisolated detection methods only read immutable configuration.
+final class VisionObjectDetector: @unchecked Sendable {
     nonisolated private static let logger = Logger(
         subsystem: "Nevio.ChatLLM",
         category: "VisionObjectDetector"
     )
 
-    @MainActor @Published var isProcessing = false
-    @MainActor @Published var lastError: String?
-    
     // Detection thresholds
     nonisolated private var confidenceThreshold: Float {
         let value = UserDefaults.standard.object(forKey: AppSettingsKeys.visionConfidenceThreshold) as? Double ?? 0.5
@@ -41,9 +36,6 @@ final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
             Self.logger.error("Could not get CGImage for Vision object detection")
             throw VisionDetectorError.invalidImage
         }
-        
-        await MainActor.run { isProcessing = true }
-        defer { Task { @MainActor in isProcessing = false } }
         
         // Run Vision detection methods
         let animals = await detectAnimals(cgImage: cgImage)

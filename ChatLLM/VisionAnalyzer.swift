@@ -10,7 +10,6 @@
 import Foundation
 import Vision
 import UIKit
-import Combine
 import OSLog
 
 // MARK: - Analysis Results
@@ -434,16 +433,12 @@ nonisolated private let _sanitizeRegexes: [(NSRegularExpression, String)] = [
 
 // MARK: - Vision Analyzer
 
-final class VisionAnalyzer: ObservableObject {
+final class VisionAnalyzer {
     nonisolated private static let logger = Logger(
         subsystem: "Nevio.ChatLLM",
         category: "VisionAnalyzer"
     )
 
-    @MainActor @Published var isProcessing = false
-    @MainActor @Published var lastError: String?
-    @MainActor @Published var lastResult: VisionAnalysisResult?
-    
     private let objectDetector = VisionObjectDetector()
     
     // MARK: - Main Analysis Method
@@ -452,9 +447,6 @@ final class VisionAnalyzer: ObservableObject {
     func analyze(image: UIImage, options: AnalysisOptions? = nil) async throws -> VisionAnalysisResult {
         let options = options ?? .all
         Self.logger.debug("Starting Vision analysis")
-        
-        await MainActor.run { isProcessing = true }
-        defer { Task { @MainActor in isProcessing = false } }
         
         guard let cgImage = image.cgImage else {
             throw VisionError.invalidImage
@@ -468,11 +460,6 @@ final class VisionAnalyzer: ObservableObject {
                 objectDetector: objectDetector
             )
         }.value
-        
-        await MainActor.run {
-            lastResult = result
-            lastError = nil
-        }
         
         Self.logger.debug(
             "Vision analysis complete: objects=\(result.objects.count, privacy: .public) text_blocks=\(result.textBlocks.count, privacy: .public) faces=\(result.faces?.count ?? 0, privacy: .public)"
