@@ -77,7 +77,7 @@ To use MLX:
 
 ## Running the Project
 
-1. Open [ChatLLM.xcodeproj](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM.xcodeproj)
+1. Open [ChatLLM.xcodeproj](/Users/nevio/Developer/ChatLLM/ChatLLM.xcodeproj)
 2. Select the `ChatLLM` scheme
 3. Choose an iPhone or iPad simulator/device
 4. Build and run
@@ -86,20 +86,20 @@ Swift Package dependencies are resolved through Xcode. The project includes MLX-
 
 ## Project Structure
 
-- [ChatLLM](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM): main app target
-- [ChatLLMTests](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLMTests): unit tests
-- [ChatLLMUITests](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLMUITests): UI tests
-- [Vendor/mlx-swift-lm](/Users/nevio/Desktop/Projects/ChatLLM/Vendor/mlx-swift-lm): local MLX package source
+- [ChatLLM](/Users/nevio/Developer/ChatLLM/ChatLLM): main app target
+- [ChatLLMTests](/Users/nevio/Developer/ChatLLM/ChatLLMTests): unit tests
+- [ChatLLMUITests](/Users/nevio/Developer/ChatLLM/ChatLLMUITests): UI tests
+- [Vendor/mlx-swift-lm](/Users/nevio/Developer/ChatLLM/Vendor/mlx-swift-lm): local MLX package source
 
 Key app files:
 
-- [ContentView.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
-- [ChatView.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ChatView.swift): conversation screen and composer integration
-- [ChatViewModel.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
-- [ModelBackendBridge.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/ModelBackendBridge.swift): backend selection and capability gating
-- [MLXModelManager.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
-- [VisionAnalyzer.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/VisionAnalyzer.swift): Vision-based image analysis pipeline
-- [TavilySearchService.swift](/Users/nevio/Desktop/Projects/ChatLLM/ChatLLM/TavilySearchService.swift): optional web search integration
+- [ContentView.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
+- [ChatView.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ChatView.swift): conversation screen and composer integration
+- [ChatViewModel.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
+- [ModelBackendBridge.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ModelBackendBridge.swift): backend selection and capability gating
+- [MLXModelManager.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
+- [VisionAnalyzer.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/VisionAnalyzer.swift): Vision-based image analysis pipeline
+- [TavilySearchService.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/TavilySearchService.swift): optional web search integration
 
 ## Architecture Overview
 
