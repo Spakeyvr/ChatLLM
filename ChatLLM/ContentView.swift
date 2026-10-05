@@ -128,7 +128,7 @@ struct ContentView: View {
                 onDismiss: performPendingSettingsAction
             )
             .sheet(item: $chatExport, onDismiss: cleanupExportFile) { export in
-                ShareSheet(activityItems: [export.url])
+                ActivityView(activityItems: [export.url])
             }
     }
 
@@ -303,7 +303,6 @@ struct ContentView: View {
     }
     
     private func handleSelectionChange(_ oldSelection: Conversation?, _ newSelection: Conversation?) {
-        _ = oldSelection?.id
         let newID = newSelection?.id
         // Entering draft mode: selection becomes nil but we want to keep the draft vm alive.
         if newID == nil && draftConversation != nil {
@@ -698,7 +697,6 @@ struct ContentView: View {
 
                     DynamicHeightTextEditor(
                         text: $searchText,
-                        height: .constant(0), // Not used anymore
                         placeholder: String(localized: "Search chats", bundle: .appLocalized)
                     )
                     .focused($isSearchFocused)
@@ -1243,21 +1241,6 @@ private extension UIApplication {
     }
 }
 
-// MARK: - Share Sheet for exporting
-
-struct ShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-    
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-        return controller
-    }
-    
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
-        // No updates needed
-    }
-}
-
 #Preview {
     let schema = Schema([Conversation.self, Message.self, MessageAttachment.self])
     let container: ModelContainer
@@ -1275,7 +1258,6 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 private struct DynamicHeightTextEditor: View {
     @Binding var text: String
-    @Binding var height: CGFloat
     let placeholder: String
     
     var body: some View {

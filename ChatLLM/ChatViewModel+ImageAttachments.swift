@@ -285,7 +285,7 @@ extension ChatViewModel {
 
         if let canonicalImageURL {
             logger.debug("Vision fallback source: canonical attachment \(canonicalImageURL.lastPathComponent, privacy: .public)")
-            if let canonicalImage = await loadImageFromDisk(canonicalImageURL) {
+            if let canonicalImage = await DiskBackedImageLoader.loadImage(at: canonicalImageURL) {
                 return try? await analyzer.analyze(image: canonicalImage, options: options)
             }
             logger.warning("Failed to load canonical attachment for fallback analysis; using the prepared in-memory image")
@@ -294,10 +294,6 @@ extension ChatViewModel {
         }
 
         return try? await analyzer.analyze(image: fallbackImage, options: options)
-    }
-
-    private func loadImageFromDisk(_ url: URL) async -> UIImage? {
-        await DiskBackedImageLoader.loadImage(at: url)
     }
 
     private func buildVisionEnhancedText(
