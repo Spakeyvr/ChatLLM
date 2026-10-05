@@ -180,28 +180,28 @@ extension ChatViewModel {
         )
     }
 
-    private func trimmedSnapshotsForPrompt(
+    /// Newest-first prompt candidates: the most recent `maxContextMessages`
+    /// snapshots, excluding system prompts, unfinished or failed assistant
+    /// turns, and blank messages.
+    private func promptCandidates(
         from snapshots: [MessageSnapshot],
         maxMessages: Int?
     ) -> [MessageSnapshot] {
-        var trimmedSnapshots = snapshots
         let limit = min(maxMessages ?? Self.maxContextMessages, Self.maxContextMessages)
-        if trimmedSnapshots.count > limit {
-            trimmedSnapshots = Array(trimmedSnapshots.suffix(limit))
+        return snapshots.suffix(limit).reversed().filter { snapshot in
+            guard snapshot.role != .system else { return false }
+            if snapshot.role == .assistant && !snapshot.isFinal { return false }
+            if Self.isFailedGenerationPlaceholder(snapshot) { return false }
+            return !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
 
+    private func trimmedSnapshotsForPrompt(from snapshots: [MessageSnapshot]) -> [MessageSnapshot] {
         let tokenBudget = effectivePromptBudgetTokenLimit()
         var keptSnapshots: [MessageSnapshot] = []
         var usedTokens = 0
 
-        for snapshot in trimmedSnapshots.reversed() {
-            guard snapshot.role != .system else { continue }
-            if snapshot.role == .assistant && !snapshot.isFinal { continue }
-            if Self.isFailedGenerationPlaceholder(snapshot) { continue }
-            guard !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-
+        for snapshot in promptCandidates(from: snapshots, maxMessages: nil) {
             let estimatedTokens = estimatedPromptTokenCost(for: snapshot)
 
             if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
@@ -223,24 +223,11 @@ extension ChatViewModel {
         from snapshots: [MessageSnapshot],
         maxMessages: Int?
     ) async -> [MessageSnapshot] {
-        var trimmedSnapshots = snapshots
-        let limit = min(maxMessages ?? Self.maxContextMessages, Self.maxContextMessages)
-        if trimmedSnapshots.count > limit {
-            trimmedSnapshots = Array(trimmedSnapshots.suffix(limit))
-        }
-
         let tokenBudget = effectivePromptBudgetTokenLimit()
         var keptSnapshots: [MessageSnapshot] = []
         var usedTokens = 0
 
-        for snapshot in trimmedSnapshots.reversed() {
-            guard snapshot.role != .system else { continue }
-            if snapshot.role == .assistant && !snapshot.isFinal { continue }
-            if Self.isFailedGenerationPlaceholder(snapshot) { continue }
-            guard !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-
+        for snapshot in promptCandidates(from: snapshots, maxMessages: maxMessages) {
             let estimatedTokens = await tokenizerAwarePromptTokenCost(for: snapshot)
             if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
                 break
@@ -303,17 +290,15 @@ extension ChatViewModel {
     private func promptBudgetContent(
         for snapshot: MessageSnapshot
     ) -> String {
-        switch snapshot.role {
-        case .user:
-            snapshot.text
-        case .assistant:
-            if snapshot.isReasoningMode,
-               let answer = snapshot.finalAnswer {
-                answer
-            } else {
-                snapshot.text
-            }
-        case .system:
+        snapshot.role == .assistant ? assistantContent(of: snapshot) : snapshot.text
+    }
+
+    /// The part of an assistant turn that is replayed into later prompts:
+    /// the final answer for reasoning turns, otherwise the full text.
+    private func assistantContent(of snapshot: MessageSnapshot) -> String {
+        if snapshot.isReasoningMode, let answer = snapshot.finalAnswer {
+            answer
+        } else {
             snapshot.text
         }
     }
@@ -348,37 +333,18 @@ extension ChatViewModel {
         // Determine whether this response should use reasoning mode.
         // When explicitly passed (e.g. regeneration), honour that value;
         // otherwise fall back to the conversation-level toggles.
-        let reasoningActive: Bool
-        if let active = currentReasoningActive {
-            reasoningActive = active
-        } else {
-            reasoningActive = conversation.reasoningMode || conversation.smartReasoningMode
-        }
+        let reasoningActive = currentReasoningActive
+            ?? (conversation.reasoningMode || conversation.smartReasoningMode)
 
-        let snapshots = trimmedSnapshotsForPrompt(
-            from: allSnapshots,
-            maxMessages: nil
-        )
+        let snapshots = trimmedSnapshotsForPrompt(from: allSnapshots)
         let latestUserOrder = snapshots
             .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map(\.order)
             .max()
 
+        // Snapshots are already filtered to finalized, non-system, non-blank turns;
+        // the custom system prompt is injected separately below.
         var turns: [LLMRequest.Turn] = snapshots.compactMap { msg in
-            // *** CRITICAL FIX: Only include finalized assistant messages in the prompt ***
-            // This prevents incomplete/streaming assistant messages from polluting the context
-            if msg.role == .assistant && !msg.isFinal {
-                logger.debug("Skipping non-finalized assistant message from prompt")
-                return nil
-            }
-
-            // Skip system-role messages (global system prompt is injected separately)
-            guard msg.role != .system else { return nil }
-
-            guard !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-
             switch msg.role {
             case .user:
                 let userText = userTextApplyingChatPreferences(
@@ -387,19 +353,12 @@ extension ChatViewModel {
                 )
                 return .init(role: .user, content: userText)
             case .assistant:
-                if msg.isReasoningMode, let answer = msg.finalAnswer {
-                    let cleanAnswer = answer.removingSourcesBlocks()
-                    return .init(role: .assistant, content: cleanAnswer)
-                } else {
-                    let cleanText = msg.text.removingSourcesBlocks()
-                    return .init(role: .assistant, content: cleanText)
-                }
+                return .init(role: .assistant, content: assistantContent(of: msg).removingSourcesBlocks())
             default:
                 return nil
             }
         }
 
-        let needsReasoningInstructions = reasoningActive
         let hasVisionImageAnalysisData = snapshotsContainVisionImageAnalysisData(snapshots)
 
         // Static prefix first (stable across turns → friendly to KV-cache reuse),
@@ -420,7 +379,7 @@ extension ChatViewModel {
 
         if webSearchAvailable {
             systemPrompt += "\n\n" + Self.webSearchSystemPrompt(
-                reasoningEnabled: needsReasoningInstructions,
+                reasoningEnabled: reasoningActive,
                 forceSearchRequired: forceWebSearchRequired
             )
         }
@@ -594,8 +553,7 @@ extension ChatViewModel {
             forceWebSearch: forceWebSearch
         )
         let effectiveSystemPrompt: String
-        if let customSystemPrompt = customSystemPromptText(from: allSnapshots),
-           !customSystemPrompt.isEmpty {
+        if let customSystemPrompt = customSystemPromptText(from: allSnapshots) {
             effectiveSystemPrompt = systemPrompt + "\n\n" + customSystemPrompt
         } else {
             effectiveSystemPrompt = systemPrompt
@@ -608,10 +566,6 @@ extension ChatViewModel {
         messages.append(.system(effectiveSystemPrompt))
 
         for msg in snapshots {
-            if msg.role == .assistant && !msg.isFinal { continue }
-            guard msg.role != .system else { continue }
-            guard !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !msg.attachments.isEmpty else { continue }
-
             switch msg.role {
             case .system:
                 break
@@ -627,14 +581,7 @@ extension ChatViewModel {
                 )
                 messages.append(.user(userTextWithPreferences, images: images))
             case .assistant:
-                let content: String
-                if msg.isReasoningMode, let answer = msg.finalAnswer {
-                    let cleanAnswer = answer.removingSourcesBlocks()
-                    content = cleanAnswer
-                } else {
-                    content = msg.text.removingSourcesBlocks()
-                }
-                messages.append(.assistant(content))
+                messages.append(.assistant(assistantContent(of: msg).removingSourcesBlocks()))
             }
         }
 
