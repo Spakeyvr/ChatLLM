@@ -244,16 +244,7 @@ final class Message {
     }
 
     var userVisibleText: String {
-        let text = displayText
-        let ns = text as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        return SharedRegexes.sourcesBlock.stringByReplacingMatches(
-            in: text,
-            options: [],
-            range: range,
-            withTemplate: ""
-        )
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+        displayText.removingSourcesBlocks()
     }
     
     /// Optimized content length calculation with caching

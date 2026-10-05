@@ -66,3 +66,13 @@ enum SharedRegexes {
     }
 }
 // swiftlint:enable force_try
+
+extension String {
+    /// Removes every `<sources>…</sources>` block and trims surrounding whitespace.
+    func removingSourcesBlocks() -> String {
+        let range = NSRange(location: 0, length: (self as NSString).length)
+        return SharedRegexes.sourcesBlock
+            .stringByReplacingMatches(in: self, options: [], range: range, withTemplate: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

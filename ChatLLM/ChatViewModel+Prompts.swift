@@ -388,10 +388,10 @@ extension ChatViewModel {
                 return .init(role: .user, content: userText)
             case .assistant:
                 if msg.isReasoningMode, let answer = msg.finalAnswer {
-                    let cleanAnswer = stripSourcesFromText(answer)
+                    let cleanAnswer = answer.removingSourcesBlocks()
                     return .init(role: .assistant, content: cleanAnswer)
                 } else {
-                    let cleanText = stripSourcesFromText(msg.text)
+                    let cleanText = msg.text.removingSourcesBlocks()
                     return .init(role: .assistant, content: cleanText)
                 }
             default:
@@ -431,14 +431,6 @@ extension ChatViewModel {
         // seed the native transcript, rather than being quoted as another prompt.
         let prompt = turns.last?.role == .user ? turns.removeLast().content : ""
         return LLMRequest(instructions: systemPrompt, history: turns, prompt: prompt)
-    }
-
-    /// Helper to strip <sources>...</sources> blocks from text to avoid prompt bloat
-    func stripSourcesFromText(_ text: String) -> String {
-        let ns = text as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        return SharedRegexes.sourcesBlock.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func stripVisionFallbackFromNativeImageUserText(_ text: String) -> String {
@@ -637,10 +629,10 @@ extension ChatViewModel {
             case .assistant:
                 let content: String
                 if msg.isReasoningMode, let answer = msg.finalAnswer {
-                    let cleanAnswer = stripSourcesFromText(answer)
+                    let cleanAnswer = answer.removingSourcesBlocks()
                     content = cleanAnswer
                 } else {
-                    content = stripSourcesFromText(msg.text)
+                    content = msg.text.removingSourcesBlocks()
                 }
                 messages.append(.assistant(content))
             }

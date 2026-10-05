@@ -1468,7 +1468,7 @@ final class ChatViewModel: ObservableObject {
 
         let hasVisibleFinal: Bool = {
             guard let final = target.finalAnswer else { return false }
-            let stripped = stripSourcesFromText(final)
+            let stripped = final.removingSourcesBlocks()
             return !stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }()
         let hasVisibleText = !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

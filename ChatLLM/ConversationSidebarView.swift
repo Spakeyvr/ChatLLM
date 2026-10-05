@@ -11,7 +11,6 @@ import UIKit
 
 // Pre-compiled regexes for stripForPreview (compiled once at app launch)
 // swiftlint:disable force_try
-private let _previewSourcesBlockRegex = try! NSRegularExpression(pattern: #"<sources>.*?</sources>"#,  options: [.dotMatchesLineSeparators, .caseInsensitive])
 private let _previewThinkingBlockRegex = try! NSRegularExpression(pattern: #"<(?:think|thinking)>.*?</(?:think|thinking)>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 private let _previewSourcesTagRegex   = try! NSRegularExpression(pattern: #"</?sources>"#,              options: [.caseInsensitive])
 private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?(?:think|thinking)>"#,   options: [.caseInsensitive])
@@ -49,7 +48,7 @@ struct ConversationRow: View {
         }
 
         // Remove full blocks first
-        applying(_previewSourcesBlockRegex)
+        applying(SharedRegexes.sourcesBlock)
         applying(_previewThinkingBlockRegex)
         // Remove any stray opening/closing tags that may remain
         applying(_previewSourcesTagRegex)

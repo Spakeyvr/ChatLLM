@@ -316,12 +316,7 @@ extension ChatViewModel {
         // 4) Remove <sources> from the cleanedText that we will display
         let visiblePortion = {
             if let s = newSources, !s.isEmpty {
-                // Remove the first <sources> block occurrence
-                let re = SharedRegexes.sourcesBlock
-                let ns = cleanedText as NSString
-                let range = NSRange(location: 0, length: ns.length)
-                return re.stringByReplacingMatches(in: cleanedText, options: [], range: range, withTemplate: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return cleanedText.removingSourcesBlocks()
             }
             return cleanedText
         }()
@@ -406,7 +401,7 @@ extension ChatViewModel {
                 } else {
                     // Extract visible text from finalAnswer (if any) without sources
                     if let currentFinal = message.finalAnswer {
-                        message.text = stripSourcesFromText(currentFinal)
+                        message.text = currentFinal.removingSourcesBlocks()
                     } else {
                         message.text = ""
                     }
