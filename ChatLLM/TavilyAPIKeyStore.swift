@@ -21,36 +21,10 @@ enum TavilyAPIKeyStore {
         category: "TavilyAPIKeyStore"
     )
 
-    static func currentKey() -> String? {
-        currentKey(
-            userDefaults: .standard,
-            service: service,
-            account: account
-        )
-    }
-
-    static func save(_ key: String) {
-        save(
-            key,
-            userDefaults: .standard,
-            service: service,
-            account: account
-        )
-    }
-
-    static func clear(postNotification: Bool = true) {
-        clear(
-            userDefaults: .standard,
-            service: service,
-            account: account,
-            postNotification: postNotification
-        )
-    }
-
     static func currentKey(
-        userDefaults: UserDefaults,
-        service: String,
-        account: String
+        userDefaults: UserDefaults = .standard,
+        service: String = TavilyAPIKeyStore.service,
+        account: String = TavilyAPIKeyStore.account
     ) -> String? {
         migrateLegacyPlaintextKeyIfNeeded(
             userDefaults: userDefaults,
@@ -74,9 +48,9 @@ enum TavilyAPIKeyStore {
 
     static func save(
         _ key: String,
-        userDefaults: UserDefaults,
-        service: String,
-        account: String
+        userDefaults: UserDefaults = .standard,
+        service: String = TavilyAPIKeyStore.service,
+        account: String = TavilyAPIKeyStore.account
     ) {
         let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else {
@@ -95,9 +69,9 @@ enum TavilyAPIKeyStore {
     }
 
     static func clear(
-        userDefaults: UserDefaults,
-        service: String,
-        account: String,
+        userDefaults: UserDefaults = .standard,
+        service: String = TavilyAPIKeyStore.service,
+        account: String = TavilyAPIKeyStore.account,
         postNotification: Bool = true
     ) {
         deleteKeychainValue(service: service, account: account)

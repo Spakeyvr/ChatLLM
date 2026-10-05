@@ -51,11 +51,7 @@ struct AppSettingsDraft: Equatable {
                 ?? "",
             appAppearance: defaults.string(forKey: AppSettingsKeys.appAppearance) ?? "system",
             appLanguage: AppLanguage.resolve(defaults.string(forKey: AppSettingsKeys.appLanguage) ?? "en").rawValue,
-            tavilyApiKey: TavilyAPIKeyStore.currentKey(
-                userDefaults: defaults,
-                service: TavilyAPIKeyStore.service,
-                account: TavilyAPIKeyStore.account
-            ) ?? "",
+            tavilyApiKey: TavilyAPIKeyStore.currentKey(userDefaults: defaults) ?? "",
             sendOnReturn: defaults.sendOnReturn,
             enableHaptics: defaults.enableHapticsPreference,
             reasoningModeDefault: defaults.bool(forKey: AppSettingsKeys.reasoningModeDefault),
@@ -162,20 +158,8 @@ struct AppSettingsDraft: Equatable {
         guard previous == nil || previous?.tavilyApiKey.trimmingCharacters(in: .whitespacesAndNewlines) != trimmedKey else {
             return
         }
-        if trimmedKey.isEmpty {
-            TavilyAPIKeyStore.clear(
-                userDefaults: defaults,
-                service: TavilyAPIKeyStore.service,
-                account: TavilyAPIKeyStore.account
-            )
-        } else {
-            TavilyAPIKeyStore.save(
-                trimmedKey,
-                userDefaults: defaults,
-                service: TavilyAPIKeyStore.service,
-                account: TavilyAPIKeyStore.account
-            )
-        }
+        // An empty key clears the stored key.
+        TavilyAPIKeyStore.save(trimmedKey, userDefaults: defaults)
     }
 
 }
