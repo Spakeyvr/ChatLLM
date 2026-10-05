@@ -139,8 +139,6 @@ func waitForCancellation(_ probe: CancellationProbe) async -> Bool {
 }
 
 internal struct TestLLMGenerator: LLMGenerator {
-    func isAvailable() -> Bool { true }
-
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
@@ -149,8 +147,6 @@ internal struct TestLLMGenerator: LLMGenerator {
 }
 
 internal struct BlockingLLMGenerator: LLMGenerator {
-    func isAvailable() -> Bool { true }
-
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let producer = Task {
@@ -171,8 +167,6 @@ internal struct BlockingLLMGenerator: LLMGenerator {
 }
 
 internal struct PartialReasoningLLMGenerator: LLMGenerator {
-    func isAvailable() -> Bool { true }
-
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield("<thinking>\nAnalyze the request carefully.\n</thinking>")
@@ -227,14 +221,12 @@ internal final class MarkdownWebTestHarness {
 
 internal struct ControlledMarkdownGenerator: LLMGenerator {
     let stream: AsyncThrowingStream<String, Error>
-    func isAvailable() -> Bool { true }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> { stream }
 }
 
 @MainActor
 internal final class CapturingFoundationGenerator: LLMGenerator {
     var request: LLMRequest?
-    func isAvailable() -> Bool { true }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         self.request = request
         return AsyncThrowingStream { continuation in
@@ -276,7 +268,6 @@ final class SequencedTestGenerator: LLMGenerator {
     let streams: [AsyncThrowingStream<String, Error>]
     var startedCount = 0
     init(streams: [AsyncThrowingStream<String, Error>]) { self.streams = streams }
-    func isAvailable() -> Bool { true }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         let index = startedCount
         startedCount += 1
@@ -305,7 +296,6 @@ final class BlockingSearchURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 struct SearchCallingTestGenerator: LLMGenerator {
-    func isAvailable() -> Bool { true }
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         let tool = try #require(tools.first as? WebSearchTool)
         _ = try await tool.call(arguments: .init(query: "test query"))

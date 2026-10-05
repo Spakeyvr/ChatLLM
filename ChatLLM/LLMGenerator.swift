@@ -23,7 +23,6 @@ struct LLMRequest: Sendable, Equatable {
 }
 
 protocol LLMGenerator {
-    func isAvailable() -> Bool
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
 }
 
@@ -53,7 +52,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
 
     nonisolated private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
 
-    func isAvailable() -> Bool {
+    private func isAvailable() -> Bool {
         SystemLanguageModel.default.availability == .available
     }
 
