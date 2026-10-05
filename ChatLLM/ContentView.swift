@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var currentViewModel: ChatViewModel?
     @State private var draftConversation: Conversation? = nil
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
+    @State private var isSidebarOpen = false
 
     @State private var searchText: String = ""
     @State private var debouncedSearchText: String = ""
@@ -37,7 +38,7 @@ struct ContentView: View {
 
     @State private var chatExport: ChatExport?
     @State private var exportURL: URL?
-    @FocusState private var isSearchFocused: Bool
+    @State private var isSearchPresented: Bool = false
     @State private var attachmentCleanupTask: Task<Void, Never>?
 
     // App-wide preferences
@@ -96,7 +97,7 @@ struct ContentView: View {
     }
 
     private var mainExperience: some View {
-        splitView
+        navigationRoot
             .onAppear(perform: handleOnAppear)
             .onChange(of: selection, handleSelectionChange)
             .onChange(of: conversations, handleConversationsChange)
@@ -132,6 +133,42 @@ struct ContentView: View {
             }
     }
 
+    @ViewBuilder
+    private var navigationRoot: some View {
+        if horizontalSizeClass == .compact {
+            drawerView
+        } else {
+            splitView
+        }
+    }
+
+    // iPhone: the chat fills the screen and slides aside to reveal the sidebar.
+    private var drawerView: some View {
+        SidebarDrawer(isOpen: $isSidebarOpen) {
+            NavigationStack {
+                sidebar
+            }
+        } content: {
+            NavigationStack {
+                detailContent
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                                    isSidebarOpen.toggle()
+                                }
+                            } label: {
+                                Image(systemName: "line.3.horizontal")
+                                    .font(.system(size: 17, weight: .semibold))
+                            }
+                            .accessibilityLabel("Show Chats")
+                            .accessibilityIdentifier("sidebar.toggle")
+                        }
+                    }
+            }
+        }
+    }
+
     // Split the NavigationSplitView out of body to reduce complexity
     private var splitView: some View {
         NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
@@ -154,6 +191,12 @@ struct ContentView: View {
         performAutoDeleteIfNeeded()
         scheduleAttachmentStorageCleanup()
         
+        // iPhone opens straight into a fresh chat; the sidebar slides out on demand.
+        if horizontalSizeClass == .compact, selection == nil, draftConversation == nil {
+            startDraftChat(withHaptics: false)
+            return
+        }
+
         // Only auto-select on regular width (split view visible).
         if horizontalSizeClass == .regular,
            selection == nil,
@@ -509,277 +552,51 @@ struct ContentView: View {
         }
     }
 
-    private struct ConversationRecencySection: Identifiable {
-        let id: String
-        let title: LocalizedStringKey
-        let conversations: [Conversation]
-    }
-
-    private struct ConversationSectionHeader: View {
-        let title: LocalizedStringKey
-
-        var body: some View {
-            Text(title)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            .padding(.top, 4)
-            .padding(.bottom, 4)
-        }
-    }
-
-    private var groupedConversations: [ConversationRecencySection] {
-        let calendar = Calendar.current
-        let now = Date()
-
-        // Evaluate the filter once: when a search term is active it rebuilds every
-        // conversation's full visible transcript, so re-deriving it per bucket made
-        // sidebar rendering scale with total message history × 5.
-        let candidates = filteredConversations
-        let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now)
-        let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now)
-
-        let buckets: [(id: String, title: LocalizedStringKey, conversations: [Conversation])] = [
-            (
-                id: "today",
-                title: "Today",
-                conversations: candidates.filter { calendar.isDateInToday($0.lastUpdated) }
-            ),
-            (
-                id: "yesterday",
-                title: "Yesterday",
-                conversations: candidates.filter { calendar.isDateInYesterday($0.lastUpdated) }
-            ),
-            (
-                id: "last7Days",
-                title: "Last 7 Days",
-                conversations: candidates.filter {
-                    guard !calendar.isDateInToday($0.lastUpdated),
-                          !calendar.isDateInYesterday($0.lastUpdated) else {
-                        return false
-                    }
-                    guard let sevenDaysAgo else {
-                        return false
-                    }
-                    return $0.lastUpdated >= sevenDaysAgo
-                }
-            ),
-            (
-                id: "last30Days",
-                title: "Last 30 Days",
-                conversations: candidates.filter {
-                    guard let sevenDaysAgo, let thirtyDaysAgo else {
-                        return false
-                    }
-                    return $0.lastUpdated < sevenDaysAgo && $0.lastUpdated >= thirtyDaysAgo
-                }
-            ),
-            (
-                id: "older",
-                title: "Older",
-                conversations: candidates.filter {
-                    guard let thirtyDaysAgo else {
-                        return false
-                    }
-                    return $0.lastUpdated < thirtyDaysAgo
-                }
-            )
-        ]
-
-        return buckets.compactMap { bucket in
-            guard !bucket.conversations.isEmpty else { return nil }
-            return ConversationRecencySection(
-                id: bucket.id,
-                title: bucket.title,
-                conversations: bucket.conversations
-            )
-        }
-    }
-
     @ViewBuilder
     private var sidebar: some View {
-        // One pass over the (potentially expensive) search filter per render.
-        let sections = groupedConversations
-
-        ZStack(alignment: .bottom) {
-            // Main list content — keep selection binding for NavigationSplitView
-            List(selection: $selection) {
-                if sections.isEmpty && !searchText.isEmpty {
-                    // Empty search results state
-                    VStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("No matching chats")
-                            .font(.headline)
-                        Text("Try adjusting your search terms")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                } else {
-                    ForEach(sections) { section in
-                        Section {
-                            ForEach(section.conversations, id: \.id) { convo in
-                                let conversationID = convo.id
-
-                                ConversationRow(conversation: convo)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        AppHaptics.selectionChanged()
-                                        selection = convo
-                                    }
-                                    .contextMenu {
-                                        Button {
-                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                                rename(conversation)
-                                            }
-                                        } label: {
-                                            Label("Rename", systemImage: "pencil")
-                                        }
-
-                                        Button(role: .destructive) {
-                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                                delete(conversation)
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
-                                    .swipeActions(edge: .trailing) {
-                                        Button(role: .destructive) {
-                                            if let conversation = conversations.first(where: { $0.id == conversationID }) {
-                                                delete(conversation)
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
-                            }
-                        } header: {
-                            ConversationSectionHeader(title: section.title)
-                        }
-                        .listSectionSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
+        ConversationSidebar(
+            // One pass over the (potentially expensive) search filter per render.
+            sections: ConversationRecencySection.grouping(filteredConversations),
+            hasConversations: !conversations.isEmpty,
+            selection: $selection,
+            searchText: $searchText,
+            isSearchPresented: $isSearchPresented,
+            onSubmitSearch: {
+                // Immediate search on submit
+                searchDebounceTask?.cancel()
+                debouncedSearchText = searchText
+            },
+            onSelect: closeSidebar,
+            onNewChat: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    startDraftChat()
+                }
+            },
+            onShowSettings: { showSettings = true },
+            onRename: { convo in
+                if let conversation = conversations.first(where: { $0.id == convo.id }) {
+                    rename(conversation)
+                }
+            },
+            onDelete: { convo in
+                if let conversation = conversations.first(where: { $0.id == convo.id }) {
+                    delete(conversation)
                 }
             }
-            .listStyle(.plain)
-            .listSectionSpacing(.compact)
-            .listRowSpacing(0)
-            .scrollDismissesKeyboard(.interactively)
-            // Add safe area inset at bottom to prevent content from being hidden behind floating search bar
-            .safeAreaInset(edge: .bottom) {
-                // Reserve space for the search bar and its padding
-                Color.clear
-                    .frame(height: 88) // 44pt search bar + 20pt padding above + 24pt padding below
+        )
+        .onChange(of: searchText) { _, newValue in
+            // Debounce search input to avoid excessive filtering
+            searchDebounceTask?.cancel()
+            if newValue.isEmpty {
+                debouncedSearchText = ""
+                return
             }
-
-            // Floating search overlay row with separate action button
-            bottomSearchBar
-                .padding(.horizontal, 12)
-                .padding(.bottom, 24) // lift it off the bottom to float
-        }
-    }
-
-    private var bottomSearchBar: some View {
-        GlassEffectContainer(spacing: 12.0) {
-            HStack(alignment: .bottom, spacing: 12) {
-                // Search pill with Liquid Glass effect (no extra background tint)
-                HStack(spacing: 10) {
-                    Image(systemName: isSearchFocused || !searchText.isEmpty ? "magnifyingglass.circle.fill" : "magnifyingglass")
-                        .foregroundStyle(isSearchFocused ? .blue : .secondary)
-                        .symbolEffect(.bounce, value: isSearchFocused)
-                        .background(.clear)
-
-                    DynamicHeightTextEditor(
-                        text: $searchText,
-                        placeholder: String(localized: "Search chats", bundle: .appLocalized)
-                    )
-                    .focused($isSearchFocused)
-                    .onChange(of: searchText) { _, newValue in
-                        // Debounce search input to avoid excessive filtering
-                        searchDebounceTask?.cancel()
-                        if newValue.isEmpty {
-                            debouncedSearchText = ""
-                            return
-                        }
-                        searchDebounceTask = Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(300))
-                            guard !Task.isCancelled else { return }
-                            debouncedSearchText = newValue
-                        }
-                    }
-                    .onSubmit {
-                        // Immediate search on submit
-                        searchDebounceTask?.cancel()
-                        debouncedSearchText = searchText
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            isSearchFocused = false
-                        }
-                    }
-
-                    if !searchText.isEmpty {
-                        Button {
-                            AppHaptics.impact(.light)
-                            clearSearch()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 32, height: 32)
-                                .contentShape(Circle())
-                        }
-                        .accessibilityLabel("Clear search")
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 16)
-                .frame(minHeight: 52)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .contentShape(.capsule)
-
-                HStack(spacing: 10) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                            .scaleEffect(isSearchFocused ? 0.9 : 1.0)
-                            .frame(width: 50, height: 50)
-                            .contentShape(Circle())
-                    }
-                    .contentShape(Circle())
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
-                    .accessibilityLabel("Settings")
-
-                    Button {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                            startDraftChat()
-                        }
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 20, weight: .semibold))
-                            .scaleEffect(isSearchFocused ? 0.9 : 1.0)
-                            .frame(width: 50, height: 50)
-                            .contentShape(Circle())
-                    }
-                    .contentShape(Circle())
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
-                    .accessibilityLabel("New Chat")
-                }
-                .shadow(color: .clear.opacity(0.2), radius: 12, x: 0, y: 6)
+            searchDebounceTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                debouncedSearchText = newValue
             }
         }
-        .background(Color.clear)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2), value: isSearchFocused)
-        .accessibilityElement(children: .contain)
     }
 
     // Pure creator that does not mutate state; we call it from .task or lifecycle hooks.
@@ -794,10 +611,23 @@ struct ContentView: View {
         return ChatViewModel(generator: generator, context: modelContext, conversation: conversation)
     }
 
-    private func startDraftChat() {
+    private func closeSidebar() {
+        guard isSidebarOpen else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+            isSidebarOpen = false
+        }
+    }
+
+    private func startDraftChat(withHaptics: Bool = true) {
         // Only one draft at a time — the button is disabled when a draft is already open.
-        guard draftConversation == nil else { return }
-        AppHaptics.impact(.medium)
+        // From the sidebar, New Chat just reveals the draft that is already open.
+        guard draftConversation == nil else {
+            closeSidebar()
+            return
+        }
+        if withHaptics {
+            AppHaptics.impact(.medium)
+        }
         Task { @MainActor in
             currentViewModel?.deactivate()
             let convo = Conversation(
@@ -815,6 +645,7 @@ struct ContentView: View {
             selection = nil
             // Push detail column on compact (iPhone) so the draft chat is immediately visible.
             preferredCompactColumn = .detail
+            closeSidebar()
             if !searchText.isEmpty {
                 clearSearch()
             }
@@ -825,7 +656,7 @@ struct ContentView: View {
         searchDebounceTask?.cancel()
         searchText = ""
         debouncedSearchText = ""
-        isSearchFocused = false
+        isSearchPresented = false
     }
 
     private func rename(_ conversation: Conversation) {
@@ -1252,22 +1083,6 @@ private extension UIApplication {
 
     return ContentView()
         .modelContainer(container)
-}
-
-// MARK: - Dynamic Height Text Editor
-
-private struct DynamicHeightTextEditor: View {
-    @Binding var text: String
-    let placeholder: String
-    
-    var body: some View {
-        TextField(placeholder, text: $text, axis: .vertical)
-            .font(.body)
-            .lineLimit(1...3)
-            .textInputAutocapitalization(.none)
-            .disableAutocorrection(true)
-            .fixedSize(horizontal: false, vertical: true)
-    }
 }
 
 // MARK: - Lightweight View helpers to reduce body complexity

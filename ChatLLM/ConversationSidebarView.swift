@@ -72,10 +72,10 @@ struct ConversationRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
                 Text(conversation.title.isEmpty ? String(localized: "Untitled", bundle: .appLocalized, locale: locale) : conversation.title)
-                    .font(.headline)
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
 
@@ -94,7 +94,7 @@ struct ConversationRow: View {
                 // Use markdown Text initializer to render formatting like **bold** and *italic*
                 Text(.init(text))
                     .font(.subheadline)
-                    .lineLimit(2) // Allow 2 lines for better preview
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
             case .empty:
                 Text("No messages yet")
@@ -105,6 +105,177 @@ struct ConversationRow: View {
                 EmptyView()
             }
         }
-        .padding(.vertical, 0)
+        .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Recency Sections
+
+struct ConversationRecencySection: Identifiable {
+    let id: String
+    let title: LocalizedStringKey
+    let conversations: [Conversation]
+
+    /// Buckets conversations (already sorted newest first) into Today / Yesterday /
+    /// Last 7 Days / Last 30 Days / Older, dropping empty buckets.
+    static func grouping(
+        _ conversations: [Conversation],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [ConversationRecencySection] {
+        let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now)
+        let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now)
+
+        func bucketID(for date: Date) -> String {
+            if calendar.isDate(date, inSameDayAs: now) { return "today" }
+            if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+               calendar.isDate(date, inSameDayAs: yesterday) {
+                return "yesterday"
+            }
+            if let sevenDaysAgo, date >= sevenDaysAgo { return "last7Days" }
+            if let thirtyDaysAgo, date >= thirtyDaysAgo { return "last30Days" }
+            return "older"
+        }
+
+        let grouped = Dictionary(grouping: conversations) { bucketID(for: $0.lastUpdated) }
+        let buckets: [(id: String, title: LocalizedStringKey)] = [
+            ("today", "Today"),
+            ("yesterday", "Yesterday"),
+            ("last7Days", "Last 7 Days"),
+            ("last30Days", "Last 30 Days"),
+            ("older", "Older")
+        ]
+
+        return buckets.compactMap { bucket in
+            guard let conversations = grouped[bucket.id], !conversations.isEmpty else { return nil }
+            return ConversationRecencySection(id: bucket.id, title: bucket.title, conversations: conversations)
+        }
+    }
+}
+
+// MARK: - Sidebar
+
+/// Chat history column: inline large title with a glass settings button, recency-grouped
+/// conversations, and a Liquid Glass bottom toolbar holding a minimized search field and
+/// the New Chat button.
+struct ConversationSidebar: View {
+    let sections: [ConversationRecencySection]
+    let hasConversations: Bool
+    @Binding var selection: Conversation?
+    @Binding var searchText: String
+    @Binding var isSearchPresented: Bool
+    let onSubmitSearch: () -> Void
+    let onSelect: () -> Void
+    let onNewChat: () -> Void
+    let onShowSettings: () -> Void
+    let onRename: (Conversation) -> Void
+    let onDelete: (Conversation) -> Void
+
+    var body: some View {
+        List(selection: $selection) {
+            ForEach(sections) { section in
+                Section {
+                    ForEach(section.conversations, id: \.id) { convo in
+                        row(for: convo)
+                    }
+                } header: {
+                    Text(section.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+                .listSectionSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .overlay {
+            emptyState
+        }
+        .navigationTitle(Text(verbatim: "ChatLLM"))
+        .toolbarTitleDisplayMode(.inlineLarge)
+        .searchable(
+            text: $searchText,
+            isPresented: $isSearchPresented,
+            prompt: Text("Search chats")
+        )
+        .searchToolbarBehavior(.minimize)
+        .onSubmit(of: .search, onSubmitSearch)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: onShowSettings) {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
+            }
+
+            DefaultToolbarItem(kind: .search, placement: .bottomBar)
+
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+
+            ToolbarItem(placement: .bottomBar) {
+                Button {
+                    isSearchPresented = false
+                    onNewChat()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                        Text("New Chat")
+                    }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .padding(.horizontal, 4)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Color(uiColor: .label))
+                .accessibilityLabel("New Chat")
+            }
+        }
+    }
+
+    private func row(for convo: Conversation) -> some View {
+        ConversationRow(conversation: convo)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                AppHaptics.selectionChanged()
+                selection = convo
+                onSelect()
+            }
+            .listRowBackground(Color.clear)
+            .contextMenu {
+                Button {
+                    onRename(convo)
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+
+                Button(role: .destructive) {
+                    onDelete(convo)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) {
+                    onDelete(convo)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if sections.isEmpty {
+            if !searchText.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else if !hasConversations {
+                ContentUnavailableView {
+                    Label("No Chats Yet", systemImage: "bubble.left.and.bubble.right")
+                } description: {
+                    Text("Start a new chat to see it here.")
+                }
+            }
+        }
     }
 }

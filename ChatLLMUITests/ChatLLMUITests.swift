@@ -249,20 +249,47 @@ final class ChatLLMUITests: XCTestCase {
         XCTAssertTrue(fixture.buttons["message.sources"].waitForExistence(timeout: 5))
         fixture.terminate()
 
-        // Relaunch without the demo selection so the chat list is the starting screen.
+        // Relaunch without the demo selection so the app opens into a fresh chat.
         let app = launchApp(resetAppState: false)
+        openSidebar(in: app)
         let secondChatRow = app.staticTexts["Second Chat"]
         XCTAssertTrue(secondChatRow.waitForExistence(timeout: 5))
         secondChatRow.tap()
         XCTAssertTrue(app.staticTexts["Second chat reply."].waitForExistence(timeout: 5))
 
-        app.navigationBars.buttons["BackButton"].tap()
+        openSidebar(in: app)
         let demoChatRow = app.staticTexts["Web Search Preview"]
         XCTAssertTrue(demoChatRow.waitForExistence(timeout: 5))
         demoChatRow.tap()
 
         XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Preparing chat…"].exists)
+    }
+
+    @MainActor
+    func testSelectingSearchResultClosesDrawerAndKeyboard() throws {
+        let fixture = XCUIApplication()
+        fixture.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
+        fixture.launch()
+        XCTAssertTrue(fixture.buttons["message.sources"].waitForExistence(timeout: 5))
+        fixture.terminate()
+
+        let app = launchApp(resetAppState: false)
+        openSidebar(in: app)
+        app.buttons["Search"].firstMatch.tap()
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.typeText("Second")
+
+        let result = app.staticTexts["Second Chat"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        result.tap()
+
+        XCTAssertTrue(app.staticTexts["Second chat reply."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["sidebar.dismiss"].exists)
+        let keyboardGone = NSPredicate(format: "exists == false")
+        expectation(for: keyboardGone, evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 3)
     }
 
     @MainActor
@@ -274,10 +301,27 @@ final class ChatLLMUITests: XCTestCase {
         }
     }
 
+    /// The drawer's sidebar and chat navigation bars stay in the hierarchy under the
+    /// settings sheet, so target the system back button explicitly.
+    @MainActor
+    private func settingsBackButton(in app: XCUIApplication) -> XCUIElement {
+        app.navigationBars.buttons.matching(identifier: "BackButton").firstMatch
+    }
+
+    /// On iPhone the chat list lives in a drawer behind the chat; slide it out.
+    @MainActor
+    private func openSidebar(in app: XCUIApplication) {
+        let toggle = app.buttons["sidebar.toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.tap()
+        XCTAssertTrue(app.buttons["sidebar.dismiss"].waitForExistence(timeout: 5))
+    }
+
     @MainActor
     private func openSettings(in app: XCUIApplication) {
         let skip = app.buttons["onboarding.skip"]
         if skip.waitForExistence(timeout: 2) { skip.tap() }
+        if !app.buttons["sidebar.dismiss"].exists { openSidebar(in: app) }
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.tap()
@@ -324,7 +368,7 @@ final class ChatLLMUITests: XCTestCase {
         let sendOnReturn = app.switches["settings.sendOnReturn"]
         let original = sendOnReturn.value as? String
         toggle(sendOnReturn)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         let navigationBar = app.navigationBars["Settings"]
         navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
             .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
@@ -349,7 +393,7 @@ final class ChatLLMUITests: XCTestCase {
             app.buttons[name].tap()
             XCTAssertTrue(app.navigationBars[appearance].waitForExistence(timeout: 5))
             captureSettingsScreenshot("appearance-\(name)", in: app)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
+            settingsBackButton(in: app).tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["settings.appearance"].label.contains(appearance))
             XCTAssertEqual(app.buttons["settings.done"].label, done)
@@ -359,10 +403,11 @@ final class ChatLLMUITests: XCTestCase {
 
         app.buttons["settings.language"].tap()
         app.buttons["Español"].tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         app.buttons["settings.done"].tap()
         app.terminate()
         let relaunched = launchApp(resetAppState: false)
+        relaunched.buttons["sidebar.toggle"].tap()
         let settings = relaunched.buttons["Ajustes"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.tap()
@@ -416,7 +461,7 @@ final class ChatLLMUITests: XCTestCase {
         captureSettingsScreenshot("appearance-dark", in: app)
         app.sliders["settings.messageTextSize"].adjust(toNormalizedSliderPosition: 1)
         XCTAssertEqual(app.sliders["settings.messageTextSize"].value as? String, "22 points")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         XCTAssertTrue(app.buttons["settings.appearance"].label.contains(oppositeAppearance))
         XCTAssertGreaterThan(abs(try settingsBackgroundBrightness(in: app) - systemBrightness), 100)
         captureSettingsScreenshot("settings-dark", in: app)
@@ -426,7 +471,7 @@ final class ChatLLMUITests: XCTestCase {
         app.buttons["Reset Text Size"].tap()
         XCTAssertEqual(app.sliders["settings.messageTextSize"].value as? String, "16 points")
         captureSettingsScreenshot("appearance-light", in: app)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         XCTAssertEqual(try settingsBackgroundBrightness(in: app), systemBrightness, accuracy: 5)
 
         for (id, title) in [("chat", "Chat"), ("webSearch", "Web Search"), ("privacy", "Privacy & Data"),
@@ -434,7 +479,7 @@ final class ChatLLMUITests: XCTestCase {
             app.buttons["settings.\(id)"].tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 3))
             captureSettingsScreenshot("settings-\(id)", in: app)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
+            settingsBackButton(in: app).tap()
         }
         app.buttons["settings.advanced"].tap()
         for (id, title) in [("mlx", "On-Device Models"), ("imageAnalysis", "Image Analysis"), ("developer", "Developer")] {
@@ -445,9 +490,9 @@ final class ChatLLMUITests: XCTestCase {
                 app.buttons["About RotorQuant"].tap()
                 XCTAssertTrue(app.navigationBars["RotorQuant"].waitForExistence(timeout: 3))
                 captureSettingsScreenshot("settings-rotorQuant", in: app)
-                app.navigationBars.buttons.element(boundBy: 0).tap()
+                settingsBackButton(in: app).tap()
             }
-            app.navigationBars.buttons.element(boundBy: 0).tap()
+            settingsBackButton(in: app).tap()
         }
     }
 
@@ -463,7 +508,7 @@ final class ChatLLMUITests: XCTestCase {
             captureSettingsScreenshot("settings-scroll-\(id)", in: app)
             app.swipeUp()
             captureSettingsScreenshot("settings-scroll-\(id)-bottom", in: app)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
+            settingsBackButton(in: app).tap()
         }
         let about = app.buttons["settings.about"]
         for _ in 0..<4 where !about.isHittable { app.swipeUp() }
@@ -568,12 +613,12 @@ final class ChatLLMUITests: XCTestCase {
         toggle(memory)
         app.alerts.buttons["Disable"].tap()
         XCTAssertEqual(memory.value as? String, "1")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         app.buttons["settings.reset"].tap()
         app.alerts.buttons["Cancel"].tap()
         app.buttons["settings.developer"].tap()
         XCTAssertEqual(memory.value as? String, "1")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        settingsBackButton(in: app).tap()
         app.buttons["settings.reset"].tap()
         app.alerts.buttons["Reset"].tap()
         app.buttons["settings.developer"].tap()

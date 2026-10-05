@@ -104,6 +104,18 @@ nonisolated private final class FoundationModelsGateLease: @unchecked Sendable {
     }
 }
 
+/// What the user has typed or attached but not yet sent.
+struct ComposerDraft {
+    var text = ""
+    var image: UIImage?
+
+    /// Records the composer text. While an earlier message is being edited the composer holds
+    /// that message's text, so keep the user's pre-edit draft instead.
+    mutating func recordText(_ inputText: String, preEditText: String?) {
+        text = preEditText ?? inputText
+    }
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
 
@@ -112,6 +124,10 @@ final class ChatViewModel: ObservableObject {
 
     @Published var isGenerating = false
     @Published var streamingMessageID: UUID?
+
+    /// Unsent composer contents. Kept here rather than in ChatView so they survive the view
+    /// being rebuilt, e.g. when a size-class change swaps the iPhone drawer for the split view.
+    var composerDraft = ComposerDraft()
 
     // Regeneration lock to prevent concurrent regenerations
     var isRegenerating = false

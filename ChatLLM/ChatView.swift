@@ -200,6 +200,13 @@ struct ChatView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: restoreComposerDraft)
+        .onChange(of: inputText) { _, text in
+            viewModel.composerDraft.recordText(text, preEditText: editingSession?.previousInputText)
+        }
+        .onChange(of: selectedImageToken) {
+            viewModel.composerDraft.image = selectedImage
+        }
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -578,6 +585,17 @@ struct ChatView: View {
                 detectedObjects = nil
                 fullImageAnalysis = nil
             }
+        }
+    }
+
+    /// Brings back an unsent draft after this view was rebuilt for the same conversation.
+    private func restoreComposerDraft() {
+        let draft = viewModel.composerDraft
+        if inputText.isEmpty, !draft.text.isEmpty {
+            inputText = draft.text
+        }
+        if selectedImage == nil, let image = draft.image {
+            Task { await prepareSelectedImage(image) }
         }
     }
 

@@ -1173,6 +1173,28 @@
     "ChatLLM" : {
       "shouldTranslate" : false
     },
+    "ChatLLM couldn't open your saved chats. New messages in this session won't be saved. Keep your existing chats to try again on the next launch, or start fresh with an empty history. A backup copy has been kept either way." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatLLM konnte deine gespeicherten Chats nicht öffnen. Neue Nachrichten in dieser Sitzung werden nicht gespeichert. Behalte deine vorhandenen Chats, um es beim nächsten Start erneut zu versuchen, oder beginne neu mit einem leeren Verlauf. In beiden Fällen wurde eine Sicherungskopie aufbewahrt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatLLM couldn't open your saved chats. New messages in this session won't be saved. Keep your existing chats to try again on the next launch, or start fresh with an empty history. A backup copy has been kept either way."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatLLM no pudo abrir tus chats guardados. Los mensajes nuevos de esta sesión no se guardarán. Conserva tus chats existentes para volver a intentarlo en el próximo inicio, o empieza de cero con un historial vacío. En ambos casos se ha guardado una copia de seguridad."
+          }
+        }
+      }
+    },
     "ChatLLM is in beta. Features may change, and you may encounter bugs. Your feedback helps improve the app." : {
       "localizations" : {
         "de" : {
@@ -1191,6 +1213,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ChatLLM está en fase beta. Las funciones pueden cambiar y puede haber errores. Tus comentarios ayudan a mejorar la app."
+          }
+        }
+      }
+    },
+    "Chats Can't Be Saved" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats können nicht gespeichert werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats Can't Be Saved"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pueden guardar los chats"
           }
         }
       }
@@ -1240,6 +1284,7 @@
       }
     },
     "Clear search" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1257,6 +1302,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Borrar búsqueda"
+          }
+        }
+      }
+    },
+    "Close sidebar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seitenleiste schließen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close sidebar"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cerrar barra lateral"
           }
         }
       }
@@ -2049,6 +2116,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Descarga un modelo MLX si quieres"
+          }
+        }
+      }
+    },
+    "Downloaded file '%@' failed its integrity check. Try downloading the model again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die heruntergeladene Datei „%@“ hat die Integritätsprüfung nicht bestanden. Lade das Modell erneut herunter."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloaded file '%@' failed its integrity check. Try downloading the model again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El archivo descargado «%@» no superó la comprobación de integridad. Vuelve a descargar el modelo."
           }
         }
       }
@@ -3263,6 +3352,28 @@
         }
       }
     },
+    "Keep Existing Chats" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorhandene Chats behalten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Existing Chats"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conservar los chats existentes"
+          }
+        }
+      }
+    },
     "Key is valid" : {
       "localizations" : {
         "de" : {
@@ -3901,6 +4012,28 @@
         }
       }
     },
+    "No Chats Yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Chats"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Chats Yet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay chats"
+          }
+        }
+      }
+    },
     "No files found for this model on HuggingFace." : {
       "localizations" : {
         "de" : {
@@ -3924,6 +4057,7 @@
       }
     },
     "No matching chats" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -5642,6 +5776,28 @@
         }
       }
     },
+    "Show Chats" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Chats"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar chats"
+          }
+        }
+      }
+    },
     "Show Output Stats" : {
       "localizations" : {
         "de" : {
@@ -5814,6 +5970,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Iniciar un chat nuevo"
+          }
+        }
+      }
+    },
+    "Start a new chat to see it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starte einen neuen Chat, um ihn hier zu sehen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a new chat to see it here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inicia un chat nuevo para verlo aquí."
+          }
+        }
+      }
+    },
+    "Start Fresh" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu beginnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Fresh"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empezar de cero"
           }
         }
       }
@@ -6677,6 +6877,7 @@
       }
     },
     "Try adjusting your search terms" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7266,116 +7467,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tu clave se guarda en el llavero y solo se envía a Tavily para autenticar las búsquedas web."
-          }
-        }
-      }
-    },
-    "Chats Can't Be Saved" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chats können nicht gespeichert werden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chats Can't Be Saved"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pueden guardar los chats"
-          }
-        }
-      }
-    },
-    "Keep Existing Chats" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vorhandene Chats behalten"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep Existing Chats"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conservar los chats existentes"
-          }
-        }
-      }
-    },
-    "Start Fresh" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neu beginnen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Start Fresh"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Empezar de cero"
-          }
-        }
-      }
-    },
-    "ChatLLM couldn't open your saved chats. New messages in this session won't be saved. Keep your existing chats to try again on the next launch, or start fresh with an empty history. A backup copy has been kept either way." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatLLM konnte deine gespeicherten Chats nicht öffnen. Neue Nachrichten in dieser Sitzung werden nicht gespeichert. Behalte deine vorhandenen Chats, um es beim nächsten Start erneut zu versuchen, oder beginne neu mit einem leeren Verlauf. In beiden Fällen wurde eine Sicherungskopie aufbewahrt."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatLLM couldn't open your saved chats. New messages in this session won't be saved. Keep your existing chats to try again on the next launch, or start fresh with an empty history. A backup copy has been kept either way."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatLLM no pudo abrir tus chats guardados. Los mensajes nuevos de esta sesión no se guardarán. Conserva tus chats existentes para volver a intentarlo en el próximo inicio, o empieza de cero con un historial vacío. En ambos casos se ha guardado una copia de seguridad."
-          }
-        }
-      }
-    },
-    "Downloaded file '%@' failed its integrity check. Try downloading the model again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die heruntergeladene Datei „%@“ hat die Integritätsprüfung nicht bestanden. Lade das Modell erneut herunter."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Downloaded file '%@' failed its integrity check. Try downloading the model again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El archivo descargado «%@» no superó la comprobación de integridad. Vuelve a descargar el modelo."
           }
         }
       }
