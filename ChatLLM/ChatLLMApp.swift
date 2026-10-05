@@ -78,7 +78,7 @@ struct ChatLLMApp: App {
         clearAttachmentStorageIfNeeded()
 
         if arguments.contains("-ui-test-web-search-demo") {
-            UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+            UserDefaults.standard.set(true, forKey: AppSettingsKeys.hasCompletedOnboarding)
         }
     }
 

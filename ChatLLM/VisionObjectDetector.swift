@@ -27,7 +27,7 @@ final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
     
     // Detection thresholds
     nonisolated private var confidenceThreshold: Float {
-        let value = UserDefaults.standard.object(forKey: "visionConfidenceThreshold") as? Double ?? 0.5
+        let value = UserDefaults.standard.object(forKey: AppSettingsKeys.visionConfidenceThreshold) as? Double ?? 0.5
         return Float(value)
     }
     

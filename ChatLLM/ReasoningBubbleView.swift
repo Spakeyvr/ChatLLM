@@ -72,7 +72,7 @@ struct StepByStepReasoningSheet: View {
     @Environment(\.locale) private var locale
     let reasoning: String
     let searchInvocations: [SearchInvocation]?
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
+    @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
     @State private var selectedInvocation: SearchInvocation?
     @State private var selectedDetent: PresentationDetent = .medium
 
@@ -203,7 +203,7 @@ struct StepByStepReasoningSheet: View {
 struct RawReasoningChunkView: View {
     let text: String
     let isLast: Bool
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
+    @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

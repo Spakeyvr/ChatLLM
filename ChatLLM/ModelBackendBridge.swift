@@ -81,22 +81,22 @@ class ModelBackendBridge: ObservableObject {
     init(defaults: UserDefaults = .standard, modelManager: MLXModelManager? = nil) {
         self.defaults = defaults
         // Migrate legacy "customCoreML" → "mlx"
-        if let saved = defaults.string(forKey: "selectedLLMBackend"),
+        if let saved = defaults.string(forKey: AppSettingsKeys.selectedLLMBackend),
            saved == "customCoreML" {
-            defaults.set("mlx", forKey: "selectedLLMBackend")
+            defaults.set("mlx", forKey: AppSettingsKeys.selectedLLMBackend)
         }
 
         // Load saved backend preference
-        if let savedBackend = defaults.string(forKey: "selectedLLMBackend"),
+        if let savedBackend = defaults.string(forKey: AppSettingsKeys.selectedLLMBackend),
            let backend = Backend(rawValue: savedBackend) {
             self.selectedBackend = backend
         }
 
         // Load saved model ID
-        if let savedModelID = defaults.string(forKey: "selectedCustomModelID") {
+        if let savedModelID = defaults.string(forKey: AppSettingsKeys.selectedCustomModelID) {
             let normalizedModelID = Self.legacyModelIDMap[savedModelID] ?? savedModelID
             if normalizedModelID != savedModelID {
-                defaults.set(normalizedModelID, forKey: "selectedCustomModelID")
+                defaults.set(normalizedModelID, forKey: AppSettingsKeys.selectedCustomModelID)
             }
             self.selectedModelID = normalizedModelID
         }
@@ -175,7 +175,7 @@ class ModelBackendBridge: ObservableObject {
                 modelManager?.currentModel != nil ||
                 modelManager?.isLoading == true
             selectedBackend = .foundationModels
-            defaults.set(backend.rawValue, forKey: "selectedLLMBackend")
+            defaults.set(backend.rawValue, forKey: AppSettingsKeys.selectedLLMBackend)
             persistSelectionToActiveConversation()
             guard shouldResetPipelines else { return }
             notifyPipelineReset(reason: "backend.foundationModels")
@@ -184,7 +184,7 @@ class ModelBackendBridge: ObservableObject {
             let modelIDToLoad = selectedModelID ?? modelManager?.availableModels.first(where: \.isAvailable)?.id
             guard let modelIDToLoad else {
                 selectedBackend = .mlx
-                defaults.set(backend.rawValue, forKey: "selectedLLMBackend")
+                defaults.set(backend.rawValue, forKey: AppSettingsKeys.selectedLLMBackend)
                 persistSelectionToActiveConversation()
                 return
             }
@@ -201,7 +201,7 @@ class ModelBackendBridge: ObservableObject {
         }
 
         selectedModelID = modelID
-        defaults.set(modelID, forKey: "selectedCustomModelID")
+        defaults.set(modelID, forKey: AppSettingsKeys.selectedCustomModelID)
         persistSelectionToActiveConversation()
     }
 
@@ -223,8 +223,8 @@ class ModelBackendBridge: ObservableObject {
 
         selectedModelID = modelID
         selectedBackend = .mlx
-        defaults.set(modelID, forKey: "selectedCustomModelID")
-        defaults.set(Backend.mlx.rawValue, forKey: "selectedLLMBackend")
+        defaults.set(modelID, forKey: AppSettingsKeys.selectedCustomModelID)
+        defaults.set(Backend.mlx.rawValue, forKey: AppSettingsKeys.selectedLLMBackend)
         persistSelectionToActiveConversation()
 
         let isAlreadyLoaded = manager.currentModel?.id == modelID && !manager.isLoading
@@ -333,19 +333,19 @@ class ModelBackendBridge: ObservableObject {
     }
 }
 
-// MARK: - UserDefaults Extension
-
 extension Notification.Name {
     static let modelPipelineWillReset = Notification.Name("ModelPipelineWillReset")
 }
 
+// MARK: - UserDefaults Extension
+
 extension UserDefaults {
     var mlxMaxOutputTokens: Int {
         get {
-            guard object(forKey: "mlxMaxOutputTokens") != nil else {
+            guard object(forKey: AppSettingsKeys.mlxMaxOutputTokens) != nil else {
                 return 0
             }
-            let storedValue = integer(forKey: "mlxMaxOutputTokens")
+            let storedValue = integer(forKey: AppSettingsKeys.mlxMaxOutputTokens)
             if storedValue <= 0 {
                 return 0
             }
@@ -353,7 +353,7 @@ extension UserDefaults {
         }
         set {
             let clampedValue = newValue <= 0 ? 0 : min(max(newValue, 512), 1024)
-            set(clampedValue, forKey: "mlxMaxOutputTokens")
+            set(clampedValue, forKey: AppSettingsKeys.mlxMaxOutputTokens)
         }
     }
 
@@ -365,11 +365,11 @@ extension UserDefaults {
     func mlxContextWindowTokens(deviceMaximum: Int) -> Int {
         let minimum = 512
 
-        guard object(forKey: "mlxContextWindowTokens") != nil else {
+        guard object(forKey: AppSettingsKeys.mlxContextWindowTokens) != nil else {
             return deviceMaximum
         }
 
-        let storedValue = integer(forKey: "mlxContextWindowTokens")
+        let storedValue = integer(forKey: AppSettingsKeys.mlxContextWindowTokens)
         if storedValue <= 0 {
             return deviceMaximum
         }
@@ -409,17 +409,17 @@ extension UserDefaults {
     }
 
     var selectedLLMBackend: String {
-        get { string(forKey: "selectedLLMBackend") ?? ModelBackendBridge.Backend.foundationModels.rawValue }
-        set { set(newValue, forKey: "selectedLLMBackend") }
+        get { string(forKey: AppSettingsKeys.selectedLLMBackend) ?? ModelBackendBridge.Backend.foundationModels.rawValue }
+        set { set(newValue, forKey: AppSettingsKeys.selectedLLMBackend) }
     }
 
     var selectedCustomModelID: String? {
-        get { string(forKey: "selectedCustomModelID") }
-        set { set(newValue, forKey: "selectedCustomModelID") }
+        get { string(forKey: AppSettingsKeys.selectedCustomModelID) }
+        set { set(newValue, forKey: AppSettingsKeys.selectedCustomModelID) }
     }
 
     var disableToolCalls: Bool {
-        get { bool(forKey: "disableToolCalls") }
-        set { set(newValue, forKey: "disableToolCalls") }
+        get { bool(forKey: AppSettingsKeys.disableToolCalls) }
+        set { set(newValue, forKey: AppSettingsKeys.disableToolCalls) }
     }
 }

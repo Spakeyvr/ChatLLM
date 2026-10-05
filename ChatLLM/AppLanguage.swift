@@ -24,7 +24,7 @@ nonisolated enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     }
 
     static var current: AppLanguage {
-        resolve(UserDefaults.standard.string(forKey: "appLanguage") ?? "en")
+        resolve(UserDefaults.standard.string(forKey: AppSettingsKeys.appLanguage) ?? "en")
     }
 
     var bundle: Bundle {

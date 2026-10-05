@@ -31,7 +31,7 @@ struct ChatView: View {
 
     // Search toggle state
     @State private var forceSearch: Bool = false
-    @AppStorage("disableToolCalls") private var disableToolCallsPreference: Bool = false
+    @AppStorage(AppSettingsKeys.disableToolCalls) private var disableToolCallsPreference: Bool = false
 
     // Backend bridge for checking reasoning availability
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared

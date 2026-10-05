@@ -42,14 +42,13 @@ struct ContentView: View {
     @State private var attachmentCleanupTask: Task<Void, Never>?
 
     // App-wide preferences
-    @AppStorage("chatPreferences") private var chatPreferences: String = ""
-    @AppStorage("appAppearance") private var appAppearance: String = "system" // system | light | dark
-    @AppStorage("appLanguage") private var appLanguage: String = "en" // en | de | es
-    @AppStorage("reasoningModeDefault") private var reasoningModeDefault: Bool = false
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
-    @AppStorage("autoDeleteOldChats") private var autoDeleteOldChats: Bool = false
-    @AppStorage("autoDeleteDays") private var autoDeleteDays: Int = 30
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
+    @AppStorage(AppSettingsKeys.chatPreferences) private var chatPreferences: String = ""
+    @AppStorage(AppSettingsKeys.appAppearance) private var appAppearance: String = "system" // system | light | dark
+    @AppStorage(AppSettingsKeys.appLanguage) private var appLanguage: String = "en" // en | de | es
+    @AppStorage(AppSettingsKeys.reasoningModeDefault) private var reasoningModeDefault: Bool = false
+    @AppStorage(AppSettingsKeys.autoDeleteOldChats) private var autoDeleteOldChats: Bool = false
+    @AppStorage(AppSettingsKeys.autoDeleteDays) private var autoDeleteDays: Int = 30
+    @AppStorage(AppSettingsKeys.hasCompletedOnboarding) private var hasCompletedOnboarding: Bool = false
 
     private var storedChatPreferences: String {
         let defaults = UserDefaults.standard

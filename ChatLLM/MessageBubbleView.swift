@@ -98,7 +98,7 @@ struct MessageCellView: View {
     @ObservedObject var viewModel: ChatViewModel
     let onEdit: (Message) -> Void
     let onShare: (String) -> Void
-    @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
+    @AppStorage(AppSettingsKeys.developerModeEnabled) private var developerModeEnabled: Bool = false
     @State private var showDeveloperSheet = false
 
     private var isCurrentlyStreaming: Bool {
@@ -259,7 +259,7 @@ struct MessageBubble: View {
 struct StandardMessageBubble: View {
     let message: Message
     @ObservedObject var viewModel: ChatViewModel
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
+    @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
 
     var isUser: Bool { message.role == .user }
     var isAssistant: Bool { message.role == .assistant }
@@ -334,7 +334,7 @@ struct StandardMessageBubble: View {
 struct ReasoningMessageBubble: View {
     @Environment(\.locale) private var locale
     let message: Message
-    @AppStorage("messageFontSize") private var messageFontSize: Double = 16.0
+    @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
     @ObservedObject var viewModel: ChatViewModel
 
     @State private var showReasoningSheet = false

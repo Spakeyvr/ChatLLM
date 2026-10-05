@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppSettingsKeys {
+nonisolated enum AppSettingsKeys {
     static let chatPreferences = "chatPreferences"
     static let legacyDefaultSystemPrompt = "defaultSystemPrompt"
     static let appAppearance = "appAppearance"
@@ -19,6 +19,9 @@ enum AppSettingsKeys {
     static let disableRAMPrecautions = "disableRAMPrecautions"
     static let visionConfidenceThreshold = "visionConfidenceThreshold"
     static let disableToolCalls = "disableToolCalls"
+    static let selectedLLMBackend = "selectedLLMBackend"
+    static let selectedCustomModelID = "selectedCustomModelID"
+    static let hasCompletedOnboarding = "hasCompletedOnboarding"
 }
 
 struct AppSettingsDraft: Equatable {
