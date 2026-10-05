@@ -161,11 +161,6 @@ final class VisionObjectDetector: ObservableObject, @unchecked Sendable {
     }
     
     // MARK: - Utility
-    
-    nonisolated var isModelLoaded: Bool {
-        // Vision Framework is always available - no external model needed
-        true
-    }
 }
 
 // MARK: - Error Types

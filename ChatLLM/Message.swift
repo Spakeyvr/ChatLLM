@@ -63,11 +63,8 @@ enum MessageRole: String, Codable, CaseIterable, Sendable {
         case .assistant: return String(localized: "Assistant", bundle: .appLocalized)
         }
     }
-    
-    // Performance optimization: Quick role checks without string comparisons
-    var isUser: Bool { self == .user }
+
     var isAssistant: Bool { self == .assistant }
-    var isSystem: Bool { self == .system }
 }
 
 @Model
@@ -174,10 +171,7 @@ final class Message {
     @Transient private var _cachedSearchInvocations: [SearchInvocation]?
     @Transient private var _cachedSearchInvocationsJSON: String?
     
-    /// Quick role checks without enum comparison overhead
-    var isUser: Bool { role.isUser }
     var isAssistant: Bool { role.isAssistant }
-    var isSystem: Bool { role.isSystem }
     
     /// Optimized text content access for display with caching
     var displayText: String {
@@ -331,40 +325,6 @@ final class Message {
         self.conversation = conversation
         self.attachments = attachments
         self.reasoningSteps = reasoningSteps
-    }
-    
-    /// Fast initializer for user messages (most common case)
-    convenience init(userText: String, order: Int, conversation: Conversation) {
-        self.init(
-            role: .user,
-            text: userText,
-            order: order,
-            conversation: conversation,
-            isFinal: true
-        )
-    }
-    
-    /// Fast initializer for assistant messages
-    convenience init(assistantText: String = "", order: Int, conversation: Conversation, isReasoningMode: Bool = false) {
-        self.init(
-            role: .assistant,
-            text: assistantText,
-            order: order,
-            conversation: conversation,
-            isFinal: false,
-            isReasoningMode: isReasoningMode
-        )
-    }
-    
-    /// Fast initializer for system messages
-    convenience init(systemPrompt: String, conversation: Conversation) {
-        self.init(
-            role: .system,
-            text: systemPrompt,
-            order: 0,
-            conversation: conversation,
-            isFinal: true
-        )
     }
 }
 

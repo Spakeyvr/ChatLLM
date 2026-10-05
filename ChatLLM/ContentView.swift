@@ -1296,42 +1296,6 @@ private struct DynamicHeightTextEditor: View {
     }
 }
 
-// MARK: - Fading edges helper
-
-private struct FadingEdges: View {
-    var topHeight: CGFloat?
-    var bottomHeight: CGFloat?
-    var color: Color = .black.opacity(0.16)
-
-    static func top(height: CGFloat = 14, color: Color = .black.opacity(0.16)) -> some View {
-        FadingEdges(topHeight: height, bottomHeight: nil, color: color)
-    }
-
-    static func bottom(height: CGFloat = 14, color: Color = .black.opacity(0.16)) -> some View {
-        FadingEdges(bottomHeight: height, color: color)
-    }
-
-    var body: some View {
-        ZStack {
-            if let h = topHeight {
-                LinearGradient(colors: [color, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: h)
-                    .frame(maxWidth: .infinity)
-            }
-            if let h = bottomHeight {
-                VStack {
-                    Spacer()
-                    LinearGradient(colors: [.clear, color], startPoint: .top, endPoint: .bottom)
-                        .frame(height: h)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Lightweight View helpers to reduce body complexity
 
 private extension View {

@@ -106,10 +106,6 @@ struct ModelRow: View {
         modelManager.availabilityIssue(for: model)
     }
 
-    private var toolCallIssue: String? {
-        modelManager.toolCallIssue(for: model)
-    }
-
     private var isDownloadingThisModel: Bool {
         modelManager.isDownloading(modelID: model.id)
     }

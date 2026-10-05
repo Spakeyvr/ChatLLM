@@ -32,10 +32,6 @@ nonisolated struct DetectedObject: Identifiable, Codable, Sendable {
     var confidencePercentage: String {
         String(format: "%.1f%%", confidence * 100)
     }
-    
-    var description: String {
-        "\(label) (\(confidencePercentage))"
-    }
 }
 
 /// Text recognized by OCR
@@ -50,10 +46,6 @@ nonisolated struct RecognizedText: Identifiable, Codable, Sendable {
         self.text = text
         self.confidence = confidence
         self.boundingBox = boundingBox
-    }
-    
-    var confidencePercentage: String {
-        String(format: "%.1f%%", confidence * 100)
     }
 }
 
@@ -138,15 +130,6 @@ nonisolated struct PhotoQuality: Codable, Sendable {
         } else {
             return "Poor"
         }
-    }
-    
-    var description: String {
-        let percent = String(format: "%.0f%%", overallQuality * 100)
-        var desc = "\(percent) - \(qualityLevel)"
-        if !issues.isEmpty {
-            desc += " (\(issues.joined(separator: ", ")))"
-        }
-        return desc
     }
 }
 

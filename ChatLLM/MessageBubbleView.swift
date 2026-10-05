@@ -240,9 +240,7 @@ struct MessageBubble: View {
     let message: Message
     @ObservedObject var viewModel: ChatViewModel
 
-    var isUser: Bool { message.role == .user }
     var isAssistant: Bool { message.role == .assistant }
-    var isSystem: Bool { message.role == .system }
 
     var body: some View {
         // Show reasoning bubble if message is flagged as reasoning mode OR if it contains thinking tags
@@ -262,7 +260,6 @@ struct StandardMessageBubble: View {
     @AppStorage(AppSettingsKeys.messageFontSize) private var messageFontSize: Double = 16.0
 
     var isUser: Bool { message.role == .user }
-    var isAssistant: Bool { message.role == .assistant }
     var isSystem: Bool { message.role == .system }
 
     private var isStreaming: Bool {

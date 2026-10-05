@@ -13,6 +13,5 @@ enum DesignTokens {
         static let small: CGFloat = 8
         static let medium: CGFloat = 12
         static let large: CGFloat = 14
-        static let xlarge: CGFloat = 18
     }
 }

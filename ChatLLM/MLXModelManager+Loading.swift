@@ -89,10 +89,6 @@ extension MLXModelManager {
         }
     }
 
-    func cancelAndLoad(_ model: MLXModelInfo) {
-        startLoading(modelID: model.id, source: "manager.cancelAndLoad")
-    }
-
     private func load(
         _ model: MLXModelInfo,
         loadID: UUID,
@@ -266,10 +262,6 @@ extension MLXModelManager {
         _ = await ticket.start()
         return ticket
     }
-    func loadModel(_ model: MLXModelInfo) async {
-        startLoading(modelID: model.id, source: "manager.loadModel")
-    }
-
     func unloadAllModels() {
         cancelCurrentLoad(reason: "unloadAllModels", tearDownModel: false)
         tearDownCurrentModel(reason: "unloadAllModels")
