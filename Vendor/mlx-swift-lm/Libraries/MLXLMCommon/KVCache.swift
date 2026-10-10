@@ -1005,266 +1005,6 @@ private final class RotorQuantMSEQuantizer {
     }
 }
 
-private func makeRotorQuantIsoDecodeAttentionKernel() -> MLXFast.MLXFastKernel {
-    let header = """
-        uint unpack_rotor_index(const device uint8_t* row, uint value_index, uint bit_width) {
-            uint bit_offset = value_index * bit_width;
-            uint byte_offset = bit_offset >> 3;
-            uint shift = bit_offset & 7;
-            uint word = row[byte_offset];
-            if (shift + bit_width > 8) {
-                word |= uint(row[byte_offset + 1]) << 8;
-            }
-            uint mask = (1u << bit_width) - 1u;
-            return (word >> shift) & mask;
-        }
-
-        float4 rotor_quat_multiply(float4 a, float4 b) {
-            return float4(
-                a.x * b.x - a.y * b.y - a.z * b.z - a.w * b.w,
-                a.x * b.y + a.y * b.x + a.z * b.w - a.w * b.z,
-                a.x * b.z - a.y * b.w + a.z * b.x + a.w * b.y,
-                a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x
-            );
-        }
-
-        template <typename Norms, typename Centroids>
-        float4 rotor_load_quantized_iso_group(
-            const device uint8_t* row,
-            Norms norms,
-            Centroids centroids,
-            uint token,
-            uint group,
-            uint packed_width,
-            uint bit_width
-        ) {
-            const device uint8_t* packed = row + token * packed_width;
-            uint base_index = group << 2;
-            return float4(
-                centroids[unpack_rotor_index(packed, base_index, bit_width)],
-                centroids[unpack_rotor_index(packed, base_index + 1, bit_width)],
-                centroids[unpack_rotor_index(packed, base_index + 2, bit_width)],
-                centroids[unpack_rotor_index(packed, base_index + 3, bit_width)]
-            ) * norms[token];
-        }
-
-        float4 rotor_rotate_iso_group(
-            float4 value,
-            const device float* rotations,
-            uint group
-        ) {
-            float4 q = float4(
-                rotations[group * 4],
-                rotations[group * 4 + 1],
-                rotations[group * 4 + 2],
-                rotations[group * 4 + 3]
-            );
-            return rotor_quat_multiply(q, value);
-        }
-
-        float4 rotor_inverse_rotate_iso_group(
-            float4 rotated,
-            const device float* rotations,
-            uint group
-        ) {
-            float4 q = float4(
-                rotations[group * 4],
-                -rotations[group * 4 + 1],
-                -rotations[group * 4 + 2],
-                -rotations[group * 4 + 3]
-            );
-            return rotor_quat_multiply(q, rotated);
-        }
-        """
-
-    let source = """
-        uint lane = thread_position_in_grid.x;
-        uint kv_head_linear = thread_position_in_grid.y;
-        uint batch = kv_head_linear / KV_HEADS;
-        uint kv_head = kv_head_linear - batch * KV_HEADS;
-
-        const device uint8_t* key_rows = key_indices + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY * KEY_PACKED_WIDTH);
-        auto key_norm_rows = key_norms + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY);
-        const device uint8_t* value_rows = value_indices + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY * VALUE_PACKED_WIDTH);
-        auto value_norm_rows = value_norms + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY);
-        const device T* exact_key_rows = exact_keys + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
-        const device T* exact_value_rows = exact_values + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
-        uint compressed_count = uint(compressed_count_scalar);
-        uint exact_count = uint(exact_count_scalar);
-
-        constexpr uint GROUPS_PER_LANE = D / 128;
-        constexpr uint WORK_ITEMS = HEAD_REPEATS * GROUPS_PER_LANE;
-        float4 q_rot[WORK_ITEMS];
-        float4 accum_rot[WORK_ITEMS];
-        float max_score[HEAD_REPEATS];
-        float sum_exp[HEAD_REPEATS];
-        uint groups[GROUPS_PER_LANE];
-
-        for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-            max_score[repeat] = -INFINITY;
-            sum_exp[repeat] = 0.0f;
-        }
-
-        for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-            uint group = lane + i * 32;
-            uint base = group << 2;
-            groups[i] = group;
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                uint query_head = kv_head * HEAD_REPEATS + repeat;
-                const device T* query_row = queries + ((batch * QUERY_HEADS + query_head) * D);
-                float4 query_group = float4(
-                    static_cast<float>(query_row[base]),
-                    static_cast<float>(query_row[base + 1]),
-                    static_cast<float>(query_row[base + 2]),
-                    static_cast<float>(query_row[base + 3])
-                );
-                uint index = repeat * GROUPS_PER_LANE + i;
-                q_rot[index] = rotor_rotate_iso_group(query_group, key_rotations, group);
-                accum_rot[index] = float4(0.0f);
-            }
-        }
-
-        for (uint token = 0; token < compressed_count; ++token) {
-            float partial_score[HEAD_REPEATS];
-            float4 value_groups[GROUPS_PER_LANE];
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                partial_score[repeat] = 0.0f;
-            }
-
-            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                uint group = groups[i];
-                float4 key_group = rotor_load_quantized_iso_group(
-                    key_rows,
-                    key_norm_rows,
-                    key_centroids,
-                    token,
-                    group,
-                    KEY_PACKED_WIDTH,
-                    KEY_BITS
-                );
-                value_groups[i] = rotor_load_quantized_iso_group(
-                    value_rows,
-                    value_norm_rows,
-                    value_centroids,
-                    token,
-                    group,
-                    VALUE_PACKED_WIDTH,
-                    VALUE_BITS
-                );
-                for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                    partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
-                }
-            }
-
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                float score = simd_sum(partial_score[repeat]) * scale;
-                float next_max = max(max_score[repeat], score);
-                float old_weight = fast::exp(max_score[repeat] - next_max);
-                float new_weight = fast::exp(score - next_max);
-
-                for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                    uint index = repeat * GROUPS_PER_LANE + i;
-                    accum_rot[index] = accum_rot[index] * old_weight + value_groups[i] * new_weight;
-                }
-                sum_exp[repeat] = sum_exp[repeat] * old_weight + new_weight;
-                max_score[repeat] = next_max;
-            }
-        }
-
-        for (uint token = 0; token < exact_count; ++token) {
-            const device T* key_row = exact_key_rows + token * D;
-            float partial_score[HEAD_REPEATS];
-            float4 value_groups[GROUPS_PER_LANE];
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                partial_score[repeat] = 0.0f;
-            }
-
-            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                uint group = groups[i];
-                uint base = group << 2;
-                const device T* key_group_row = key_row + base;
-                const device T* value_group_row = exact_value_rows + token * D + base;
-                float4 key_group = rotor_rotate_iso_group(
-                    float4(
-                        static_cast<float>(key_group_row[0]),
-                        static_cast<float>(key_group_row[1]),
-                        static_cast<float>(key_group_row[2]),
-                        static_cast<float>(key_group_row[3])
-                    ),
-                    key_rotations,
-                    group
-                );
-                value_groups[i] = rotor_rotate_iso_group(
-                    float4(
-                        static_cast<float>(value_group_row[0]),
-                        static_cast<float>(value_group_row[1]),
-                        static_cast<float>(value_group_row[2]),
-                        static_cast<float>(value_group_row[3])
-                    ),
-                    value_rotations,
-                    group
-                );
-                for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                    partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
-                }
-            }
-
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                float score = simd_sum(partial_score[repeat]) * scale;
-                float next_max = max(max_score[repeat], score);
-                float old_weight = fast::exp(max_score[repeat] - next_max);
-                float new_weight = fast::exp(score - next_max);
-
-                for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                    uint index = repeat * GROUPS_PER_LANE + i;
-                    accum_rot[index] = accum_rot[index] * old_weight + value_groups[i] * new_weight;
-                }
-                sum_exp[repeat] = sum_exp[repeat] * old_weight + new_weight;
-                max_score[repeat] = next_max;
-            }
-        }
-
-        for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-            uint query_head = kv_head * HEAD_REPEATS + repeat;
-            device T* out_row = output + ((batch * QUERY_HEADS + query_head) * D);
-            float inv_sum = 1.0f / max(sum_exp[repeat], 1e-20f);
-            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                uint group = groups[i];
-                uint index = repeat * GROUPS_PER_LANE + i;
-                float4 restored = rotor_inverse_rotate_iso_group(accum_rot[index] * inv_sum, value_rotations, group);
-                uint base = group << 2;
-                out_row[base] = static_cast<T>(restored.x);
-                out_row[base + 1] = static_cast<T>(restored.y);
-                out_row[base + 2] = static_cast<T>(restored.z);
-                out_row[base + 3] = static_cast<T>(restored.w);
-            }
-        }
-        """
-
-    return MLXFast.metalKernel(
-        name: "rotorquant_iso_decode_attention",
-        inputNames: [
-            "queries",
-            "key_indices",
-            "key_norms",
-            "value_indices",
-            "value_norms",
-            "exact_keys",
-            "exact_values",
-            "key_centroids",
-            "value_centroids",
-            "key_rotations",
-            "value_rotations",
-            "compressed_count_scalar",
-            "exact_count_scalar",
-            "scale",
-        ],
-        outputNames: ["output"],
-        source: source,
-        header: header
-    )
-}
-
 private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
     let header = """
         uint unpack_rotor_index(const device uint8_t* row, uint value_index, uint bit_width) {
@@ -1326,19 +1066,35 @@ private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
     let source = """
         uint lane = thread_position_in_grid.x;
         uint linear = thread_position_in_grid.y;
-        uint active_block_count = uint(active_block_count_scalar);
+        // Counts and capacities arrive at runtime so cache growth does not
+        // force a new Metal pipeline compile; the layout order is set in
+        // `fusedIsoDecodeAttention`.
+        uint key_capacity = uint(layout[0]);
+        uint value_capacity = uint(layout[1]);
+        uint exact_capacity = uint(layout[2]);
+        uint block_capacity = uint(layout[3]);
+        uint compressed_count = uint(layout[4]);
+        uint exact_count = uint(layout[5]);
+        uint compressed_block_count = uint(layout[6]);
+        uint active_block_count = uint(layout[7]);
         uint block = linear % active_block_count;
         uint kv_linear = linear / active_block_count;
         uint batch = kv_linear / KV_HEADS;
         uint kv_head = kv_linear - batch * KV_HEADS;
-        uint token_start = block * BLOCK_TOKENS;
-        uint compressed_count = uint(compressed_count_scalar);
-        uint token_end = min(token_start + uint(BLOCK_TOKENS), compressed_count);
+        // Blocks past the compressed range cover the exact (unquantized) tail,
+        // so recent tokens are attended in parallel rather than serially by
+        // one SIMD group per KV head in the reduce kernel.
+        bool is_exact_block = block >= compressed_block_count;
+        uint token_start = (is_exact_block ? block - compressed_block_count : block) * BLOCK_TOKENS;
+        uint token_limit = is_exact_block ? exact_count : compressed_count;
+        uint token_end = min(token_start + uint(BLOCK_TOKENS), token_limit);
 
-        const device uint8_t* key_rows = key_indices + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY * KEY_PACKED_WIDTH);
-        auto key_norm_rows = key_norms + ((batch * KV_HEADS + kv_head) * KEY_CAPACITY);
-        const device uint8_t* value_rows = value_indices + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY * VALUE_PACKED_WIDTH);
-        auto value_norm_rows = value_norms + ((batch * KV_HEADS + kv_head) * VALUE_CAPACITY);
+        const device uint8_t* key_rows = key_indices + ((batch * KV_HEADS + kv_head) * key_capacity * KEY_PACKED_WIDTH);
+        auto key_norm_rows = key_norms + ((batch * KV_HEADS + kv_head) * key_capacity);
+        const device uint8_t* value_rows = value_indices + ((batch * KV_HEADS + kv_head) * value_capacity * VALUE_PACKED_WIDTH);
+        auto value_norm_rows = value_norms + ((batch * KV_HEADS + kv_head) * value_capacity);
+        const device T* exact_key_rows = exact_keys + ((batch * KV_HEADS + kv_head) * exact_capacity * D);
+        const device T* exact_value_rows = exact_values + ((batch * KV_HEADS + kv_head) * exact_capacity * D);
 
         constexpr uint GROUPS_PER_LANE = D / 128;
         constexpr uint WORK_ITEMS = HEAD_REPEATS * GROUPS_PER_LANE;
@@ -1384,24 +1140,51 @@ private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
 
             for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
                 uint group = groups[i];
-                float4 key_group = rotor_load_quantized_iso_group(
-                    key_rows,
-                    key_norm_rows,
-                    key_centroids,
-                    token,
-                    group,
-                    KEY_PACKED_WIDTH,
-                    KEY_BITS
-                );
-                value_groups[i] = rotor_load_quantized_iso_group(
-                    value_rows,
-                    value_norm_rows,
-                    value_centroids,
-                    token,
-                    group,
-                    VALUE_PACKED_WIDTH,
-                    VALUE_BITS
-                );
+                float4 key_group;
+                if (is_exact_block) {
+                    uint base = group << 2;
+                    const device T* key_group_row = exact_key_rows + token * D + base;
+                    const device T* value_group_row = exact_value_rows + token * D + base;
+                    key_group = rotor_rotate_iso_group(
+                        float4(
+                            static_cast<float>(key_group_row[0]),
+                            static_cast<float>(key_group_row[1]),
+                            static_cast<float>(key_group_row[2]),
+                            static_cast<float>(key_group_row[3])
+                        ),
+                        key_rotations,
+                        group
+                    );
+                    value_groups[i] = rotor_rotate_iso_group(
+                        float4(
+                            static_cast<float>(value_group_row[0]),
+                            static_cast<float>(value_group_row[1]),
+                            static_cast<float>(value_group_row[2]),
+                            static_cast<float>(value_group_row[3])
+                        ),
+                        value_rotations,
+                        group
+                    );
+                } else {
+                    key_group = rotor_load_quantized_iso_group(
+                        key_rows,
+                        key_norm_rows,
+                        key_centroids,
+                        token,
+                        group,
+                        KEY_PACKED_WIDTH,
+                        KEY_BITS
+                    );
+                    value_groups[i] = rotor_load_quantized_iso_group(
+                        value_rows,
+                        value_norm_rows,
+                        value_centroids,
+                        token,
+                        group,
+                        VALUE_PACKED_WIDTH,
+                        VALUE_BITS
+                    );
+                }
                 for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
                     partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
                 }
@@ -1424,7 +1207,7 @@ private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
 
         for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
             uint query_head = kv_head * HEAD_REPEATS + repeat;
-            uint stats_index = (batch * QUERY_HEADS + query_head) * BLOCK_CAPACITY + block;
+            uint stats_index = (batch * QUERY_HEADS + query_head) * block_capacity + block;
             device T* partial_row = partial_values + (stats_index * D);
             for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
                 uint base = groups[i] << 2;
@@ -1450,8 +1233,10 @@ private func makeRotorQuantIsoCompressedBlockKernel() -> MLXFast.MLXFastKernel {
             "key_centroids",
             "value_centroids",
             "key_rotations",
-            "compressed_count_scalar",
-            "active_block_count_scalar",
+            "value_rotations",
+            "exact_keys",
+            "exact_values",
+            "layout",
             "scale",
         ],
         outputNames: ["partial_values", "partial_max", "partial_sum"],
@@ -1469,20 +1254,6 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
                 a.x * b.z - a.y * b.w + a.z * b.x + a.w * b.y,
                 a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x
             );
-        }
-
-        float4 rotor_rotate_iso_group(
-            float4 value,
-            const device float* rotations,
-            uint group
-        ) {
-            float4 q = float4(
-                rotations[group * 4],
-                rotations[group * 4 + 1],
-                rotations[group * 4 + 2],
-                rotations[group * 4 + 3]
-            );
-            return rotor_quat_multiply(q, value);
         }
 
         float4 rotor_inverse_rotate_iso_group(
@@ -1505,15 +1276,11 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
         uint kv_head_linear = thread_position_in_grid.y;
         uint batch = kv_head_linear / KV_HEADS;
         uint kv_head = kv_head_linear - batch * KV_HEADS;
-        uint active_block_count = uint(active_block_count_scalar);
-        uint exact_count = uint(exact_count_scalar);
-
-        const device T* exact_key_rows = exact_keys + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
-        const device T* exact_value_rows = exact_values + ((batch * KV_HEADS + kv_head) * EXACT_CAPACITY * D);
+        uint block_capacity = uint(layout[3]);
+        uint active_block_count = uint(layout[7]);
 
         constexpr uint GROUPS_PER_LANE = D / 128;
         constexpr uint WORK_ITEMS = HEAD_REPEATS * GROUPS_PER_LANE;
-        float4 q_rot[WORK_ITEMS];
         float4 accum_rot[WORK_ITEMS];
         float max_score[HEAD_REPEATS];
         float sum_exp[HEAD_REPEATS];
@@ -1525,31 +1292,16 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
         }
 
         for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-            uint group = lane + i * 32;
-            uint base = group << 2;
-            groups[i] = group;
+            groups[i] = lane + i * 32;
             for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                uint query_head = kv_head * HEAD_REPEATS + repeat;
-                const device T* query_row = queries + ((batch * QUERY_HEADS + query_head) * D);
-                uint index = repeat * GROUPS_PER_LANE + i;
-                q_rot[index] = rotor_rotate_iso_group(
-                    float4(
-                        static_cast<float>(query_row[base]),
-                        static_cast<float>(query_row[base + 1]),
-                        static_cast<float>(query_row[base + 2]),
-                        static_cast<float>(query_row[base + 3])
-                    ),
-                    key_rotations,
-                    group
-                );
-                accum_rot[index] = float4(0.0f);
+                accum_rot[repeat * GROUPS_PER_LANE + i] = float4(0.0f);
             }
         }
 
         for (uint block = 0; block < active_block_count; ++block) {
             for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
                 uint query_head = kv_head * HEAD_REPEATS + repeat;
-                uint stats_index = (batch * QUERY_HEADS + query_head) * BLOCK_CAPACITY + block;
+                uint stats_index = (batch * QUERY_HEADS + query_head) * block_capacity + block;
                 float block_sum = partial_sum[stats_index];
                 if (block_sum <= 0.0f) {
                     continue;
@@ -1572,59 +1324,6 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
                     accum_rot[index] = accum_rot[index] * old_weight + block_value * new_weight;
                 }
                 sum_exp[repeat] = sum_exp[repeat] * old_weight + block_sum * new_weight;
-                max_score[repeat] = next_max;
-            }
-        }
-
-        for (uint token = 0; token < exact_count; ++token) {
-            const device T* key_row = exact_key_rows + token * D;
-            float partial_score[HEAD_REPEATS];
-            float4 value_groups[GROUPS_PER_LANE];
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                partial_score[repeat] = 0.0f;
-            }
-
-            for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                uint group = groups[i];
-                uint base = group << 2;
-                const device T* key_group_row = key_row + base;
-                const device T* value_group_row = exact_value_rows + token * D + base;
-                float4 key_group = rotor_rotate_iso_group(
-                    float4(
-                        static_cast<float>(key_group_row[0]),
-                        static_cast<float>(key_group_row[1]),
-                        static_cast<float>(key_group_row[2]),
-                        static_cast<float>(key_group_row[3])
-                    ),
-                    key_rotations,
-                    group
-                );
-                value_groups[i] = rotor_rotate_iso_group(
-                    float4(
-                        static_cast<float>(value_group_row[0]),
-                        static_cast<float>(value_group_row[1]),
-                        static_cast<float>(value_group_row[2]),
-                        static_cast<float>(value_group_row[3])
-                    ),
-                    value_rotations,
-                    group
-                );
-                for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                    partial_score[repeat] += dot(q_rot[repeat * GROUPS_PER_LANE + i], key_group);
-                }
-            }
-
-            for (uint repeat = 0; repeat < HEAD_REPEATS; ++repeat) {
-                float score = simd_sum(partial_score[repeat]) * scale;
-                float next_max = max(max_score[repeat], score);
-                float old_weight = fast::exp(max_score[repeat] - next_max);
-                float new_weight = fast::exp(score - next_max);
-
-                for (uint i = 0; i < GROUPS_PER_LANE; ++i) {
-                    uint index = repeat * GROUPS_PER_LANE + i;
-                    accum_rot[index] = accum_rot[index] * old_weight + value_groups[i] * new_weight;
-                }
-                sum_exp[repeat] = sum_exp[repeat] * old_weight + new_weight;
                 max_score[repeat] = next_max;
             }
         }
@@ -1652,14 +1351,8 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
             "partial_values",
             "partial_max",
             "partial_sum",
-            "queries",
-            "exact_keys",
-            "exact_values",
-            "key_rotations",
             "value_rotations",
-            "active_block_count_scalar",
-            "exact_count_scalar",
-            "scale",
+            "layout",
         ],
         outputNames: ["output"],
         source: source,
@@ -1670,12 +1363,10 @@ private func makeRotorQuantIsoBlockReduceKernel() -> MLXFast.MLXFastKernel {
 private final class RotorQuantDecodeAttentionKernelManager: Sendable {
     static let shared = RotorQuantDecodeAttentionKernelManager()
 
-    let isoDecodeAttentionKernel: MLXFast.MLXFastKernel
     let isoCompressedBlockKernel: MLXFast.MLXFastKernel
     let isoBlockReduceKernel: MLXFast.MLXFastKernel
 
     private init() {
-        isoDecodeAttentionKernel = makeRotorQuantIsoDecodeAttentionKernel()
         isoCompressedBlockKernel = makeRotorQuantIsoCompressedBlockKernel()
         isoBlockReduceKernel = makeRotorQuantIsoBlockReduceKernel()
     }
@@ -1814,87 +1505,29 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
         }
 
         let blockTokens = max(16, attentionBlockTokens)
-        let blockCount = (compressedCount + blockTokens - 1) / blockTokens
-        let blockCapacity = (max(compressedCount, keyIndices.dim(2)) + blockTokens - 1) / blockTokens
-        if blockCount > 1 {
-            return blockParallelIsoDecodeAttention(
-                queries: queries,
-                scale: scale,
-                batch: batch,
-                queryHeads: queryHeads,
-                kvHeads: kvHeads,
-                headRepeats: queryHeads / kvHeads,
-                blockTokens: blockTokens,
-                blockCount: blockCount,
-                blockCapacity: blockCapacity,
-                keyIndices: keyIndices,
-                keyNorms: keyNorms,
-                valueIndices: valueIndices,
-                valueNorms: valueNorms,
-                exactKeys: exactKeys,
-                exactValues: exactValues,
-                keyQuantizer: keyQuantizer,
-                valueQuantizer: valueQuantizer
-            )
-        }
+        let compressedBlockCount = (compressedCount + blockTokens - 1) / blockTokens
+        let compressedBlockCapacity =
+            (max(compressedCount, keyIndices.dim(2)) + blockTokens - 1) / blockTokens
+        let exactBlockCount = (exactCount + blockTokens - 1) / blockTokens
+        let exactBlockCapacity = (exactKeys.dim(2) + blockTokens - 1) / blockTokens
+        let blockCount = compressedBlockCount + exactBlockCount
+        let blockCapacity = compressedBlockCapacity + exactBlockCapacity
+        let headRepeats = queryHeads / kvHeads
 
-        return RotorQuantDecodeAttentionKernelManager.shared.isoDecodeAttentionKernel(
-            [
-                queries,
-                keyIndices,
-                keyNorms,
-                valueIndices,
-                valueNorms,
-                exactKeys,
-                exactValues,
-                keyQuantizer.centroids,
-                valueQuantizer.centroids,
-                keyQuantizer.rotationParameters,
-                valueQuantizer.rotationParameters,
-                Int32(compressedCount),
-                Int32(exactCount),
-                scale,
-            ],
-            template: [
-                ("T", queries.dtype),
-                ("D", keyQuantizer.dimension),
-                ("QUERY_HEADS", queryHeads),
-                ("KV_HEADS", kvHeads),
-                ("HEAD_REPEATS", queryHeads / kvHeads),
-                ("KEY_CAPACITY", keyIndices.dim(2)),
-                ("VALUE_CAPACITY", valueIndices.dim(2)),
-                ("EXACT_CAPACITY", exactKeys.dim(2)),
-                ("KEY_PACKED_WIDTH", keyIndices.dim(3)),
-                ("VALUE_PACKED_WIDTH", valueIndices.dim(3)),
-                ("KEY_BITS", configuration.keyBits),
-                ("VALUE_BITS", configuration.valueBits),
-            ],
-            grid: (32, batch * kvHeads, 1),
-            threadGroup: (32, 1, 1),
-            outputShapes: [[batch, queryHeads, 1, keyQuantizer.dimension]],
-            outputDTypes: [queries.dtype]
-        )[0]
-    }
+        // One small int32 array instead of separate scalars or template
+        // constants: capacities grow with the cache, and baking them into the
+        // template would compile a new Metal pipeline at every growth step.
+        let layout = MLXArray([
+            Int32(keyIndices.dim(2)),
+            Int32(valueIndices.dim(2)),
+            Int32(exactKeys.dim(2)),
+            Int32(blockCapacity),
+            Int32(compressedCount),
+            Int32(exactCount),
+            Int32(compressedBlockCount),
+            Int32(blockCount),
+        ])
 
-    private func blockParallelIsoDecodeAttention(
-        queries: MLXArray,
-        scale: Float,
-        batch: Int,
-        queryHeads: Int,
-        kvHeads: Int,
-        headRepeats: Int,
-        blockTokens: Int,
-        blockCount: Int,
-        blockCapacity: Int,
-        keyIndices: MLXArray,
-        keyNorms: MLXArray,
-        valueIndices: MLXArray,
-        valueNorms: MLXArray,
-        exactKeys: MLXArray,
-        exactValues: MLXArray,
-        keyQuantizer: RotorQuantMSEQuantizer,
-        valueQuantizer: RotorQuantMSEQuantizer
-    ) -> MLXArray {
         let manager = RotorQuantDecodeAttentionKernelManager.shared
         let partials = manager.isoCompressedBlockKernel(
             [
@@ -1906,8 +1539,10 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 keyQuantizer.centroids,
                 valueQuantizer.centroids,
                 keyQuantizer.rotationParameters,
-                Int32(compressedCount),
-                Int32(blockCount),
+                valueQuantizer.rotationParameters,
+                exactKeys,
+                exactValues,
+                layout,
                 scale,
             ],
             template: [
@@ -1917,9 +1552,6 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 ("KV_HEADS", kvHeads),
                 ("HEAD_REPEATS", headRepeats),
                 ("BLOCK_TOKENS", blockTokens),
-                ("BLOCK_CAPACITY", blockCapacity),
-                ("KEY_CAPACITY", keyIndices.dim(2)),
-                ("VALUE_CAPACITY", valueIndices.dim(2)),
                 ("KEY_PACKED_WIDTH", keyIndices.dim(3)),
                 ("VALUE_PACKED_WIDTH", valueIndices.dim(3)),
                 ("KEY_BITS", configuration.keyBits),
@@ -1940,14 +1572,8 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 partials[0],
                 partials[1],
                 partials[2],
-                queries,
-                exactKeys,
-                exactValues,
-                keyQuantizer.rotationParameters,
                 valueQuantizer.rotationParameters,
-                Int32(blockCount),
-                Int32(exactCount),
-                scale,
+                layout,
             ],
             template: [
                 ("T", queries.dtype),
@@ -1955,8 +1581,6 @@ public final class RotorQuantKVCache: BaseKVCache, AttentionCapableKVCache {
                 ("QUERY_HEADS", queryHeads),
                 ("KV_HEADS", kvHeads),
                 ("HEAD_REPEATS", headRepeats),
-                ("BLOCK_CAPACITY", blockCapacity),
-                ("EXACT_CAPACITY", exactKeys.dim(2)),
             ],
             grid: (32, batch * kvHeads, 1),
             threadGroup: (32, 1, 1),

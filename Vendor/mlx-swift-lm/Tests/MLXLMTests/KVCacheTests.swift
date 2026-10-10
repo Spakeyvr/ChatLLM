@@ -171,6 +171,47 @@ struct KVCacheTests {
         #expect(runtimeArrays[5].dim(2) == 3)
     }
 
+    @Test(arguments: [128, 256])
+    func testRotorQuantFusedDecodeAttentionMatchesDequantizedFallback(headDimension: Int) {
+        // Several compressed blocks plus a multi-block exact tail exercise the
+        // block-parallel decode kernel, including exact-tail blocks.
+        let configuration = RotorQuantConfiguration(
+            keyBits: 3,
+            valueBits: 2,
+            seed: 42,
+            exactBufferSize: 48,
+            attentionBlockTokens: 32,
+            variant: .iso
+        )
+        let fusedCache = RotorQuantKVCache(configuration: configuration)
+        let fallbackCache = RotorQuantKVCache(configuration: configuration)
+        let kvHeads = 2
+        let queryHeads = 4
+        let scale = 1 / Float(headDimension).squareRoot()
+
+        let prefillKeys = patternedArray(shape: [1, kvHeads, 200, headDimension], scale: 1)
+        let prefillValues = patternedArray(shape: [1, kvHeads, 200, headDimension], scale: 0.5)
+        _ = fusedCache.update(keys: prefillKeys, values: prefillValues)
+        _ = fallbackCache.update(keys: prefillKeys, values: prefillValues)
+
+        for step in 0 ..< 20 {
+            let offset = Float(step + 1)
+            let keys = patternedArray(shape: [1, kvHeads, 1, headDimension], scale: 1 + offset * 0.03)
+            let values = patternedArray(shape: [1, kvHeads, 1, headDimension], scale: 0.5 - offset * 0.01)
+            let queries = patternedArray(shape: [1, queryHeads, 1, headDimension], scale: 1 + offset * 0.05)
+
+            let fused = fusedCache.attention(
+                queries: queries, keys: keys, values: values, scale: scale, mask: .none)
+            let (fallbackKeys, fallbackValues) = fallbackCache.update(keys: keys, values: values)
+            let reference = MLXFast.scaledDotProductAttention(
+                queries: queries, keys: fallbackKeys, values: fallbackValues,
+                scale: scale, mask: .none)
+
+            #expect(fused.shape == reference.shape)
+            #expect(maxAbsoluteDifference(fused, reference) < 2e-2)
+        }
+    }
+
     @Test
     func testRotorQuantReleasesDensePrefillCapacityAfterDeferredFlush() {
         let cache = RotorQuantKVCache(

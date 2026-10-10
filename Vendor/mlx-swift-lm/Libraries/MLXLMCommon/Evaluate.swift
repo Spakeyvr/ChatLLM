@@ -199,7 +199,11 @@ public struct GenerateParameters: Sendable {
     }
 
     public func processor() -> LogitProcessor? {
-        let repetitionContext: RepetitionContext? = if let repetitionPenalty, repetitionContextSize > 0 {
+        // A penalty of exactly 1 leaves every logit unchanged, so skip the
+        // per-token gather/scatter instead of running an identity processor.
+        let repetitionContext: RepetitionContext? = if let repetitionPenalty,
+            repetitionPenalty != 1, repetitionContextSize > 0
+        {
             RepetitionContext(
                 repetitionPenalty: repetitionPenalty, repetitionContextSize: repetitionContextSize)
         } else {
@@ -302,19 +306,19 @@ public struct FilteredSampler: LogitSampler {
         return withRandomState(randomState) {
             let probs = softmax(logits / temp, axis: -1)
             let sortedIndices = argSort(probs, axis: -1)
-            let squeezedIndices = sortedIndices.squeezed(axis: 0)
-            let sortedProbs = take(probs, sortedIndices, axis: -1).squeezed(axis: 0)
-            var filteredProbs = sortedProbs
+            var squeezedIndices = sortedIndices.squeezed(axis: 0)
+            var sortedProbs = take(probs, sortedIndices, axis: -1).squeezed(axis: 0)
 
             if let topK, topK > 0, topK < sortedProbs.dim(-1) {
-                let keepFrom = sortedProbs.dim(-1) - topK
-                let ranks = MLXArray(Array(0 ..< sortedProbs.dim(-1)))
-                filteredProbs = MLX.where(
-                    ranks .>= MLXArray(keepFrom),
-                    filteredProbs,
-                    zeros(like: filteredProbs)
-                )
+                // The sort is ascending, so the top-k candidates are the trailing
+                // k entries. Slicing them keeps min-p, top-p and sampling on k
+                // values instead of masking the full vocabulary with a rank array
+                // built on the CPU every token. Masked entries were zero, so the
+                // cumulative sums and the sampled distribution are unchanged.
+                squeezedIndices = squeezedIndices[(-topK)...]
+                sortedProbs = sortedProbs[0..., (-topK)...]
             }
+            var filteredProbs = sortedProbs
 
             if minPValue > 0 {
                 let maxProb = MLX.max(sortedProbs, axis: -1, keepDims: true)
@@ -365,12 +369,20 @@ public struct CategoricalSampler: LogitSampler {
 }
 
 /// Processor that implements a `repetitionPenalty`
-public struct RepetitionContext: LogitProcessor {
-    /// tokens in the repetition context sliding window
-    var tokens = [Int]()
+///
+/// The sliding window stays on the GPU. `didSample(token:)` runs inside
+/// ``TokenIterator/step(previous:)`` before the step is handed to `asyncEval`,
+/// so reading the token back to the CPU there (`item()`) would block on the
+/// whole forward pass every token and stall decode pipelining.
+///
+/// `@unchecked Sendable`: the window is only replaced, never mutated in place,
+/// and a processor is owned by a single ``TokenIterator``.
+public struct RepetitionContext: LogitProcessor, @unchecked Sendable {
+    /// tokens in the repetition context sliding window, oldest first
+    var tokens: MLXArray?
 
-    /// current write index into the tokens circular array
-    var index = 0
+    /// number of tokens currently held in `tokens`
+    var tokenCount = 0
 
     /// penalty factor for repeating tokens
     let repetitionPenalty: Float
@@ -385,42 +397,51 @@ public struct RepetitionContext: LogitProcessor {
     }
 
     mutating public func prompt(_ prompt: MLXArray) {
-        if prompt.shape[0] <= repetitionContextSize {
-            self.tokens = prompt.asArray(Int.self)
+        let flat = prompt.reshaped(-1).asType(.uint32)
+        if flat.size <= repetitionContextSize {
+            tokens = flat
         } else {
-            self.tokens = prompt[(-repetitionContextSize)...].asArray(Int.self)
+            tokens = flat[(-repetitionContextSize)...]
         }
+        tokenCount = min(flat.size, repetitionContextSize)
     }
 
     public func process(logits: MLXArray) -> MLXArray {
-        if tokens.count > 0 {
-            let indices = MLXArray(tokens.map { UInt32($0) })
-            var selectedLogits = logits[0..., indices]
+        guard let tokens, tokenCount > 0 else { return logits }
 
-            selectedLogits = MLX.where(
-                selectedLogits .< 0, selectedLogits * repetitionPenalty,
-                selectedLogits / repetitionPenalty)
+        var selectedLogits = logits[0..., tokens]
 
-            logits[0..., indices] = selectedLogits
-            return logits
-        }
+        selectedLogits = MLX.where(
+            selectedLogits .< 0, selectedLogits * repetitionPenalty,
+            selectedLogits / repetitionPenalty)
 
+        logits[0..., tokens] = selectedLogits
         return logits
     }
 
     mutating public func didSample(token: MLXArray) {
-        if tokens.count >= repetitionContextSize {
-            tokens[index] = token.item(Int.self)
-            index = (index + 1) % repetitionContextSize
-        } else {
-            tokens.append(token.item(Int.self))
+        let sampled = token.reshaped(-1).asType(.uint32)
+        var window = tokens.map { concatenated([$0, sampled]) } ?? sampled
+        tokenCount += sampled.size
+        if tokenCount > repetitionContextSize {
+            window = window[(-repetitionContextSize)...]
+            tokenCount = repetitionContextSize
         }
+        tokens = window
     }
 }
 
 /// Processor that applies a presence penalty to any token already seen in the prompt or output.
-public struct PresenceContext: LogitProcessor {
-    var seenTokens = Set<Int>()
+///
+/// Like ``RepetitionContext`` this keeps sampled tokens on the GPU so the
+/// processor never forces a synchronous evaluation of the decode step.
+/// Sampled tokens are appended without de-duplication; the penalty is applied
+/// with a gather followed by an assigning scatter, so a repeated index writes
+/// the same penalized value and is still penalized exactly once.
+///
+/// `@unchecked Sendable` for the same reason as ``RepetitionContext``.
+public struct PresenceContext: LogitProcessor, @unchecked Sendable {
+    var seenTokens: MLXArray?
     let presencePenalty: Float
 
     public init(presencePenalty: Float) {
@@ -428,21 +449,26 @@ public struct PresenceContext: LogitProcessor {
     }
 
     mutating public func prompt(_ prompt: MLXArray) {
-        seenTokens.formUnion(prompt.asArray(Int.self))
+        // The prompt is already materialized, so de-duplicating it on the CPU
+        // is a one-time cost that keeps the per-token index set small.
+        let unique = Set(prompt.asArray(Int.self))
+        guard !unique.isEmpty else { return }
+        let promptTokens = MLXArray(unique.sorted().map(UInt32.init))
+        seenTokens = seenTokens.map { concatenated([$0, promptTokens]) } ?? promptTokens
     }
 
     public func process(logits: MLXArray) -> MLXArray {
-        guard !seenTokens.isEmpty else { return logits }
+        guard let seenTokens else { return logits }
 
-        let indices = MLXArray(seenTokens.sorted().map(UInt32.init))
-        var selectedLogits = logits[0..., indices]
+        var selectedLogits = logits[0..., seenTokens]
         selectedLogits -= MLXArray(presencePenalty)
-        logits[0..., indices] = selectedLogits
+        logits[0..., seenTokens] = selectedLogits
         return logits
     }
 
     mutating public func didSample(token: MLXArray) {
-        seenTokens.insert(token.item(Int.self))
+        let sampled = token.reshaped(-1).asType(.uint32)
+        seenTokens = seenTokens.map { concatenated([$0, sampled]) } ?? sampled
     }
 }
 
