@@ -1306,17 +1306,20 @@ public class Qwen35: Module, VLMModel {
             // rehydrated histories). Vision turns keep the single pass because
             // M-RoPE position indexing needs the full sequence.
             //
-            // Positions are supplied explicitly so every chunk matches what
-            // `getRopeIndex` produces for the whole segment in the single-pass
-            // path: text-only positions count 0..<N across the new segment on
-            // all three M-RoPE axes, with zero rope deltas for decode.
-            if let windowSize, inputIds.ndim == 2, inputIds.dim(-1) > windowSize {
+            // Positions are supplied explicitly and continue from the cache
+            // offset, so a segment appended to an existing cache (a reused chat
+            // session or a cached system prompt) gets the same positions as if
+            // the whole sequence had been prefilled at once. Text-only M-RoPE
+            // positions are the token index on all three axes, and decode
+            // derives positions from the cache offset plus zero rope deltas.
+            if inputIds.ndim == 2 {
                 let typedCache = castCache(cache)
                 let batchSize = inputIds.dim(0)
+                let chunkSize = max(1, windowSize ?? inputIds.dim(-1))
                 var remaining = input.text
-                var segmentOffset = 0
+                var segmentOffset = typedCache?[languageModel.model.faIdx].offset ?? 0
                 while remaining.tokens.dim(-1) > 0 {
-                    let chunkLength = min(windowSize, remaining.tokens.dim(-1))
+                    let chunkLength = min(chunkSize, remaining.tokens.dim(-1))
                     let chunk = remaining[.ellipsis, ..<chunkLength]
                     let chunkPositions = broadcast(
                         MLXArray(
@@ -1324,7 +1327,7 @@ public class Qwen35: Module, VLMModel {
                         )[.newAxis, .newAxis, 0...],
                         to: [3, batchSize, chunkLength]
                     )
-                    let isLastChunk = remaining.tokens.dim(-1) <= windowSize
+                    let isLastChunk = remaining.tokens.dim(-1) <= chunkSize
                     let output = autoreleasepool {
                         languageModel(
                             chunk.tokens,

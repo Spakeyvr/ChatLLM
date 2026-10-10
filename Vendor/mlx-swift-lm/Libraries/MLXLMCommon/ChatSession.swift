@@ -138,6 +138,31 @@ public final class ChatSession {
     ///   - tools: optional tool specifications
     ///   - toolDispatch: optional tool dispatch -- required for toolcalls if streaming strings rather than details
     ///   - additionalContext: optional model-specific context
+    /// Initialize the `ChatSession` from an already-populated KV cache, such as
+    /// a restored prompt prefix.
+    ///
+    /// Prompts are appended after the cached tokens, so `cache` must have the
+    /// layout `model.newCache(parameters: generateParameters)` produces.
+    public init(
+        _ model: ModelContainer,
+        instructions: String? = nil,
+        cache: [KVCache],
+        generateParameters: GenerateParameters = .init(),
+        processing: UserInput.Processing = .init(resize: CGSize(width: 512, height: 512)),
+        additionalContext: [String: any Sendable]? = nil,
+        tools: [ToolSpec]? = nil,
+        toolDispatch: (@Sendable (ToolCall) async throws -> String)? = nil
+    ) {
+        self.model = model
+        self.instructions = instructions
+        self.cache = .init(.kvcache(cache))
+        self.processing = processing
+        self.generateParameters = generateParameters
+        self.tools = tools
+        self.toolDispatch = toolDispatch
+        self.additionalContext = additionalContext
+    }
+
     public init(
         _ model: ModelContext,
         instructions: String? = nil,
@@ -237,6 +262,23 @@ public final class ChatSession {
         }
     }
 
+    /// Produces a streaming response to input the caller has already prepared,
+    /// such as the remainder of a prompt whose prefix this session's cache
+    /// already holds.
+    ///
+    /// The chat template is not applied again: `input` is appended to the
+    /// session's KV cache as is, and `instructions` and any `history` given at
+    /// init are not rendered. Use it with a session created from a cache.
+    /// Later prompts, including tool results, are rendered as usual.
+    public func streamDetails(prepared input: consuming LMInput) -> AsyncThrowingStream<Generation, Error> {
+        streamMap(source: .prepared(input)) { $0 }
+    }
+
+    private enum PromptSource {
+        case message(Chat.Message)
+        case prepared(LMInput)
+    }
+
     /// Produces a streaming response to a prompt by transforming the
     /// raw `Generation` values.
     ///
@@ -252,13 +294,21 @@ public final class ChatSession {
         videos: consuming [UserInput.Video],
         transform: @Sendable @escaping (Generation) -> R?
     ) -> AsyncThrowingStream<R, Error> {
+        streamMap(
+            source: .message(.init(role: role, content: prompt, images: images, videos: videos)),
+            transform: transform
+        )
+    }
+
+    private func streamMap<R: Sendable>(
+        source: consuming PromptSource,
+        transform: @Sendable @escaping (Generation) -> R?
+    ) -> AsyncThrowingStream<R, Error> {
         let (stream, continuation) = AsyncThrowingStream<R, Error>.makeStream()
 
-        // images and videos are not Sendable (MLXArray) but they are consumed
-        // and are only being sent to the inner async
-        let message = SendableBox<Chat.Message>(
-            .init(role: role, content: prompt, images: images, videos: videos)
-        )
+        // images, videos and prepared inputs are not Sendable (MLXArray) but
+        // they are consumed and are only being sent to the inner async
+        let source = SendableBox<PromptSource>(source)
 
         let task = Task {
             [
@@ -275,7 +325,16 @@ public final class ChatSession {
                     let modelConfiguration = await model.configuration
 
                     var messages: [Chat.Message] = []
-                    if let instructions {
+                    var preparedInput: LMInput?
+                    let pendingMessage: Chat.Message?
+                    switch source.consume() {
+                    case .message(let message):
+                        pendingMessage = message
+                    case .prepared(let input):
+                        pendingMessage = nil
+                        preparedInput = input
+                    }
+                    if let instructions, preparedInput == nil {
                         messages.append(.system(instructions))
                     }
 
@@ -309,19 +368,29 @@ public final class ChatSession {
                         // the KVCache is represented by a chat history
                         kvCache = model.newCache(parameters: generateParameters)
                         cache = .kvcache(kvCache)
-                        messages.append(contentsOf: history)
+                        if preparedInput == nil {
+                            messages.append(contentsOf: history)
+                        }
                     }
 
                     // prepare the input
-                    messages.append(message.consume())
+                    if let pendingMessage {
+                        messages.append(pendingMessage)
+                    }
 
                     // loop can restart on tool calls
-                    restart: while !messages.isEmpty {
-                        let userInput = UserInput(
-                            chat: messages, processing: processing,
-                            tools: tools, additionalContext: additionalContext)
-                        let input = try await processor.prepare(input: userInput)
-                        messages.removeAll()
+                    restart: while preparedInput != nil || !messages.isEmpty {
+                        let input: LMInput
+                        if let prepared = preparedInput {
+                            input = prepared
+                            preparedInput = nil
+                        } else {
+                            let userInput = UserInput(
+                                chat: messages, processing: processing,
+                                tools: tools, additionalContext: additionalContext)
+                            input = try await processor.prepare(input: userInput)
+                            messages.removeAll()
+                        }
 
                         // generate output
                         let iterator = try TokenIterator(

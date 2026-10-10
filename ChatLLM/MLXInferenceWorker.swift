@@ -121,10 +121,14 @@ nonisolated struct MLXInferenceRequest: @unchecked Sendable {
     let tools: [MLXToolSpec]
     let params: GenerateParameters
     let suppressWrappedXMLToolMarkup: Bool
+    /// Leading part of the system message that is identical across requests
+    /// (it excludes the date line); bounds the cached prompt prefix.
+    var stableSystemPrompt: String? = nil
 }
 
 nonisolated struct MLXInferenceResponse: Sendable {
     let toolInvocationCount: Int
+    let metrics: GenerationMetrics
 }
 
 nonisolated enum MLXPersistentSessionReleaseScope: Equatable, Sendable {
@@ -168,9 +172,11 @@ actor MLXInferenceWorker {
     /// publish cached state if the value still matches when generation ends.
     private var stateRevision: UInt64 = 0
     private let maxPersistentSessions = 2
+    private let promptPrefixCache: MLXPromptPrefixCache
 
-    init(subsystem: String) {
+    init(subsystem: String, promptPrefixCache: MLXPromptPrefixCache? = nil) {
         self.logger = Logger(subsystem: subsystem, category: "MLXInferenceWorker")
+        self.promptPrefixCache = promptPrefixCache ?? MLXPromptPrefixCache(subsystem: subsystem)
     }
 
     func setLoadedModel(_ state: MLXLoadedModelState) async {
@@ -250,6 +256,9 @@ actor MLXInferenceWorker {
         guard let latestUserMessage = request.messages.last else {
             throw MLXModelManager.GenerationError.invalidChatHistory
         }
+        // Starts before session setup so time to first token includes any
+        // prompt-prefix restore or prefill.
+        let startedAt = Date()
 
         let prefixSignatures = request.messages.dropLast().map { MLXVisibleMessageSignature(message: $0) }
         let requestedCacheConfiguration = SessionCacheConfiguration(
@@ -273,6 +282,10 @@ actor MLXInferenceWorker {
         )
 
         let reusableSession: ChatSession?
+        var promptPrefix: MLXPromptPrefix?
+        // Remainder of the prompt for the first stream of a session created
+        // from a cached prefix; the session itself renders later prompts.
+        var pendingPreparedInput: LMInput?
         if usesExplicitMessageHistory {
             reusableSession = nil
             logger.notice(
@@ -300,16 +313,40 @@ actor MLXInferenceWorker {
                     "MLX recreating persistent chat session due to cache configuration change: conversation=\(request.conversationID.uuidString, privacy: .public)"
                 )
             }
-            reusableSession = ChatSession(
-                loadedModel.container,
-                history: Array(request.messages.dropLast()),
-                generateParameters: request.params,
+            promptPrefix = await promptPrefixCache.prefix(
+                container: loadedModel.container,
+                modelID: loadedModel.model.id,
+                messages: request.messages,
+                stableSystemPrompt: request.stableSystemPrompt,
+                tools: request.tools,
                 processing: request.processing,
                 additionalContext: request.additionalContext,
-                tools: request.tools,
-                toolDispatch: nil
+                parameters: request.params
             )
-            logger.notice("MLX created fresh chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
+            if let promptPrefix {
+                pendingPreparedInput = promptPrefix.remainingInput
+                reusableSession = ChatSession(
+                    loadedModel.container,
+                    cache: promptPrefix.cache,
+                    generateParameters: request.params,
+                    processing: request.processing,
+                    additionalContext: request.additionalContext,
+                    tools: request.tools,
+                    toolDispatch: nil
+                )
+                logger.notice("MLX created chat session from cached prompt prefix: conversation=\(request.conversationID.uuidString, privacy: .public) restored_tokens=\(promptPrefix.restoredTokenCount, privacy: .public)")
+            } else {
+                reusableSession = ChatSession(
+                    loadedModel.container,
+                    history: Array(request.messages.dropLast()),
+                    generateParameters: request.params,
+                    processing: request.processing,
+                    additionalContext: request.additionalContext,
+                    tools: request.tools,
+                    toolDispatch: nil
+                )
+                logger.notice("MLX created fresh chat session: conversation=\(request.conversationID.uuidString, privacy: .public)")
+            }
         }
 
         reusableSession?.generateParameters = request.params
@@ -318,10 +355,12 @@ actor MLXInferenceWorker {
         reusableSession?.toolDispatch = nil
 
         Memory.peakMemory = 0
-        let startedAt = Date()
         var firstTokenAt: Date?
         var assistantVisibleText = ""
-        var cumulativePromptTokenCount = 0
+        // A prefix prefilled on a cache miss is part of this turn's prompt work.
+        var cumulativePromptTokenCount = promptPrefix?.prefilledTokenCount ?? 0
+        var cumulativePromptTime: TimeInterval = promptPrefix?.prefillTime ?? 0
+        var cumulativeCachedPromptTokenCount = promptPrefix?.restoredTokenCount ?? 0
         var cumulativeOutputTokenCount = 0
         var cumulativeGenerationTime: TimeInterval = 0
         var activePromptContent = latestUserMessage.content
@@ -346,9 +385,44 @@ actor MLXInferenceWorker {
                 MLXMemoryDiagnostics.log(
                     self.logger, "prefill.start", "iteration=\(streamIteration)")
                 let session: ChatSession
+                var preparedInput: LMInput?
                 if let reusableSession {
                     session = reusableSession
                     session.tools = activeTools
+                    preparedInput = pendingPreparedInput
+                    pendingPreparedInput = nil
+                } else if let iterationPrefix = await self.promptPrefixCache.prefix(
+                    container: loadedModel.container,
+                    modelID: loadedModel.model.id,
+                    messages: explicitMessageHistory + [
+                        Chat.Message(
+                            role: activePromptRole,
+                            content: activePromptContent,
+                            images: activePromptImages,
+                            videos: activePromptVideos
+                        )
+                    ],
+                    stableSystemPrompt: request.stableSystemPrompt,
+                    tools: activeTools,
+                    processing: request.processing,
+                    additionalContext: request.additionalContext,
+                    parameters: request.params
+                ) {
+                    // Explicit-history tool loops rebuild the session every
+                    // iteration; each one restores the shared system turn.
+                    cumulativeCachedPromptTokenCount += iterationPrefix.restoredTokenCount
+                    cumulativePromptTokenCount += iterationPrefix.prefilledTokenCount
+                    cumulativePromptTime += iterationPrefix.prefillTime
+                    session = ChatSession(
+                        loadedModel.container,
+                        cache: iterationPrefix.cache,
+                        generateParameters: request.params,
+                        processing: request.processing,
+                        additionalContext: request.additionalContext,
+                        tools: activeTools,
+                        toolDispatch: nil
+                    )
+                    preparedInput = iterationPrefix.remainingInput
                 } else {
                     session = ChatSession(
                         loadedModel.container,
@@ -367,12 +441,17 @@ actor MLXInferenceWorker {
                 var emittedToolCall: MLXToolCall?
                 var chunkEventCount = 0
 
-                for try await generation in session.streamDetails(
-                    to: activePromptContent,
-                    role: activePromptRole,
-                    images: activePromptImages,
-                    videos: activePromptVideos
-                ) {
+                let generations = if let preparedInput {
+                    session.streamDetails(prepared: preparedInput)
+                } else {
+                    session.streamDetails(
+                        to: activePromptContent,
+                        role: activePromptRole,
+                        images: activePromptImages,
+                        videos: activePromptVideos
+                    )
+                }
+                for try await generation in generations {
                     if Task.isCancelled {
                         throw CancellationError()
                     }
@@ -425,6 +504,7 @@ actor MLXInferenceWorker {
 
                 if let completionInfo {
                     cumulativePromptTokenCount += completionInfo.promptTokenCount
+                    cumulativePromptTime += completionInfo.promptTime
                     cumulativeOutputTokenCount += completionInfo.generationTokenCount
                     cumulativeGenerationTime += completionInfo.generateTime
                 }
@@ -575,7 +655,17 @@ actor MLXInferenceWorker {
             "MLX performance sample: conversation=\(request.conversationID.uuidString, privacy: .public) prompt_tokens=\(cumulativePromptTokenCount, privacy: .public) output_tokens=\(outputTokenCount, privacy: .public) ttft=\(String(format: "%.3f", timeToFirstToken ?? 0), privacy: .public)s latency=\(String(format: "%.3f", totalLatency), privacy: .public)s tok_s=\(String(format: "%.2f", decodeTokensPerSecond ?? 0), privacy: .public) cache_policy=\(effectiveCachePolicy.diagnosticLabel, privacy: .public) max_kv=\(request.params.maxKVSize ?? -1, privacy: .public)"
         )
 
-        return MLXInferenceResponse(toolInvocationCount: toolInvocationCount)
+        return MLXInferenceResponse(
+            toolInvocationCount: toolInvocationCount,
+            metrics: GenerationMetrics(
+                promptTokenCount: cumulativePromptTokenCount,
+                cachedPromptTokenCount: cumulativeCachedPromptTokenCount,
+                promptTime: cumulativePromptTime,
+                outputTokenCount: cumulativeOutputTokenCount,
+                decodeTime: cumulativeGenerationTime,
+                timeToFirstToken: timeToFirstToken
+            )
+        )
     }
 
     nonisolated static func generationStateIsCurrent(

@@ -82,6 +82,14 @@ final class Message {
     var generationCompletedAt: Date?
     var reasoningStartedAt: Date?
     var reasoningCompletedAt: Date?
+    // Backend-reported token counts and timings. Only MLX reports these; the
+    // Developer panel falls back to character-based estimates when nil.
+    var generationPromptTokenCount: Int?
+    var generationCachedPromptTokenCount: Int?
+    var generationPromptTime: Double?
+    var generationOutputTokenCount: Int?
+    var generationDecodeTime: Double?
+    var generationTimeToFirstToken: Double?
     // Persisted so a failed turn still shows its (localized) error callout
     // after relaunch, instead of storing an English sentinel in `text`.
     var generationError: String?
@@ -346,6 +354,40 @@ extension Message {
         return duration > 0 ? duration : nil
     }
 
+    /// Decode throughput as measured by the backend, excluding prompt
+    /// processing, time to first token, and UI work.
+    var decodeTokensPerSecond: Double? {
+        guard let generationOutputTokenCount,
+              let generationDecodeTime,
+              generationDecodeTime > 0 else { return nil }
+        return Double(generationOutputTokenCount) / generationDecodeTime
+    }
+
+    var promptTokensPerSecond: Double? {
+        guard let generationPromptTokenCount,
+              let generationPromptTime,
+              generationPromptTime > 0 else { return nil }
+        return Double(generationPromptTokenCount) / generationPromptTime
+    }
+
+    func recordGenerationMetrics(_ metrics: GenerationMetrics) {
+        generationPromptTokenCount = metrics.promptTokenCount
+        generationCachedPromptTokenCount = metrics.cachedPromptTokenCount
+        generationPromptTime = metrics.promptTime
+        generationOutputTokenCount = metrics.outputTokenCount
+        generationDecodeTime = metrics.decodeTime
+        generationTimeToFirstToken = metrics.timeToFirstToken
+    }
+
+    private func clearGenerationMetrics() {
+        generationPromptTokenCount = nil
+        generationCachedPromptTokenCount = nil
+        generationPromptTime = nil
+        generationOutputTokenCount = nil
+        generationDecodeTime = nil
+        generationTimeToFirstToken = nil
+    }
+
     var estimatedOutputTokenCount: Int? {
         let raw = developerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
@@ -366,6 +408,7 @@ extension Message {
         generationModelName = modelName
         generationStartedAt = startedAt
         generationCompletedAt = nil
+        clearGenerationMetrics()
         reasoningStartedAt = isReasoningMode ? startedAt : nil
         reasoningCompletedAt = nil
         streamingReasoningPhase = isReasoningMode ? .initialThinking : nil
@@ -418,6 +461,7 @@ extension Message {
             self.generationCompletedAt != nil ||
             self.reasoningStartedAt != nil ||
             self.reasoningCompletedAt != nil ||
+            self.generationOutputTokenCount != nil ||
             self.searchInvocations != nil ||
             self.searchQuery != nil
 
@@ -435,6 +479,7 @@ extension Message {
             self.generationCompletedAt = nil
             self.reasoningStartedAt = nil
             self.reasoningCompletedAt = nil
+            self.clearGenerationMetrics()
             self.streamingReasoningPhase = nil
             self.postToolReasoningStartCloseTagCount = nil
             self.searchInvocations = nil
@@ -442,6 +487,19 @@ extension Message {
             self.searchQuery = preservedForcedSearchQuery
         }
     }
+}
+
+/// Token counts and timings for one assistant response, summed across tool-call
+/// iterations. Times are in seconds.
+nonisolated struct GenerationMetrics: Equatable, Sendable {
+    /// Prompt tokens processed by the model for this response.
+    let promptTokenCount: Int
+    /// Prompt tokens restored from the on-disk prompt-prefix cache instead.
+    let cachedPromptTokenCount: Int
+    let promptTime: TimeInterval
+    let outputTokenCount: Int
+    let decodeTime: TimeInterval
+    let timeToFirstToken: TimeInterval?
 }
 
 enum ThoughtDurationFormatter {

@@ -512,10 +512,13 @@ extension ChatViewModel {
         logger.info("Native image telemetry canonical=\(canonicalMetrics.width)x\(canonicalMetrics.height) (\(canonicalSize, privacy: .public)) inference=\(inferenceMetrics.width)x\(inferenceMetrics.height) (\(inferenceSize, privacy: .public))")
     }
 
-    /// Builds a structured message array for the Qwen3.5 VLM processor.
-    /// The processor's `applyChatTemplate` applies the Jinja template with `add_generation_prompt=true`.
-    /// Thinking mode is controlled by the caller via `additionalContext: ["enable_thinking": false]`
-    /// — NOT through any manual prefix here.
+    /// Messages for an MLX request plus the leading part of the system prompt
+    /// that stays identical across requests, which bounds prompt-prefix caching.
+    struct MLXPromptMessages {
+        let messages: [Chat.Message]
+        let stableSystemPrompt: String
+    }
+
     func buildQwenMessages(
         upToOrderExclusive maxOrderExclusive: Int,
         modelIdentity: String = "MLX model",
@@ -525,6 +528,30 @@ extension ChatViewModel {
         toolsAvailable: Bool = false,
         forceWebSearch: Bool = false
     ) async throws -> [Chat.Message] {
+        try await buildQwenPrompt(
+            upToOrderExclusive: maxOrderExclusive,
+            modelIdentity: modelIdentity,
+            additionalInstruction: additionalInstruction,
+            includeLatestUserImages: includeLatestUserImages,
+            maxMessages: maxMessages,
+            toolsAvailable: toolsAvailable,
+            forceWebSearch: forceWebSearch
+        ).messages
+    }
+
+    /// Builds a structured message array for the Qwen3.5 VLM processor.
+    /// The processor's `applyChatTemplate` applies the Jinja template with `add_generation_prompt=true`.
+    /// Thinking mode is controlled by the caller via `additionalContext: ["enable_thinking": false]`
+    /// — NOT through any manual prefix here.
+    func buildQwenPrompt(
+        upToOrderExclusive maxOrderExclusive: Int,
+        modelIdentity: String = "MLX model",
+        additionalInstruction: String? = nil,
+        includeLatestUserImages: Bool = true,
+        maxMessages: Int? = nil,
+        toolsAvailable: Bool = false,
+        forceWebSearch: Bool = false
+    ) async throws -> MLXPromptMessages {
         let allSnapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
         let snapshots = await trimmedSnapshotsForMLXPrompt(
             from: allSnapshots,
@@ -556,6 +583,16 @@ extension ChatViewModel {
         } else {
             effectiveSystemPrompt = systemPrompt
         }
+        // The date line changes every minute, so a prompt that carries it can
+        // only share the part before it with other requests.
+        let stableSystemPrompt = includeCurrentDateTime
+            ? Self.buildMLXSystemPrompt(
+                modelIdentity: modelIdentity,
+                includeCurrentDateTime: false,
+                webSearchEnabled: toolsAvailable,
+                forceWebSearch: forceWebSearch
+            )
+            : effectiveSystemPrompt
         // The tokenizer chat template already injects the exact MLX tool-call
         // syntax for the active Qwen package. Duplicating it here risks
         // contradicting the installed template and suppressing tool use.
@@ -591,7 +628,7 @@ extension ChatViewModel {
             }
         }
 
-        return messages
+        return MLXPromptMessages(messages: messages, stableSystemPrompt: stableSystemPrompt)
     }
 
     // MARK: - Static Prompts

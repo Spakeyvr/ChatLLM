@@ -65,6 +65,7 @@ extension MLXModelManager {
 
     struct MLXGenerationResult: Sendable {
         let toolInvocationCount: Int
+        let metrics: GenerationMetrics
     }
 
     enum CacheCompressionMode: Equatable, Sendable {
@@ -121,6 +122,7 @@ extension MLXModelManager {
         memoryConstrained: Bool = false,
         tools: [MLXToolSpec] = [],
         toolDispatch: (@Sendable (MLXToolCall) async throws -> String)? = nil,
+        stableSystemPrompt: String? = nil,
         onToken: @escaping @Sendable (String) -> Void,
         onToolCall: @escaping @Sendable (MLXToolCall) -> Void = { _ in }
     ) async throws -> MLXGenerationResult {
@@ -202,7 +204,8 @@ extension MLXModelManager {
             processing: processing,
             tools: tools,
             params: params,
-            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup
+            suppressWrappedXMLToolMarkup: suppressWrappedXMLToolMarkup,
+            stableSystemPrompt: stableSystemPrompt
         )
 
         do {
@@ -216,7 +219,10 @@ extension MLXModelManager {
             if !memoryConstrained {
                 await startDeferredTuningIfNeeded(container: container, model: currentModel)
             }
-            return MLXGenerationResult(toolInvocationCount: response.toolInvocationCount)
+            return MLXGenerationResult(
+                toolInvocationCount: response.toolInvocationCount,
+                metrics: response.metrics
+            )
         } catch {
             logger.error("MLX generation failed: \(error.localizedDescription, privacy: .public)")
             cleanupMemoryAfterGenerationError()

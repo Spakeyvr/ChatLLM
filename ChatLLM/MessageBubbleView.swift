@@ -840,12 +840,33 @@ private struct DeveloperMessageSheet: View {
                             DeveloperStatRow(label: String(localized: "Duration", bundle: .appLocalized, locale: locale), value: String(format: "%.2fs", duration))
                         }
 
-                        if let estimatedOutputTokenCount = message.estimatedOutputTokenCount {
-                            DeveloperStatRow(label: String(localized: "Est. output tokens", bundle: .appLocalized, locale: locale), value: "\(estimatedOutputTokenCount)")
-                        }
+                        if let decodeTokensPerSecond = message.decodeTokensPerSecond,
+                           let outputTokenCount = message.generationOutputTokenCount {
+                            // Backend-measured values; the estimates below divide
+                            // characters by wall-clock time including prefill.
+                            if let promptTokenCount = message.generationPromptTokenCount {
+                                DeveloperStatRow(label: String(localized: "Prompt tokens", bundle: .appLocalized, locale: locale), value: "\(promptTokenCount)")
+                            }
+                            if let cachedPromptTokenCount = message.generationCachedPromptTokenCount,
+                               cachedPromptTokenCount > 0 {
+                                DeveloperStatRow(label: String(localized: "Cached prompt tokens", bundle: .appLocalized, locale: locale), value: "\(cachedPromptTokenCount)")
+                            }
+                            if let promptTokensPerSecond = message.promptTokensPerSecond {
+                                DeveloperStatRow(label: String(localized: "Prompt tokens/sec", bundle: .appLocalized, locale: locale), value: String(format: "%.2f", promptTokensPerSecond))
+                            }
+                            if let timeToFirstToken = message.generationTimeToFirstToken {
+                                DeveloperStatRow(label: String(localized: "Time to first token", bundle: .appLocalized, locale: locale), value: String(format: "%.2fs", timeToFirstToken))
+                            }
+                            DeveloperStatRow(label: String(localized: "Output tokens", bundle: .appLocalized, locale: locale), value: "\(outputTokenCount)")
+                            DeveloperStatRow(label: String(localized: "Decode tokens/sec", bundle: .appLocalized, locale: locale), value: String(format: "%.2f", decodeTokensPerSecond))
+                        } else {
+                            if let estimatedOutputTokenCount = message.estimatedOutputTokenCount {
+                                DeveloperStatRow(label: String(localized: "Est. output tokens", bundle: .appLocalized, locale: locale), value: "\(estimatedOutputTokenCount)")
+                            }
 
-                        if let estimatedTokensPerSecond = message.estimatedTokensPerSecond {
-                            DeveloperStatRow(label: String(localized: "Est. tokens/sec", bundle: .appLocalized, locale: locale), value: String(format: "%.2f", estimatedTokensPerSecond))
+                            if let estimatedTokensPerSecond = message.estimatedTokensPerSecond {
+                                DeveloperStatRow(label: String(localized: "Est. tokens/sec", bundle: .appLocalized, locale: locale), value: String(format: "%.2f", estimatedTokensPerSecond))
+                            }
                         }
 
                         DeveloperStatRow(label: String(localized: "Raw chars", bundle: .appLocalized, locale: locale), value: "\(message.developerRawText.count)")

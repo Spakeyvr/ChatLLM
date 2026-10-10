@@ -344,6 +344,29 @@ extension ChatLLMTests {
         #expect(!systemMessage.content.contains("mixed"))
     }
 
+    @Test func buildQwenPromptStablePrefixExcludesDateLine() async throws {
+        let viewModel = try makeViewModel()
+        viewModel.conversation.messages.append(ChatLLM.Message(
+            role: .user,
+            text: "What is the latest news today?",
+            order: 0,
+            conversation: viewModel.conversation,
+            isFinal: true
+        ))
+
+        let dated = try await viewModel.buildQwenPrompt(upToOrderExclusive: 1, toolsAvailable: true)
+        let datedSystem = try #require(dated.messages.first(where: { $0.role == .system })).content
+        #expect(datedSystem.contains("Current date and time:"))
+        #expect(datedSystem.hasPrefix(dated.stableSystemPrompt))
+        #expect(!dated.stableSystemPrompt.contains("Current date and time:"))
+
+        viewModel.conversation.messages[0].text = "Explain value types in Swift."
+        let plain = try await viewModel.buildQwenPrompt(upToOrderExclusive: 1, toolsAvailable: true)
+        let plainSystem = try #require(plain.messages.first(where: { $0.role == .system })).content
+        #expect(!plainSystem.contains("Current date and time:"))
+        #expect(plain.stableSystemPrompt == plainSystem)
+    }
+
     @Test func buildQwenMessagesKeepsOrdinaryMLXPromptStable() async throws {
         let viewModel = try makeViewModel()
         let user = ChatLLM.Message(

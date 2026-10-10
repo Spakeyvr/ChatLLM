@@ -1082,6 +1082,28 @@
         }
       }
     },
+    "Cached prompt tokens" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zwischengespeicherte Prompt-Tokens"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cached prompt tokens"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens del prompt en caché"
+          }
+        }
+      }
+    },
     "Camera" : {
       "localizations" : {
         "de" : {
@@ -1676,6 +1698,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Oscuro"
+          }
+        }
+      }
+    },
+    "Decode tokens/sec" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decode-Tokens/Sek."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decode tokens/sec"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens/s de decodificación"
           }
         }
       }
@@ -4453,6 +4497,28 @@
         }
       }
     },
+    "Output tokens" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgabetokens"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output tokens"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens de salida"
+          }
+        }
+      }
+    },
     "Overview" : {
       "localizations" : {
         "de" : {
@@ -4669,6 +4735,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Privacidad y datos"
+          }
+        }
+      }
+    },
+    "Prompt tokens" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt-Tokens"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt tokens"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens del prompt"
+          }
+        }
+      }
+    },
+    "Prompt tokens/sec" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt-Tokens/Sek."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt tokens/sec"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens/s del prompt"
           }
         }
       }
@@ -6828,6 +6938,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Razonamiento durante %@"
+          }
+        }
+      }
+    },
+    "Time to first token" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeit bis zum ersten Token"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time to first token"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiempo hasta el primer token"
           }
         }
       }

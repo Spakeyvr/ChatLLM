@@ -41,6 +41,28 @@ The sibling `mlx-swift-lm` patches use the current attention-mask API, remove an
 unused vision binding, and decode tool JSON through the existing Sendable
 `JSONValue` representation instead of passing unconstrained `Any` across actors.
 
+Decode throughput patches in `mlx-swift-lm`:
+
+- repetition and presence penalties keep sampled tokens on the GPU. Upstream
+  reads each token back with `item()` inside `TokenIterator.step`, which blocks
+  on the whole forward pass and defeats `asyncEval` pipelining (about 28% of
+  decode throughput with Qwen 3.5 sampling). A repetition penalty of exactly 1
+  builds no processor;
+- `FilteredSampler` applies top-k by slicing the sorted tail instead of masking
+  the vocabulary with a rank array rebuilt on the CPU every token;
+- RotorQuant decode attention spreads the exact (unquantized) tail across
+  parallel blocks instead of one SIMD group per KV head, and passes buffer
+  capacities at runtime so cache growth does not compile new Metal pipelines.
+
+Prompt-cache patches in `mlx-swift-lm`:
+
+- Qwen 3.5 text prefill numbers positions from the KV cache offset. Upstream
+  reset them to 0 for every `prepare`, so a turn appended to an existing cache
+  (a reused chat session or a restored prompt prefix) was embedded at the wrong
+  M-RoPE positions while decode used absolute ones;
+- `ChatSession` can start from an existing KV cache, which ChatLLM uses to
+  restore a saved system-prompt prefix (`MLXPromptPrefixCache`).
+
 Regression coverage lives in `ChatLLMTests+LFM.swift`; the opt-in real model tests
 and their simulator setup are documented in the root README. Reassess these
 patches against upstream before updating either dependency.

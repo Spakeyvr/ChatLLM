@@ -769,7 +769,8 @@ final class ChatViewModel: ObservableObject {
             messages: [Chat.Message],
             enableThinking: Bool,
             tools: [MLXToolSpec],
-            toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?
+            toolDispatch: (@Sendable (MLXToolCall) async throws -> String)?,
+            stableSystemPrompt: String?
         )
         case foundation(
             request: LLMRequest,
@@ -798,6 +799,7 @@ final class ChatViewModel: ObservableObject {
         case text(String)
         case toolCall(MLXToolCall)
         case searchActivityChanged
+        case metrics(GenerationMetrics)
     }
 
     nonisolated private final class StreamEventIterator: @unchecked Sendable {
@@ -1063,7 +1065,7 @@ final class ChatViewModel: ObservableObject {
                 return nil
             }
             do {
-                let messages = try await buildQwenMessages(
+                let prompt = try await buildQwenPrompt(
                     upToOrderExclusive: order,
                     modelIdentity: manager.currentModel?.promptIdentity ?? "MLX model",
                     additionalInstruction: additionalUserInstruction,
@@ -1076,10 +1078,11 @@ final class ChatViewModel: ObservableObject {
                 backendRequest = .mlx(
                     manager: manager,
                     conversationID: conversation.id,
-                    messages: messages,
+                    messages: prompt.messages,
                     enableThinking: resetState.target.isReasoningMode,
                     tools: mlxTools,
-                    toolDispatch: mlxToolDispatch
+                    toolDispatch: mlxToolDispatch,
+                    stableSystemPrompt: prompt.stableSystemPrompt
                 )
             } catch {
                 failStreamPreparation(
@@ -1149,7 +1152,7 @@ final class ChatViewModel: ObservableObject {
         let modelName: String?
 
         switch preparation.backendRequest {
-        case .mlx(let manager, _, _, _, _, _):
+        case .mlx(let manager, _, _, _, _, _, _):
             backendLabel = "MLX"
             modelName = manager.currentModel?.displayName
         case .foundation:
@@ -1242,6 +1245,10 @@ final class ChatViewModel: ObservableObject {
                         conversation.lastUpdated = Date()
                         scheduleCoalescedSave()
                     }
+                case .metrics(let metrics):
+                    // Persisted with the final message by the save below.
+                    conversation.messages.first(where: { $0.id == preparation.targetID })?
+                        .recordGenerationMetrics(metrics)
                 }
             }
 
@@ -1307,7 +1314,7 @@ final class ChatViewModel: ObservableObject {
 
     private func makeGenerationStream(from preparation: StreamPreparation) async throws -> AsyncThrowingStream<StreamEvent, Error> {
         switch preparation.backendRequest {
-        case .mlx(let manager, let conversationID, let messages, let enableThinking, let tools, let toolDispatch):
+        case .mlx(let manager, let conversationID, let messages, let enableThinking, let tools, let toolDispatch, let stableSystemPrompt):
             logger.notice("streamAssistant entering MLX generation path")
             while manager.isLoading && !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
@@ -1335,12 +1342,14 @@ final class ChatViewModel: ObservableObject {
                             enableThinking: enableThinking,
                             tools: tools,
                             toolDispatch: toolDispatch,
+                            stableSystemPrompt: stableSystemPrompt,
                             onToken: { token in continuation.yield(.text(token)) },
                             onToolCall: { toolCall in continuation.yield(.toolCall(toolCall)) }
                         )
                         logger.notice(
                             "streamAssistant MLX generation finished: tool_invocations=\(generationResult.toolInvocationCount, privacy: .public) question_preview_chars=\(questionLogPreview.count, privacy: .public)"
                         )
+                        continuation.yield(.metrics(generationResult.metrics))
                         continuation.finish()
                     } catch is CancellationError {
                         continuation.finish()

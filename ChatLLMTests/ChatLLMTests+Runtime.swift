@@ -118,6 +118,46 @@ extension ChatLLMTests {
         ))
     }
 
+    @Test func promptPrefixCacheServesTextPromptsThatOpenWithSystemTurn() {
+        #expect(MLXPromptPrefixCache.isEligible(messages: [.system("System"), .user("Hi")]))
+        #expect(MLXPromptPrefixCache.isEligible(
+            messages: [.system("System"), .user("Hi"), .assistant("Hello"), .user("Again")]
+        ))
+        #expect(!MLXPromptPrefixCache.isEligible(messages: [.user("Hi"), .assistant("Hello")]))
+        #expect(!MLXPromptPrefixCache.isEligible(messages: [.system("System")]))
+    }
+
+    @Test func promptPrefixStopsBeforeConversationDependentTokens() {
+        let shared = (0 ..< Int32(MLXPromptPrefixCache.minimumPrefixTokens)).map { $0 + 1_000 }
+        let full = shared + [7, 8, 9]
+
+        // The full prompt may share its first message token with one probe;
+        // the shortest match keeps that token out of the cached prefix.
+        #expect(MLXPromptPrefixCache.prefixTokenCount(full: full, probes: [shared + [7, 1], shared + [2, 1]]) == shared.count)
+        // A prefix too short to be worth a file is skipped.
+        #expect(MLXPromptPrefixCache.prefixTokenCount(full: full, probes: [Array(shared.prefix(3)) + [5]]) == nil)
+        // Something must remain to prefill so the model produces logits.
+        #expect(MLXPromptPrefixCache.prefixTokenCount(full: shared, probes: [shared + [1]]) == nil)
+    }
+
+    @Test func promptPrefixKeyChangesWithModelTokensAndCacheLayout() {
+        let tokens: [Int32] = [1, 2, 3]
+        let base = MLXPromptPrefixCache.entryKey(
+            modelID: "qwen", prefixTokens: tokens[...], parameters: GenerateParameters(maxKVSize: 2_048))
+
+        #expect(base == MLXPromptPrefixCache.entryKey(
+            modelID: "qwen", prefixTokens: tokens[...], parameters: GenerateParameters(maxKVSize: 2_048)))
+        #expect(base != MLXPromptPrefixCache.entryKey(
+            modelID: "lfm", prefixTokens: tokens[...], parameters: GenerateParameters(maxKVSize: 2_048)))
+        #expect(base != MLXPromptPrefixCache.entryKey(
+            modelID: "qwen", prefixTokens: [1, 2, 4][...], parameters: GenerateParameters(maxKVSize: 2_048)))
+        #expect(base != MLXPromptPrefixCache.entryKey(
+            modelID: "qwen", prefixTokens: tokens[...], parameters: GenerateParameters(maxKVSize: 4_096)))
+        #expect(base != MLXPromptPrefixCache.entryKey(
+            modelID: "qwen", prefixTokens: tokens[...],
+            parameters: GenerateParameters(cacheCompression: .rotorQuant(RotorQuantConfiguration()))))
+    }
+
     @Test func mlxVisibleMessageSignatureStoresOnlyFixedSizeContentIdentity() {
         let first = MLXVisibleMessageSignature(
             message: Chat.Message(role: .user, content: "A long conversation message")

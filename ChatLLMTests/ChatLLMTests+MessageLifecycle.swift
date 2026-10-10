@@ -39,6 +39,56 @@ extension ChatLLMTests {
         #expect(message.generationCompletedAt == nil)
     }
 
+    @Test func backendMetricsReportDecodeRateSeparateFromWallClockEstimate() {
+        let message = ChatLLM.Message(
+            role: .assistant,
+            text: String(repeating: "word ", count: 80),
+            order: 1,
+            rawText: String(repeating: "word ", count: 80),
+            generationStartedAt: Date(timeIntervalSince1970: 0),
+            generationCompletedAt: Date(timeIntervalSince1970: 20)
+        )
+        #expect(message.decodeTokensPerSecond == nil)
+
+        message.recordGenerationMetrics(
+            GenerationMetrics(
+                promptTokenCount: 600,
+                cachedPromptTokenCount: 0,
+                promptTime: 1.5,
+                outputTokenCount: 360,
+                decodeTime: 18,
+                timeToFirstToken: 1.8
+            )
+        )
+
+        #expect(message.decodeTokensPerSecond == 20)
+        #expect(message.promptTokensPerSecond == 400)
+        #expect(message.generationTimeToFirstToken == 1.8)
+        // The wall-clock estimate still divides chars/4 by the full duration.
+        #expect(message.estimatedTokensPerSecond == 5)
+    }
+
+    @Test func newCaptureAndRegenerationClearBackendMetrics() {
+        let metrics = GenerationMetrics(
+            promptTokenCount: 10, cachedPromptTokenCount: 700, promptTime: 1, outputTokenCount: 20,
+            decodeTime: 2, timeToFirstToken: 1
+        )
+        let message = ChatLLM.Message(role: .assistant, text: "Visible", order: 1, isFinal: true)
+
+        message.recordGenerationMetrics(metrics)
+        message.beginGenerationCapture(backend: "MLX", modelName: "Qwen")
+        #expect(message.generationOutputTokenCount == nil)
+        #expect(message.decodeTokensPerSecond == nil)
+
+        message.recordGenerationMetrics(metrics)
+        #expect(message.generationCachedPromptTokenCount == 700)
+        message.resetForRegeneration()
+        #expect(message.generationPromptTokenCount == nil)
+        #expect(message.generationCachedPromptTokenCount == nil)
+        #expect(message.generationTimeToFirstToken == nil)
+        #expect(message.decodeTokensPerSecond == nil)
+    }
+
     @Test func generationCaptureIsDeveloperGatedAndBounded() {
         let message = ChatLLM.Message(
             role: .assistant,
