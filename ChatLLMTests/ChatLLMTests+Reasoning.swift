@@ -80,4 +80,14 @@ extension ChatLLMTests {
         #expect(!sanitized.contains("</think>"))
         #expect(!sanitized.contains("<thinking>"))
     }
+
+    @Test func thinkingShimmerPhaseDependsOnlyOnClockTime() {
+        // A rebuilt indicator must resume the sweep where the old one was, so the
+        // offset is a pure function of the date and wraps every 1.6s.
+        let date = Date(timeIntervalSinceReferenceDate: 1_000.4)
+        let offset = InlineThinkingView.shimmerOffset(at: date)
+        #expect(offset == InlineThinkingView.shimmerOffset(at: date))
+        #expect(abs(offset - InlineThinkingView.shimmerOffset(at: date.addingTimeInterval(1.6))) < 0.0001)
+        #expect(offset >= -0.4 && offset < 1.4)
+    }
 }

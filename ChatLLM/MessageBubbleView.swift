@@ -1022,6 +1022,9 @@ struct AssistantActionsBar: View {
 
             Spacer()
         }
+        // Fixed row height keeps the gap below the reply the same whether or not
+        // the (taller) Sources button is present.
+        .frame(minHeight: 36)
         .font(.body)
         .foregroundStyle(.primary)
         .opacity(isVisible ? 1.0 : 0.0)
