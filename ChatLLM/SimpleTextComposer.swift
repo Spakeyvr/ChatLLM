@@ -298,7 +298,7 @@ private struct AddOptionsSheet: View {
                         }
                     )) {
                         Label {
-                            Text(reasoningRequired ? LocalizedStringKey("Reasoning (Always On)") : LocalizedStringKey("Always Reason"))
+                            Text("Always Reason")
                                 .font(.body)
                         } icon: {
                             Image(systemName: "brain.head.profile")
