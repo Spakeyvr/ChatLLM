@@ -262,6 +262,17 @@ class ModelBackendBridge: ObservableObject {
         SystemLanguageModel.default.availability == .available
     }
 
+    /// Whether the current backend reads image pixels itself. When it does not,
+    /// images reach the model only as a Vision analysis summary in the prompt.
+    var nativeImageInputAvailable: Bool {
+        switch selectedBackend {
+        case .foundationModels:
+            return SystemLanguageModel.default.capabilities.contains(.vision)
+        case .mlx:
+            return modelManager?.currentModel?.supportsNativeImages ?? false
+        }
+    }
+
     /// Get the current model's display name
     var currentModelDisplayName: String? {
         guard let modelID = selectedModelID else { return nil }

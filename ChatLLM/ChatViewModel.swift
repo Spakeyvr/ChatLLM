@@ -1069,7 +1069,7 @@ final class ChatViewModel: ObservableObject {
                     upToOrderExclusive: order,
                     modelIdentity: manager.currentModel?.promptIdentity ?? "MLX model",
                     additionalInstruction: additionalUserInstruction,
-                    includeLatestUserImages: allowNativeImages,
+                    includeLatestUserImages: allowNativeImages && promptBridge.nativeImageInputAvailable,
                     maxMessages: webSearchAvailable ? 10 : nil,
                     toolsAvailable: webSearchAvailable,
                     forceWebSearch: resetState.forceSearchRequired
@@ -1097,7 +1097,8 @@ final class ChatViewModel: ObservableObject {
                 currentReasoningActive: resetState.target.isReasoningMode,
                 modelIdentity: ModelBackendBridge.Backend.foundationModels.displayName,
                 webSearchAvailable: webSearchAvailable,
-                forceWebSearchRequired: resetState.forceSearchRequired
+                forceWebSearchRequired: resetState.forceSearchRequired,
+                includeLatestUserImages: allowNativeImages && promptBridge.nativeImageInputAvailable
             )
             if let instruction = additionalUserInstruction, !instruction.isEmpty {
                 request.prompt += "\n\n" + instruction

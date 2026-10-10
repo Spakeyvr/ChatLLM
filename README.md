@@ -16,7 +16,7 @@ The app also includes optional web search with Tavily, image attachments, Vision
 - Per-chat backend/model selection before a conversation starts
 - Reasoning mode and smart reasoning support
 - Optional Tavily-powered web search for time-sensitive answers
-- Image attachments with Vision analysis fallback for OCR, objects, faces, barcodes, scene labels, and saliency
+- Image attachments sent natively to Apple Intelligence (when the system model reports vision support) and to multimodal MLX models, with a Vision analysis fallback for OCR, objects, faces, barcodes, scene labels, and saliency
 - Markdown and LaTeX rendering in assistant responses
 - SwiftData conversation persistence
 - Prompt presets, appearance settings, MLX tuning controls, and privacy controls
@@ -24,14 +24,14 @@ The app also includes optional web search with Tavily, image attachments, Vision
 
 ## Requirements
 
-- Xcode 26 or newer
-- iOS 26.0 SDK
+- Xcode 27 or newer
+- iOS 27.0 SDK
 - iPhone or iPad target
 - A physical device is recommended for real model testing
 
 Notes:
 
-- The project deployment target is `iOS 26.0`.
+- The project deployment target is `iOS 27.0`.
 - `FoundationModels` requires device support for Apple Intelligence.
 - MLX model downloads and execution are supported on Apple-silicon iPhone and iPad simulators as well as physical devices. A physical device is still recommended for representative memory and performance testing.
 

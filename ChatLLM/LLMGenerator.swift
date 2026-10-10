@@ -20,6 +20,8 @@ struct LLMRequest: Sendable, Equatable {
     var instructions: String = ""
     var history: [Turn] = []
     var prompt: String
+    /// Images attached to `prompt` and sent to the model as pixels.
+    var imageURLs: [URL] = []
 }
 
 protocol LLMGenerator {
@@ -79,18 +81,29 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         return LanguageModelSession(tools: tools, transcript: transcript)
     }
 
+    /// Images go before the text so the question reads as being about them.
+    static func makePrompt(for request: LLMRequest) -> Prompt {
+        Prompt {
+            request.imageURLs.enumerated().map { index, url in
+                Attachment(imageURL: url).label("image-\(index + 1)")
+            }
+            request.prompt
+        }
+    }
+
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: String(localized: "On‑device model unavailable on this device.", bundle: .appLocalized)])
         }
         let session = Self.makeSession(for: request, tools: tools)
+        let prompt = Self.makePrompt(for: request)
 
         return TaskBackedAsyncThrowingStream.make { continuation in
             Task {
                 do {
                     var lastYieldedUTF8Count = 0
-                    var iterator = session.streamResponse(to: request.prompt).makeAsyncIterator()
+                    var iterator = session.streamResponse(to: prompt).makeAsyncIterator()
                     while let partial = try await iterator.next() {
                         if Task.isCancelled {
                             continuation.finish()

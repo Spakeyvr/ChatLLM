@@ -2,8 +2,9 @@
 //  ChatViewModel+ImageAttachments.swift
 //  ChatLLM
 //
-//  Updated to use unified VisionAnalyzer with all Vision framework features
-//  and smarter prompt generation (no prompt bloat)
+//  Image turns keep the user's own words in `Message.text`. Vision analysis
+//  lives on the attachment and is only added to prompts for backends that
+//  cannot read the image itself.
 //
 
 import Foundation
@@ -14,10 +15,7 @@ import OSLog
 extension ChatViewModel {
 
     private var canUseNativeImageSupport: Bool {
-        let bridge = backendBridge
-        guard bridge.selectedBackend == .mlx else { return false }
-        guard let model = bridge.modelManager?.currentModel else { return false }
-        return model.supportsNativeImages
+        backendBridge.nativeImageInputAvailable
     }
 
     /// Send a user message with an image attachment
@@ -130,12 +128,6 @@ extension ChatViewModel {
                 detections: detections,
                 analysisResult: analysisResult ?? cachedAttachmentAnalysis
             )
-            let fallbackText = buildVisionEnhancedText(
-                userPrompt: userPrompt,
-                detections: detections,
-                analysisResult: resolvedAnalysis
-            )
-            userMsg.text = fallbackText
             storeImageAnalysis(
                 resolvedAnalysis,
                 detections: detections,
@@ -170,8 +162,9 @@ extension ChatViewModel {
         regenerateTitle: Bool = false,
         editedUserMessageID: UUID? = nil
     ) async {
-        let enhancedText = buildVisionEnhancedText(
-            userPrompt: userPrompt,
+        let resolvedAnalysis = await resolveVisionAnalysisResult(
+            canonicalImageURL: nil,
+            fallbackImage: image,
             detections: detections,
             analysisResult: analysisResult
         )
@@ -185,24 +178,34 @@ extension ChatViewModel {
 
         let userMsg: Message
         let needsAutoNaming: Bool
+        let isAttached: Bool
         if let existingUserMessage {
             userMsg = existingUserMessage
-            userMsg.text = enhancedText
             needsAutoNaming = existingNeedsAutoNaming ?? false
+            isAttached = false
         } else {
             guard let turn = prepareUserMessageForSend(
-                enhancedText,
+                userPrompt,
                 forceAutoNaming: regenerateTitle,
                 replacingMessageID: editedUserMessageID
             ) else { return }
             userMsg = turn.message
             needsAutoNaming = turn.needsAutoNaming
-            _ = await attachImage(
+            isAttached = await attachImage(
                 image,
-                detections: detections,
-                analysisResult: analysisResult,
+                detections: nil,
+                analysisResult: resolvedAnalysis,
                 to: userMsg
+            ) != nil
+        }
+        if !isAttached {
+            // Without an attachment the analysis has nowhere else to live.
+            userMsg.text = Self.visionEnhancedText(
+                userPrompt: userPrompt,
+                analysisResult: resolvedAnalysis
             )
+            conversation.lastUpdated = Date()
+            immediateSave()
         }
         guard isGenerationActive(generationID) else { return }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
@@ -294,58 +297,6 @@ extension ChatViewModel {
         }
 
         return try? await analyzer.analyze(image: fallbackImage, options: options)
-    }
-
-    private func buildVisionEnhancedText(
-        userPrompt: String,
-        detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?
-    ) -> String {
-        var imageContext = ""
-        if let result = analysisResult {
-            let detailedDescription = result.generateDetailedDescription()
-            if !detailedDescription.isEmpty && !result.isEmpty {
-                imageContext = detailedDescription
-            } else {
-                imageContext = """
-                [IMAGE ANALYSIS]
-
-                The Vision framework analyzed the image but found:
-                - No specific objects detected
-                - No text recognized (OCR found nothing)
-                - No faces detected
-
-                This could mean the image contains:
-                - Stylized or artistic text that OCR couldn't read
-                - Illustrations or artwork without clear objects
-                - Content with low contrast or unusual fonts
-
-                Please base your response on what the user is asking about.
-                """
-            }
-        } else if let detections, !detections.isEmpty {
-            let objectList = detections.prefix(10).map { $0.label }.joined(separator: ", ")
-            imageContext = "[IMAGE ANALYSIS]\n\nDETECTED OBJECTS:\n  \(objectList)"
-        } else {
-            imageContext = """
-            [IMAGE ANALYSIS]
-
-            An image was attached but the Vision framework couldn't process it.
-            This might be due to the image format or content type.
-
-            Please acknowledge that you can see an image was shared but cannot analyze its contents directly.
-            """
-        }
-
-        return """
-        --- Image Analysis Data ---
-        \(imageContext)
-        --- End Image Analysis ---
-
-        User's question: \(userPrompt)
-
-        Please respond based on the image analysis data above.
-        """
     }
 
     // MARK: - Private Helpers

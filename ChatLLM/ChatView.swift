@@ -80,8 +80,7 @@ struct ChatView: View {
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
     private var shouldPrecomputeVisionAnalysis: Bool {
-        guard modelBackendBridge.selectedBackend == .mlx else { return true }
-        return !(modelBackendBridge.modelManager?.currentModel?.supportsNativeImages ?? false)
+        !modelBackendBridge.nativeImageInputAvailable
     }
 
     private var webSearchToggleAvailable: Bool {
