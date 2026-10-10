@@ -12,6 +12,8 @@ import SwiftUI
 struct InlineThinkingView: View {
     var text: String = String(localized: "Thinking…", bundle: .appLocalized)
     let onTap: (() -> Void)?
+    /// Whether the shimmer plays. Stays on while reasoning streams, even once the label becomes tappable.
+    var isAnimating: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shimmerOffset: CGFloat = -0.4
 
@@ -19,14 +21,17 @@ struct InlineThinkingView: View {
         Group {
             if let onTap {
                 Button(action: onTap) {
-                    thinkingLabel(animatesGlow: false)
+                    thinkingLabel(animatesGlow: isAnimating)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("message.thought")
             } else {
-                thinkingLabel(animatesGlow: true)
+                // Same frame as the tappable branch so the label doesn't jump
+                // when the first reasoning token makes it tappable.
+                thinkingLabel(animatesGlow: isAnimating)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .accessibilityIdentifier("message.thought")
             }
         }

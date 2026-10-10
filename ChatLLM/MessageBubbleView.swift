@@ -223,7 +223,6 @@ struct LoadingIndicatorView: View {
 
     var body: some View {
         InlineThinkingView(text: isModelLoading ? Strings.loading : Strings.thinking, onTap: nil)
-            .padding(.vertical, 4)
             .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
@@ -405,7 +404,8 @@ struct ReasoningMessageBubble: View {
                 if let reasoningStatusText {
                     InlineThinkingView(
                         text: reasoningStatusText,
-                        onTap: hasReasoningContent ? { showReasoningSheet = true } : nil
+                        onTap: hasReasoningContent ? { showReasoningSheet = true } : nil,
+                        isAnimating: !hasCompletedReasoning
                     )
                 }
 
