@@ -55,7 +55,9 @@ struct InlineThinkingView: View {
                     // Derive the sweep from wall-clock time rather than view state, so the
                     // shimmer continues seamlessly when the label is rebuilt mid-stream
                     // (placeholder → reasoning bubble, plain → tappable).
-                    TimelineView(.animation) { context in
+                    // Capped at 30 fps: the sweep stays smooth without re-rendering on every
+                    // ProMotion frame while the main actor is busy streaming tokens.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                         let shimmerOffset = Self.shimmerOffset(at: context.date)
                         LinearGradient(
                             stops: [

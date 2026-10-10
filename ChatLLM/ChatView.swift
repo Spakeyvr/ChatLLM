@@ -23,7 +23,6 @@ struct ChatView: View {
     var onNewChat: (() -> Void)? = nil
 
     @State private var inputText: String = ""
-    @State private var contentOverflowsViewport = false
     @State private var composerFocusRequest = 0
     @State private var editingSession: MessageEditingSession?
     @State private var shareText: String = ""
@@ -59,7 +58,7 @@ struct ChatView: View {
 
     // Performance optimization states
     @State private var isViewAppearing = false
-    @State private var scrollProxy: ScrollViewProxy?
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
     // In-app browser state
     @State private var activeURL: URL?
@@ -121,6 +120,23 @@ struct ChatView: View {
         let previousInputText: String
     }
 
+    struct ScrollFollowState: Equatable {
+        static let nearBottomThreshold: CGFloat = 60
+
+        let contentHeight: CGFloat
+        let visibleHeight: CGFloat
+        let distanceFromBottom: CGFloat
+
+        var isNearBottom: Bool { distanceFromBottom <= Self.nearBottomThreshold }
+
+        /// Re-pin to the bottom when a size change (not the reader's own scrolling) moved the
+        /// bottom out of view while the reader was there.
+        func shouldFollow(from old: ScrollFollowState) -> Bool {
+            let sizeChanged = contentHeight != old.contentHeight || visibleHeight != old.visibleHeight
+            return sizeChanged && old.isNearBottom && !isNearBottom
+        }
+    }
+
     private struct MessageEditingCommit {
         let messageID: UUID?
         let requiresTitleRegeneration: Bool
@@ -136,83 +152,84 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        // Use ForEach with stable IDs for better performance
-                        ForEach(sortedMessages, id: \.id) { msg in
-                            MessageCellView(
-                                message: msg,
-                                viewModel: viewModel,
-                                onEdit: { message in
-                                    menuSafe {
-                                        guard !viewModel.isGenerating else { return }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    // Use ForEach with stable IDs for better performance
+                    ForEach(sortedMessages, id: \.id) { msg in
+                        MessageCellView(
+                            message: msg,
+                            viewModel: viewModel,
+                            onEdit: { message in
+                                menuSafe {
+                                    guard !viewModel.isGenerating else { return }
 
-                                        let previousInputText = editingSession?.previousInputText ?? inputText
-                                        editingSession = MessageEditingSession(
-                                            messageID: message.id,
-                                            messageOrder: message.order,
-                                            previousInputText: previousInputText
-                                        )
-                                        inputText = message.text
-                                        composerFocusRequest += 1
-                                    }
-                                },
-                                onShare: { text in
-                                    // Defer to allow context menu to dismiss cleanly
-                                    menuSafe {
-                                        shareText = text
-                                        isSharePresented = true
-                                    }
+                                    let previousInputText = editingSession?.previousInputText ?? inputText
+                                    editingSession = MessageEditingSession(
+                                        messageID: message.id,
+                                        messageOrder: message.order,
+                                        previousInputText: previousInputText
+                                    )
+                                    inputText = message.text
+                                    composerFocusRequest += 1
                                 }
-                            )
-                        }
+                            },
+                            onShare: { text in
+                                // Defer to allow context menu to dismiss cleanly
+                                menuSafe {
+                                    shareText = text
+                                    isSharePresented = true
+                                }
+                            }
+                        )
+                    }
 
-                        if viewModel.isGenerating,
-                           let streamingID = viewModel.streamingMessageID,
-                           !sortedMessages.contains(where: { $0.id == streamingID }) {
-                            LoadingIndicatorView(isModelLoading: modelBackendBridge.modelManager?.isLoading ?? false)
-                                .padding(.vertical, 8)
-                        }
-                    }
-                    .padding()
-                }
-                .scrollDismissesKeyboard(.interactively)
-                // Track whether the conversation is taller than the visible area. Scrolling a
-                // short conversation "to the bottom" pushes it past the top edge, and SwiftUI
-                // re-applies that offset on later layout changes (e.g. presenting a sheet).
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    let visibleHeight = geometry.containerSize.height
-                        - geometry.contentInsets.top
-                        - geometry.contentInsets.bottom
-                    return geometry.contentSize.height > visibleHeight
-                } action: { _, overflows in
-                    contentOverflowsViewport = overflows
-                    // A streaming reply just outgrew the screen: start following it.
-                    if overflows, viewModel.isGenerating {
-                        scrollToBottomIfNeeded(proxy: proxy, animated: true)
+                    if viewModel.isGenerating,
+                       let streamingID = viewModel.streamingMessageID,
+                       !sortedMessages.contains(where: { $0.id == streamingID }) {
+                        LoadingIndicatorView(isModelLoading: modelBackendBridge.modelManager?.isLoading ?? false)
+                            .padding(.vertical, 8)
                     }
                 }
-                .onAppear {
-                    Task { @MainActor in
-                        scrollProxy = proxy
-                        isViewAppearing = true
-                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                        if !Task.isCancelled {
-                            scrollToBottomIfNeeded(proxy: proxy, animated: false)
-                        }
+                .padding()
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .scrollPosition($scrollPosition)
+            // Short chats sit at the top edge; longer ones open at the latest message.
+            // Edge-based scrolling (unlike scrolling a message to the bottom anchor) never
+            // pushes short content past the top.
+            .defaultScrollAnchor(.top, for: .alignment)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // Follow a growing reply (or a shrinking viewport) only while the reader is already
+            // at the bottom; someone who scrolled up to read earlier messages stays put.
+            .onScrollGeometryChange(for: ScrollFollowState.self) { geometry in
+                ScrollFollowState(
+                    contentHeight: geometry.contentSize.height,
+                    visibleHeight: geometry.visibleRect.height,
+                    distanceFromBottom: geometry.contentSize.height - geometry.visibleRect.maxY
+                )
+            } action: { old, new in
+                if new.shouldFollow(from: old) {
+                    scrollPosition.scrollTo(edge: .bottom)
+                }
+            }
+            .onAppear {
+                Task { @MainActor in
+                    isViewAppearing = true
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                    if !Task.isCancelled {
+                        scrollToBottom(animated: false)
                     }
                 }
-                // Scroll when streaming message changes
-                .onChange(of: viewModel.streamingMessageID) { _, newID in
-                    guard let id = newID,
-                          sortedMessages.contains(where: { $0.id == id }) else { return }
-                    scrollToMessage(id: id, proxy: proxy, animated: true)
-                }
-                // Scroll when the last message ID changes (more precise than count)
-                .onChange(of: lastMessageID) { _, _ in
-                    scrollToBottomIfNeeded(proxy: proxy, animated: true)
-                }
+            }
+            // Scroll when streaming message changes
+            .onChange(of: viewModel.streamingMessageID) { _, newID in
+                guard let id = newID,
+                      sortedMessages.contains(where: { $0.id == id }) else { return }
+                scrollToBottom(animated: true)
+            }
+            // Scroll when the last message ID changes (more precise than count)
+            .onChange(of: lastMessageID) { _, _ in
+                scrollToBottom(animated: true)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -346,8 +363,8 @@ struct ChatView: View {
             case .background:
                 break
             case .active:
-                if isViewAppearing, let proxy = scrollProxy {
-                    scrollToBottomIfNeeded(proxy: proxy, animated: false)
+                if isViewAppearing {
+                    scrollToBottom(animated: false)
                 }
             default:
                 break
@@ -526,21 +543,15 @@ struct ChatView: View {
         )
     }
 
-    private func scrollToMessage(id: UUID, proxy: ScrollViewProxy, animated: Bool) {
-        guard contentOverflowsViewport,
-              sortedMessages.contains(where: { $0.id == id }) else { return }
+    private func scrollToBottom(animated: Bool) {
+        guard !sortedMessages.isEmpty else { return }
         if animated {
             withAnimation(.easeInOut(duration: 0.25)) {
-                proxy.scrollTo(id, anchor: UnitPoint.bottom)
+                scrollPosition.scrollTo(edge: .bottom)
             }
         } else {
-            proxy.scrollTo(id, anchor: UnitPoint.bottom)
+            scrollPosition.scrollTo(edge: .bottom)
         }
-    }
-
-    private func scrollToBottomIfNeeded(proxy: ScrollViewProxy, animated: Bool) {
-        guard let lastMessage = sortedMessages.last else { return }
-        scrollToMessage(id: lastMessage.id, proxy: proxy, animated: animated)
     }
 
     @MainActor

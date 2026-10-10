@@ -254,8 +254,6 @@ struct StandardMessageBubble: View {
 
     var isUser: Bool { message.role == .user }
     var isSystem: Bool { message.role == .system }
-    // Assistant replies render as plain text on the chat background, without a bubble.
-    var isAssistant: Bool { message.role == .assistant }
 
     private var isStreaming: Bool {
         viewModel.isGenerating && viewModel.streamingMessageID == message.id
@@ -295,20 +293,7 @@ struct StandardMessageBubble: View {
                 }
 
             }
-            .padding(.horizontal, isAssistant ? 0 : 16)
-            .padding(.vertical, isAssistant ? 0 : 11)
-            .background {
-                if isUser {
-                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.bubble, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemBackground))
-                } else if isSystem {
-                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemBackground))
-                }
-            }
-            // Keep a gutter on the leading side so user bubbles never span the full width.
-            .padding(.leading, isUser ? 32 : 0)
-            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            .modifier(ChatBubbleStyle(role: message.role))
 
         }
     }
@@ -374,16 +359,26 @@ struct ReasoningMessageBubble: View {
         )
     }
 
+    /// Reasoning is complete once the model has moved on to (or finished) the answer.
+    static func hasCompletedReasoning(_ message: Message, hasReasoningContent: Bool) -> Bool {
+        hasReasoningContent && (
+            message.isFinal ||
+            message.reasoningCompletedAt != nil ||
+            message.streamingReasoningPhase == .finalAnswer
+        )
+    }
+
+    /// The thinking shimmer plays only while reasoning is still streaming.
+    static func thinkingIndicatorAnimates(for message: Message, hasReasoningContent: Bool) -> Bool {
+        !hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
+    }
+
     var body: some View {
         // Parse once per body pass; every access rescans the full message text.
         let parsed = parsedContent
         let reasoningText = parsed.reasoning
         let hasReasoningContent = !(reasoningText?.isEmpty ?? true)
-        let hasCompletedReasoning = hasReasoningContent && (
-            message.isFinal ||
-            message.reasoningCompletedAt != nil ||
-            message.streamingReasoningPhase == .finalAnswer
-        )
+        let hasCompletedReasoning = Self.hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
         let reasoningStatusText: String? = {
             if hasCompletedReasoning {
                 if let duration = message.reasoningDuration ?? message.generationDuration {
@@ -405,7 +400,7 @@ struct ReasoningMessageBubble: View {
                     InlineThinkingView(
                         text: reasoningStatusText,
                         onTap: hasReasoningContent ? { showReasoningSheet = true } : nil,
-                        isAnimating: !hasCompletedReasoning
+                        isAnimating: Self.thinkingIndicatorAnimates(for: message, hasReasoningContent: hasReasoningContent)
                     )
                 }
 
@@ -440,6 +435,37 @@ struct ReasoningMessageBubble: View {
                 reasoning: reasoningText ?? "",
                 searchInvocations: message.searchInvocations
             )
+        }
+    }
+}
+
+// MARK: - Bubble chrome
+
+/// Shared bubble chrome, so the Appearance preview stays in sync with the chat.
+struct ChatBubbleStyle: ViewModifier {
+    let role: MessageRole
+    var fill = Color(uiColor: .secondarySystemBackground)
+
+    func body(content: Content) -> some View {
+        if role.isAssistant {
+            // Assistant replies render as plain text on the chat background, without a bubble.
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            let isUser = role == .user
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background(
+                    fill,
+                    in: .rect(
+                        cornerRadius: isUser ? DesignTokens.CornerRadius.bubble : DesignTokens.CornerRadius.medium,
+                        style: .continuous
+                    )
+                )
+                // Keep a gutter on the leading side so user bubbles never span the full width.
+                .padding(.leading, isUser ? 32 : 0)
+                .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         }
     }
 }

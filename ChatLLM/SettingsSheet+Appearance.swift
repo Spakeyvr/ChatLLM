@@ -29,18 +29,10 @@ struct AppearanceSettingsView: View {
             }
             Section("Message Preview") {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Mirrors StandardMessageBubble: neutral user bubble, plain assistant text.
                     Text("How can I make my day a little simpler?")
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 11)
-                        .background(
-                            Self.chatColor(.secondarySystemBackground),
-                            in: .rect(cornerRadius: DesignTokens.CornerRadius.bubble, style: .continuous)
-                        )
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.leading, 32)
+                        .modifier(ChatBubbleStyle(role: .user, fill: Self.chatColor(.secondarySystemBackground)))
                     Text("Start with one thing that matters. Break it into small steps, and take them one at a time.")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .modifier(ChatBubbleStyle(role: .assistant))
                 }
                 .font(.system(size: settings.messageFontSize))
                 .padding(.vertical, 8)
