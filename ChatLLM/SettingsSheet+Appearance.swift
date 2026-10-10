@@ -34,7 +34,7 @@ struct AppearanceSettingsView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
                         .background(
-                            Color(uiColor: .secondarySystemBackground),
+                            Self.chatColor(.secondarySystemBackground),
                             in: .rect(cornerRadius: DesignTokens.CornerRadius.bubble, style: .continuous)
                         )
                         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -46,7 +46,7 @@ struct AppearanceSettingsView: View {
                 .padding(.vertical, 8)
                 .accessibilityIdentifier("settings.messagePreview")
                 // Use the chat background so the bubble contrasts the same way it does in a conversation.
-                .listRowBackground(Color(uiColor: .systemBackground))
+                .listRowBackground(Self.chatColor(.systemBackground))
             }
             Section {
                 LabeledContent("Message Text Size", value: String(localized: "\(Int(settings.messageFontSize)) pt", bundle: .appLocalized))
@@ -67,5 +67,13 @@ struct AppearanceSettingsView: View {
         }
         .navigationTitle(String(localized: "Appearance", bundle: .appLocalized, locale: locale))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Resolves a system color at the base interface level. Settings is a sheet, where
+    /// system colors switch to their elevated (lighter) variants; the chat itself is not.
+    private static func chatColor(_ color: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            color.resolvedColor(with: traits.modifyingTraits { $0.userInterfaceLevel = .base })
+        })
     }
 }
