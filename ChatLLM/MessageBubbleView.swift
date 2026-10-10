@@ -196,7 +196,6 @@ struct MessageCellView: View {
                         showDeveloperSheet = true
                     }
                 )
-                .padding(.leading, 12)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 .animation(.easeInOut(duration: 0.2), value: message.isFinal)
             }
@@ -256,6 +255,8 @@ struct StandardMessageBubble: View {
 
     var isUser: Bool { message.role == .user }
     var isSystem: Bool { message.role == .system }
+    // Assistant replies render as plain text on the chat background, without a bubble.
+    var isAssistant: Bool { message.role == .assistant }
 
     private var isStreaming: Bool {
         viewModel.isGenerating && viewModel.streamingMessageID == message.id
@@ -295,25 +296,19 @@ struct StandardMessageBubble: View {
                 }
 
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(alignment: .center) {
+            .padding(.horizontal, isAssistant ? 0 : 16)
+            .padding(.vertical, isAssistant ? 0 : 11)
+            .background {
                 if isUser {
-                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                        .fill(Color.blue.opacity(0.15))
-                } else {
-                    RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                        .fill(Color.clear)
-                        .background(
-                            .ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                        )
+                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.bubble, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemBackground))
+                } else if isSystem {
+                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemBackground))
                 }
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                    .strokeBorder(Color.secondary.opacity(0.12))
-            )
+            // Keep a gutter on the leading side so user bubbles never span the full width.
+            .padding(.leading, isUser ? 32 : 0)
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
 
         }
@@ -433,21 +428,7 @@ struct ReasoningMessageBubble: View {
                         }
 
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            .fill(Color.clear)
-                            .background(
-                                .ultraThinMaterial,
-                                in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.12))
-                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -996,7 +977,7 @@ struct AssistantActionsBar: View {
     @State private var showSources = false
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 22) {
             // Stop button removed from here; lives in the composer now.
 
             Group {
@@ -1041,8 +1022,8 @@ struct AssistantActionsBar: View {
 
             Spacer()
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
+        .font(.body)
+        .foregroundStyle(.primary)
         .opacity(isVisible ? 1.0 : 0.0)
         .animation(.easeInOut(duration: 0.3), value: isVisible)
         .onAppear {
