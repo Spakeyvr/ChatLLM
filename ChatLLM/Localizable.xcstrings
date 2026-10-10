@@ -4827,28 +4827,6 @@
         }
       }
     },
-    "Reasoning (Always On)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nachdenken (immer aktiv)"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reasoning (Always On)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Razonamiento (siempre activo)"
-          }
-        }
-      }
-    },
     "Reasoning by Default" : {
       "localizations" : {
         "de" : {

@@ -212,6 +212,50 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testShortChatStaysBelowTheTopEdgeAfterPresentingASheet() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo"
+        ]
+        app.launch()
+
+        let question = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "What changed in SwiftUI web views"))
+            .firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 5))
+        XCTAssertTrue(question.isHittable)
+
+        // Presenting and dismissing a sheet must not re-apply a scroll that hides the first message.
+        let thoughtSummary = app.buttons["message.thought"]
+        XCTAssertTrue(thoughtSummary.waitForExistence(timeout: 5))
+        thoughtSummary.tap()
+        let reasoningNavigationBar = app.navigationBars["Reasoning"]
+        XCTAssertTrue(reasoningNavigationBar.waitForExistence(timeout: 5))
+        let start = reasoningNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(reasoningNavigationBar.waitForNonExistence(timeout: 5))
+
+        XCTAssertTrue(question.isHittable)
+    }
+
+    @MainActor
+    func testLongChatOpensAtTheLatestMessage() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-long-chat"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["message.sources"].isHittable)
+        XCTAssertFalse(app.staticTexts["Earlier message 1"].isHittable)
+    }
+
+    @MainActor
     func testReasoningSheetRendersContentExposedByExpansion() throws {
         let app = XCUIApplication()
         app.launchArguments += [

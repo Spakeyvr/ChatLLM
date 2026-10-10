@@ -196,7 +196,6 @@ struct MessageCellView: View {
                         showDeveloperSheet = true
                     }
                 )
-                .padding(.leading, 12)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 .animation(.easeInOut(duration: 0.2), value: message.isFinal)
             }
@@ -224,7 +223,6 @@ struct LoadingIndicatorView: View {
 
     var body: some View {
         InlineThinkingView(text: isModelLoading ? Strings.loading : Strings.thinking, onTap: nil)
-            .padding(.vertical, 4)
             .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
@@ -295,26 +293,7 @@ struct StandardMessageBubble: View {
                 }
 
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(alignment: .center) {
-                if isUser {
-                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                        .fill(Color.blue.opacity(0.15))
-                } else {
-                    RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                        .fill(Color.clear)
-                        .background(
-                            .ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                        )
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: isSystem ? DesignTokens.CornerRadius.medium : DesignTokens.CornerRadius.large, style: .continuous)
-                    .strokeBorder(Color.secondary.opacity(0.12))
-            )
-            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            .modifier(ChatBubbleStyle(role: message.role))
 
         }
     }
@@ -380,16 +359,26 @@ struct ReasoningMessageBubble: View {
         )
     }
 
+    /// Reasoning is complete once the model has moved on to (or finished) the answer.
+    static func hasCompletedReasoning(_ message: Message, hasReasoningContent: Bool) -> Bool {
+        hasReasoningContent && (
+            message.isFinal ||
+            message.reasoningCompletedAt != nil ||
+            message.streamingReasoningPhase == .finalAnswer
+        )
+    }
+
+    /// The thinking shimmer plays only while reasoning is still streaming.
+    static func thinkingIndicatorAnimates(for message: Message, hasReasoningContent: Bool) -> Bool {
+        !hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
+    }
+
     var body: some View {
         // Parse once per body pass; every access rescans the full message text.
         let parsed = parsedContent
         let reasoningText = parsed.reasoning
         let hasReasoningContent = !(reasoningText?.isEmpty ?? true)
-        let hasCompletedReasoning = hasReasoningContent && (
-            message.isFinal ||
-            message.reasoningCompletedAt != nil ||
-            message.streamingReasoningPhase == .finalAnswer
-        )
+        let hasCompletedReasoning = Self.hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
         let reasoningStatusText: String? = {
             if hasCompletedReasoning {
                 if let duration = message.reasoningDuration ?? message.generationDuration {
@@ -410,7 +399,8 @@ struct ReasoningMessageBubble: View {
                 if let reasoningStatusText {
                     InlineThinkingView(
                         text: reasoningStatusText,
-                        onTap: hasReasoningContent ? { showReasoningSheet = true } : nil
+                        onTap: hasReasoningContent ? { showReasoningSheet = true } : nil,
+                        isAnimating: Self.thinkingIndicatorAnimates(for: message, hasReasoningContent: hasReasoningContent)
                     )
                 }
 
@@ -433,21 +423,7 @@ struct ReasoningMessageBubble: View {
                         }
 
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            .fill(Color.clear)
-                            .background(
-                                .ultraThinMaterial,
-                                in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.12))
-                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -459,6 +435,37 @@ struct ReasoningMessageBubble: View {
                 reasoning: reasoningText ?? "",
                 searchInvocations: message.searchInvocations
             )
+        }
+    }
+}
+
+// MARK: - Bubble chrome
+
+/// Shared bubble chrome, so the Appearance preview stays in sync with the chat.
+struct ChatBubbleStyle: ViewModifier {
+    let role: MessageRole
+    var fill = Color(uiColor: .secondarySystemBackground)
+
+    func body(content: Content) -> some View {
+        if role.isAssistant {
+            // Assistant replies render as plain text on the chat background, without a bubble.
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            let isUser = role == .user
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background(
+                    fill,
+                    in: .rect(
+                        cornerRadius: isUser ? DesignTokens.CornerRadius.bubble : DesignTokens.CornerRadius.medium,
+                        style: .continuous
+                    )
+                )
+                // Keep a gutter on the leading side so user bubbles never span the full width.
+                .padding(.leading, isUser ? 32 : 0)
+                .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         }
     }
 }
@@ -996,7 +1003,7 @@ struct AssistantActionsBar: View {
     @State private var showSources = false
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 22) {
             // Stop button removed from here; lives in the composer now.
 
             Group {
@@ -1041,8 +1048,11 @@ struct AssistantActionsBar: View {
 
             Spacer()
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
+        // Fixed row height keeps the gap below the reply the same whether or not
+        // the (taller) Sources button is present.
+        .frame(minHeight: 36)
+        .font(.body)
+        .foregroundStyle(.primary)
         .opacity(isVisible ? 1.0 : 0.0)
         .animation(.easeInOut(duration: 0.3), value: isVisible)
         .onAppear {

@@ -229,17 +229,29 @@ struct ContentView: View {
             : "I need current platform information, so I should check primary sources.\n\n</think>\n\nThe first search gives the broad release context. A second, narrower query can confirm the exact SwiftUI API.\n\n</think>"
 
         let conversation = Conversation(title: "Web Search Preview", reasoningMode: true)
+        // Earlier exchanges that make the conversation taller than the screen.
+        let fillerMessages: [Message] = arguments.contains("-ui-test-long-chat")
+            ? (0..<24).map { index in
+                Message(
+                    role: index.isMultiple(of: 2) ? .user : .assistant,
+                    text: "Earlier message \(index + 1)",
+                    order: index,
+                    conversation: conversation,
+                    isFinal: true
+                )
+            }
+            : []
         let userMessage = Message(
             role: .user,
             text: "What changed in SwiftUI web views this year?",
-            order: 0,
+            order: fillerMessages.count,
             conversation: conversation,
             isFinal: true
         )
         let assistantMessage = Message(
             role: .assistant,
             text: "",
-            order: 1,
+            order: fillerMessages.count + 1,
             conversation: conversation,
             isFinal: true,
             reasoning: includesReasoning
@@ -319,7 +331,7 @@ struct ContentView: View {
                 completedAt: now.addingTimeInterval(-0.24)
             )
         ]
-        conversation.messages = [userMessage, assistantMessage]
+        conversation.messages = fillerMessages + [userMessage, assistantMessage]
         modelContext.insert(conversation)
         if arguments.contains("-ui-test-second-chat") {
             seedSecondChatFixture()

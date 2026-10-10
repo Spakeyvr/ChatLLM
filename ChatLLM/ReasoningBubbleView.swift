@@ -12,24 +12,37 @@ import SwiftUI
 struct InlineThinkingView: View {
     var text: String = String(localized: "Thinking…", bundle: .appLocalized)
     let onTap: (() -> Void)?
+    /// Whether the shimmer plays. Stays on while reasoning streams, even once the label becomes tappable.
+    var isAnimating: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shimmerOffset: CGFloat = -0.4
+
+    private static let shimmerPeriod: TimeInterval = 1.6
 
     var body: some View {
         Group {
             if let onTap {
                 Button(action: onTap) {
-                    thinkingLabel(animatesGlow: false)
+                    thinkingLabel(animatesGlow: isAnimating)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("message.thought")
             } else {
-                thinkingLabel(animatesGlow: true)
+                // Same frame as the tappable branch so the label doesn't jump
+                // when the first reasoning token makes it tappable.
+                thinkingLabel(animatesGlow: isAnimating)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .accessibilityIdentifier("message.thought")
             }
         }
+    }
+
+    /// Sweeps from -0.4 to 1.4 once per period, phase-locked to the clock.
+    static func shimmerOffset(at date: Date) -> CGFloat {
+        let phase = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: shimmerPeriod) / shimmerPeriod
+        return -0.4 + 1.8 * CGFloat(phase)
     }
 
     @ViewBuilder
@@ -39,28 +52,29 @@ struct InlineThinkingView: View {
             .foregroundStyle(.secondary)
             .overlay {
                 if animatesGlow && !reduceMotion {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .white.opacity(0.85), location: 0.5),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
-                        endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
-                    )
+                    // Derive the sweep from wall-clock time rather than view state, so the
+                    // shimmer continues seamlessly when the label is rebuilt mid-stream
+                    // (placeholder → reasoning bubble, plain → tappable).
+                    // Capped at 30 fps: the sweep stays smooth without re-rendering on every
+                    // ProMotion frame while the main actor is busy streaming tokens.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        let shimmerOffset = Self.shimmerOffset(at: context.date)
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0),
+                                .init(color: .white.opacity(0.85), location: 0.5),
+                                .init(color: .clear, location: 1),
+                            ],
+                            startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
+                            endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
+                        )
+                    }
                     .mask {
                         Text(text)
                             .font(.subheadline)
                     }
                     .blendMode(.plusLighter)
                     .accessibilityHidden(true)
-                }
-            }
-            .onAppear {
-                guard animatesGlow, !reduceMotion else { return }
-                shimmerOffset = -0.4
-                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                    shimmerOffset = 1.4
                 }
             }
     }
