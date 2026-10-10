@@ -23,6 +23,7 @@ struct ChatView: View {
     var onNewChat: (() -> Void)? = nil
 
     @State private var inputText: String = ""
+    @State private var contentOverflowsViewport = false
     @State private var composerFocusRequest = 0
     @State private var editingSession: MessageEditingSession?
     @State private var shareText: String = ""
@@ -177,6 +178,21 @@ struct ChatView: View {
                     .padding()
                 }
                 .scrollDismissesKeyboard(.interactively)
+                // Track whether the conversation is taller than the visible area. Scrolling a
+                // short conversation "to the bottom" pushes it past the top edge, and SwiftUI
+                // re-applies that offset on later layout changes (e.g. presenting a sheet).
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    let visibleHeight = geometry.containerSize.height
+                        - geometry.contentInsets.top
+                        - geometry.contentInsets.bottom
+                    return geometry.contentSize.height > visibleHeight
+                } action: { _, overflows in
+                    contentOverflowsViewport = overflows
+                    // A streaming reply just outgrew the screen: start following it.
+                    if overflows, viewModel.isGenerating {
+                        scrollToBottomIfNeeded(proxy: proxy, animated: true)
+                    }
+                }
                 .onAppear {
                     Task { @MainActor in
                         scrollProxy = proxy
@@ -511,7 +527,8 @@ struct ChatView: View {
     }
 
     private func scrollToMessage(id: UUID, proxy: ScrollViewProxy, animated: Bool) {
-        guard sortedMessages.contains(where: { $0.id == id }) else { return }
+        guard contentOverflowsViewport,
+              sortedMessages.contains(where: { $0.id == id }) else { return }
         if animated {
             withAnimation(.easeInOut(duration: 0.25)) {
                 proxy.scrollTo(id, anchor: UnitPoint.bottom)
