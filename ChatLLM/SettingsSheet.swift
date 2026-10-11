@@ -33,7 +33,7 @@ struct SettingsSheet: View {
                 NavigationLink(value: Destination.webSearch) {
                     SettingsRow("Web Search", systemImage: "globe", color: .blue,
                                 value: settings.tavilyApiKey.isEmpty
-                                    ? String(localized: "Set Up", bundle: .appLocalized) : String(localized: "Configured", bundle: .appLocalized))
+                                    ? String(localized: "Set Up", bundle: .appLocalized) : nil)
                 }
                 .accessibilityIdentifier("settings.webSearch")
             }

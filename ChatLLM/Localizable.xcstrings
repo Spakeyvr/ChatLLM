@@ -1439,28 +1439,6 @@
         }
       }
     },
-    "Configured" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eingerichtet"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Configured"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Configurado"
-          }
-        }
-      }
-    },
     "Connect Tavily to search the web in conversations. Your API key is stored securely in the device’s Keychain." : {
       "localizations" : {
         "de" : {
