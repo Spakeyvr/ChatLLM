@@ -24,6 +24,12 @@ extension MLXModelManager {
     }
     nonisolated internal static let maxToolInvocationsPerResponse = 6
 
+    /// Tool calls past `maxToolInvocationsPerResponse` get one shutdown notice;
+    /// a model that keeps calling after it ends the response instead of looping.
+    nonisolated internal static func shouldEndToolLoop(afterInvocationCount count: Int) -> Bool {
+        count > maxToolInvocationsPerResponse + 1
+    }
+
     nonisolated internal static func shouldDisableTools(after toolResult: String) -> Bool {
         AppWebSearchToolBridge.isSearchLimitToolResponse(toolResult)
     }
@@ -53,8 +59,68 @@ extension MLXModelManager {
         model.id.hasPrefix("qwen3.5-")
     }
 
+    /// LFM2.5's template prepends BOS and re-emits the "List of tools" system
+    /// block on every render, so a persistent session that appends only the
+    /// tool turn injects both mid-conversation. Rebuilding from explicit history
+    /// renders each tool round exactly as the model was trained on.
+    nonisolated internal static func usesLFMToolTurns(for model: MLXModelInfo) -> Bool {
+        model.id.hasPrefix("lfm2.5-")
+    }
+
     nonisolated internal static func requiresExplicitMessageHistoryForToolLoop(for model: MLXModelInfo) -> Bool {
-        prefersUserWrappedToolResponses(for: model)
+        prefersUserWrappedToolResponses(for: model) || usesLFMToolTurns(for: model)
+    }
+
+    /// The assistant turn that issued `toolCall`, as LFM2.5's chat template renders
+    /// it: `<think>…</think>`, any content, then the Pythonic call. Thinking after
+    /// the last user turn is kept by the template, so the model sees its own
+    /// reasoning and query when it reads the result. `nil` for models whose tool
+    /// loop does not replay the assistant turn.
+    nonisolated internal static func assistantToolCallTurnContent(
+        for model: MLXModelInfo,
+        generatedText: String,
+        toolCall: MLXToolCall
+    ) -> String? {
+        guard usesLFMToolTurns(for: model) else { return nil }
+        // The generation prompt already opened `<think>`; a call made before the
+        // model closed it is normalized to the template's closed form.
+        let thinking = generatedText.contains("</think>")
+            ? generatedText
+            : generatedText.trimmingCharacters(in: .whitespacesAndNewlines) + "</think>"
+        return "<think>" + thinking + lfmToolCallMarkup(for: toolCall)
+    }
+
+    /// Mirrors `render_tool_calls` and `format_arg_value` in the LFM2.5 template.
+    nonisolated internal static func lfmToolCallMarkup(for toolCall: MLXToolCall) -> String {
+        let arguments = toolCall.function.arguments
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(lfmArgumentLiteral($0.value))" }
+            .joined(separator: ", ")
+        return "<|tool_call_start|>[\(toolCall.function.name)(\(arguments))]<|tool_call_end|>"
+    }
+
+    nonisolated private static func lfmArgumentLiteral(_ value: JSONValue) -> String {
+        switch value {
+        case .string(let string):
+            let escaped = string
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "\\r")
+            return "'\(escaped)'"
+        case .null:
+            return "None"
+        case .bool(let bool):
+            return bool ? "True" : "False"
+        case .int(let int):
+            return String(int)
+        case .double(let double):
+            return String(double)
+        case .array, .object:
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        }
     }
 
     func applyPreferredToolCallFormatIfNeeded(

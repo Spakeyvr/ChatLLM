@@ -28,28 +28,66 @@ public struct PythonicToolCallParser: ToolCallParser, Sendable {
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Pattern: [function_name(args...)] or function_name(args...)
-        // Also handle multiple calls: [func1(args), func2(args)]
-        let pattern = #"\[?(\w+)\((.*?)\)\]?"#
+        // Also handle multiple calls: [func1(args), func2(args)] (the first is returned)
+        let pattern = #"\[?(\w+)\("#
 
         guard
-            let regex = try? NSRegularExpression(
-                pattern: pattern, options: [.dotMatchesLineSeparators]),
+            let regex = try? NSRegularExpression(pattern: pattern, options: []),
             let match = regex.firstMatch(
                 in: text, options: [], range: NSRange(text.startIndex..., in: text))
         else { return nil }
 
         // Extract function name
-        guard let nameRange = Range(match.range(at: 1), in: text) else { return nil }
+        guard let nameRange = Range(match.range(at: 1), in: text),
+            let openRange = Range(match.range(at: 0), in: text)
+        else { return nil }
         let funcName = String(text[nameRange])
 
-        // Extract arguments string
-        guard let argsRange = Range(match.range(at: 2), in: text) else { return nil }
-        let argsString = String(text[argsRange])
+        // Extract arguments string up to the matching close parenthesis. A lazy
+        // regex stops at the first ")" even inside a quoted value such as
+        // query='iPhone 17 (2025) price'.
+        guard let argsEnd = Self.closingParenthesis(in: text, from: openRange.upperBound)
+        else { return nil }
+        let argsString = String(text[openRange.upperBound ..< argsEnd])
 
         // Parse arguments
         let arguments = parseArguments(argsString, funcName: funcName, tools: tools)
 
         return ToolCall(function: .init(name: funcName, arguments: arguments))
+    }
+
+    /// Index of the ")" closing the call whose arguments start at `start`, skipping
+    /// parentheses inside quoted strings and nested brackets.
+    private static func closingParenthesis(in text: String, from start: String.Index)
+        -> String.Index?
+    {
+        var depth = 0
+        var quote: Character?
+        var isEscaped = false
+        var index = start
+        while index < text.endIndex {
+            let character = text[index]
+            if let activeQuote = quote {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if character == "(" || character == "[" || character == "{" {
+                depth += 1
+            } else if character == ")" || character == "]" || character == "}" {
+                if depth == 0 {
+                    return character == ")" ? index : nil
+                }
+                depth -= 1
+            }
+            index = text.index(after: index)
+        }
+        return nil
     }
 
     /// Parse Pythonic keyword arguments: arg1='value1', arg2="value2", arg3=123

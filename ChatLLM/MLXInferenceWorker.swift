@@ -440,6 +440,16 @@ actor MLXInferenceWorker {
                 var completionInfo: GenerateCompletionInfo?
                 var emittedToolCall: MLXToolCall?
                 var chunkEventCount = 0
+                // Text this stream produced, replayed into the assistant turn
+                // when the iteration ends in a tool call.
+                var iterationVisibleText = ""
+                // Each post-tool iteration reopens `<think>` in the prompt; keep
+                // its reasoning a separate paragraph so it does not run into the
+                // previous step and search results anchor between the two.
+                var pendingSeparator = Self.iterationSeparator(
+                    afterVisibleText: assistantVisibleText,
+                    streamIteration: streamIteration
+                )
 
                 let generations = if let preparedInput {
                     session.streamDetails(prepared: preparedInput)
@@ -466,14 +476,17 @@ actor MLXInferenceWorker {
                             MLXMemoryDiagnostics.log(
                                 self.logger, "decode", "chunks=\(chunkEventCount)")
                         }
-                        if let outputFilter {
-                            if let visibleChunk = await outputFilter.consume(text), !visibleChunk.isEmpty {
-                                assistantVisibleText += visibleChunk
-                                onToken(visibleChunk)
-                            }
-                        } else if !text.isEmpty {
-                            assistantVisibleText += text
-                            onToken(text)
+                        let visibleChunk: String? = if let outputFilter {
+                            await outputFilter.consume(text)
+                        } else {
+                            text
+                        }
+                        if let visibleChunk, !visibleChunk.isEmpty {
+                            iterationVisibleText += visibleChunk
+                            let emitted = (pendingSeparator ?? "") + visibleChunk
+                            pendingSeparator = nil
+                            assistantVisibleText += emitted
+                            onToken(emitted)
                         }
                     case .toolCall(let toolCall):
                         emittedToolCall = toolCall
@@ -498,8 +511,11 @@ actor MLXInferenceWorker {
                     if firstTokenAt == nil {
                         firstTokenAt = Date()
                     }
-                    assistantVisibleText += trailingText
-                    onToken(trailingText)
+                    iterationVisibleText += trailingText
+                    let emitted = (pendingSeparator ?? "") + trailingText
+                    pendingSeparator = nil
+                    assistantVisibleText += emitted
+                    onToken(emitted)
                 }
 
                 if let completionInfo {
@@ -531,6 +547,12 @@ actor MLXInferenceWorker {
                 }
 
                 let invocationCount = await toolInvocationState.increment()
+                if MLXModelManager.shouldEndToolLoop(afterInvocationCount: invocationCount) {
+                    self.logger.error(
+                        "MLX ending response: model kept calling tools after shutdown notice count=\(invocationCount, privacy: .public)"
+                    )
+                    break
+                }
                 let toolResult: String
                 if invocationCount > MLXModelManager.maxToolInvocationsPerResponse {
                     self.logger.error(
@@ -571,6 +593,13 @@ actor MLXInferenceWorker {
                         videos: activePromptVideos
                     )
                 )
+                if let assistantTurn = MLXModelManager.assistantToolCallTurnContent(
+                    for: loadedModel.model,
+                    generatedText: iterationVisibleText,
+                    toolCall: emittedToolCall
+                ) {
+                    explicitMessageHistory.append(.assistant(assistantTurn))
+                }
 
                 activePromptContent = MLXModelManager.toolResponsePromptContent(
                     for: loadedModel.model,
@@ -666,6 +695,16 @@ actor MLXInferenceWorker {
                 timeToFirstToken: timeToFirstToken
             )
         )
+    }
+
+    nonisolated static func iterationSeparator(
+        afterVisibleText visibleText: String,
+        streamIteration: Int
+    ) -> String? {
+        guard streamIteration > 1,
+              !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !visibleText.hasSuffix("\n\n") else { return nil }
+        return visibleText.hasSuffix("\n") ? "\n" : "\n\n"
     }
 
     nonisolated static func generationStateIsCurrent(

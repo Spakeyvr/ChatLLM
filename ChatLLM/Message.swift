@@ -422,6 +422,15 @@ extension Message {
         reasoningCompletedAt = completedAt
     }
 
+    /// A tool call means the model is still working: a `</think>` before the call
+    /// does not end reasoning, so reopen it until text after a later close arrives.
+    func reopenReasoningForToolCall(closeTagCount: Int) {
+        guard isReasoningMode else { return }
+        streamingReasoningPhase = .postToolReasoning
+        postToolReasoningStartCloseTagCount = closeTagCount
+        reasoningCompletedAt = nil
+    }
+
     func completeGenerationCapture(
         rawText: String,
         captureRawText: Bool,
@@ -534,11 +543,13 @@ enum ThoughtDurationFormatter {
 
 enum ReasoningTextSanitizer {
     nonisolated static func string(from text: String) -> String {
+        // Tags separate reasoning passes around tool calls, so they become
+        // paragraph breaks; dropping them would fuse two steps into one.
         let stripped = text
-            .replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "<thinking>", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "</thinking>", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "<think>", with: "\n\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "</think>", with: "\n\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "<thinking>", with: "\n\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "</thinking>", with: "\n\n", options: .caseInsensitive)
         return stripped
             .replacingOccurrences(
                 of: #"\n[ \t]*\n(?:[ \t]*\n)+"#,

@@ -1280,11 +1280,14 @@ final class ChatViewModel: ObservableObject {
                 case .toolCall:
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }),
                        liveTarget.isReasoningMode {
-                        liveTarget.streamingReasoningPhase = .postToolReasoning
-                        liveTarget.postToolReasoningStartCloseTagCount = Self.reasoningCloseTagCount(
-                            in: result.cumulativeText
+                        liveTarget.reopenReasoningForToolCall(
+                            closeTagCount: Self.reasoningCloseTagCount(in: result.cumulativeText)
                         )
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
+                        // Text between `</think>` and the call was shown as a provisional
+                        // answer; re-render now so it moves back into reasoning.
+                        updateMessageWithReasoningContent(liveTarget, fullText: result.cumulativeText)
+                        lastModelWrite = Date()
                     }
                 case .searchActivityChanged:
                     updateStreamingActivity()

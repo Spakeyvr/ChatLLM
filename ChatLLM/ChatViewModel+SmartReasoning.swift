@@ -334,15 +334,23 @@ extension ChatViewModel {
                 }
             }
 
+            // A tool call starts a new reasoning pass, so the answer follows the
+            // last `</think>`, not the first. The call itself marks this before
+            // its search is recorded, and a rejected call records no search.
+            let phase = message.streamingReasoningPhase ?? .initialThinking
             let hasLiveSearches = !((message.searchInvocations ?? []).isEmpty)
-            let parsed = if isMLX && hasLiveSearches {
+            let isToolSession = isMLX && (
+                hasLiveSearches ||
+                phase == .postToolReasoning ||
+                Self.reasoningCloseTagCount(in: visiblePortion) > 1
+            )
+            let parsed = if isToolSession {
                 Self.parseReasoningResponseForSearchSessionText(visiblePortion)
             } else {
                 parseReasoningResponse(visiblePortion)
             }
 
-            if isMLX && hasLiveSearches && !finalize {
-                let phase = message.streamingReasoningPhase ?? .initialThinking
+            if isToolSession && !finalize {
                 if phase == .postToolReasoning {
                     let closeTagCount = Self.reasoningCloseTagCount(in: visiblePortion)
                     let boundaryCount = message.postToolReasoningStartCloseTagCount ?? closeTagCount

@@ -170,7 +170,9 @@ extension ChatLLMTests {
 
         #expect(content == "Search result body")
         #expect(role == .tool)
-        #expect(!MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
+        // Appending only the tool turn to a live session re-renders BOS and the
+        // tool list mid-conversation, so LFM rebuilds the prompt per tool round.
+        #expect(MLXModelManager.requiresExplicitMessageHistoryForToolLoop(for: model))
     }
 
     @Test func nonQwenModelsKeepNativeToolRoleForToolResponses() {

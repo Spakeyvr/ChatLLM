@@ -213,3 +213,90 @@ extension ChatLLMTests {
         #expect(search.allInvocations.first?.response?.sources.isEmpty == false)
     }
 }
+
+// MARK: - LFM2.5 reasoning tool loop
+
+extension ChatLLMTests {
+    @Test func lfmToolRoundReplaysThinkingAndCallInTemplateForm() throws {
+        let model = try #require(makeModelManager().model(withID: "lfm2.5-2.6b-4bit"))
+        let call = MLXToolCall(function: .init(
+            name: "webSearch", arguments: ["query": "Tim's iPhone 17 (2025)\nprice"]
+        ))
+        let turn = MLXModelManager.assistantToolCallTurnContent(
+            for: model, generatedText: "I need current prices.</think>", toolCall: call
+        )
+        #expect(turn == #"<think>I need current prices.</think><|tool_call_start|>[webSearch(query='Tim\'s iPhone 17 (2025)\nprice')]<|tool_call_end|>"#)
+    }
+
+    @Test func lfmToolCallMadeWhileThinkingClosesThinkingInReplayedTurn() throws {
+        let model = try #require(makeModelManager().model(withID: "lfm2.5-2.6b-4bit"))
+        let call = MLXToolCall(function: .init(name: "webSearch", arguments: ["query": "swift"]))
+        let turn = MLXModelManager.assistantToolCallTurnContent(
+            for: model, generatedText: "Let me check. ", toolCall: call
+        )
+        #expect(turn == "<think>Let me check.</think><|tool_call_start|>[webSearch(query='swift')]<|tool_call_end|>")
+        let qwen = try #require(makeModelManager().model(withID: "qwen3.5-0.8b-4bit"))
+        #expect(MLXModelManager.assistantToolCallTurnContent(
+            for: qwen, generatedText: "x", toolCall: call
+        ) == nil)
+    }
+
+    @Test func lfmParserKeepsParenthesesAndCommasInsideQuotedQuery() throws {
+        let processor = ToolCallProcessor(format: .lfm2)
+        _ = processor.processChunk(
+            #"<|tool_call_start|>[webSearch(query='iPhone 17 (2025) price, \'pro\' model')]<|tool_call_end|>"#
+        )
+        let call = try #require(processor.toolCalls.first)
+        #expect(call.function.arguments["query"] == .string("iPhone 17 (2025) price, 'pro' model"))
+    }
+
+    @Test func toolLoopSeparatesReasoningPassesWithoutDoublingBreaks() {
+        #expect(MLXInferenceWorker.iterationSeparator(afterVisibleText: "R1</think>", streamIteration: 1) == nil)
+        #expect(MLXInferenceWorker.iterationSeparator(afterVisibleText: "R1</think>", streamIteration: 2) == "\n\n")
+        #expect(MLXInferenceWorker.iterationSeparator(afterVisibleText: "R1\n", streamIteration: 2) == "\n")
+        #expect(MLXInferenceWorker.iterationSeparator(afterVisibleText: "R1\n\n", streamIteration: 3) == nil)
+        #expect(MLXInferenceWorker.iterationSeparator(afterVisibleText: "", streamIteration: 2) == nil)
+    }
+
+    @Test func toolLoopEndsWhenModelIgnoresShutdownNotice() {
+        let maximum = MLXModelManager.maxToolInvocationsPerResponse
+        #expect(!MLXModelManager.shouldEndToolLoop(afterInvocationCount: maximum))
+        #expect(!MLXModelManager.shouldEndToolLoop(afterInvocationCount: maximum + 1))
+        #expect(MLXModelManager.shouldEndToolLoop(afterInvocationCount: maximum + 2))
+    }
+
+    @Test func reasoningSanitizerKeepsPassesAroundToolCallsAsSeparateSteps() {
+        #expect(ReasoningTextSanitizer.string(from: "I should search.</think>The results say 6.2.")
+            == "I should search.\n\nThe results say 6.2.")
+    }
+
+    @Test func toolCallAfterThinkMovesProvisionalAnswerBackIntoOpenReasoning() throws {
+        let viewModel = try makeChat([])
+        testEnvironment.bridge.selectedBackend = .mlx
+        testEnvironment.bridge.selectedModelID = "lfm2.5-2.6b-4bit"
+        let message = Message(role: .assistant, text: "", order: 0, isReasoningMode: true)
+        message.beginGenerationCapture(backend: "MLX", modelName: "LFM2.5")
+
+        let beforeCall = "I need live data.</think>Let me search for that."
+        viewModel.updateMessageWithReasoningContent(message, fullText: beforeCall)
+        #expect(message.finalAnswer == "Let me search for that.")
+        #expect(message.reasoningCompletedAt != nil)
+
+        // No search is recorded yet when the call is emitted.
+        message.reopenReasoningForToolCall(
+            closeTagCount: ChatViewModel.reasoningCloseTagCount(in: beforeCall)
+        )
+        viewModel.updateMessageWithReasoningContent(message, fullText: beforeCall)
+        #expect(message.reasoningCompletedAt == nil)
+        #expect(message.text.isEmpty)
+        #expect(message.finalAnswer == nil)
+        #expect(message.reasoning == "I need live data.\n\nLet me search for that.")
+
+        let afterResults = beforeCall + "\n\nThe source says 6.2.</think>Swift 6.2 is current."
+        viewModel.updateMessageWithReasoningContent(message, fullText: afterResults)
+        #expect(message.streamingReasoningPhase == .finalAnswer)
+        #expect(message.finalAnswer == "Swift 6.2 is current.")
+        #expect(message.reasoning?.hasSuffix("The source says 6.2.") == true)
+        #expect(message.reasoningCompletedAt != nil)
+    }
+}
