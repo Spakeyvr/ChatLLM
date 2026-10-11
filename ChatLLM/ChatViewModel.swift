@@ -124,6 +124,11 @@ final class ChatViewModel: ObservableObject {
 
     @Published var isGenerating = false
     @Published var streamingMessageID: UUID?
+    /// The live status label for the streaming reply. Changes wait for the shimmer to finish
+    /// its sweep; see `requestStreamingActivity(_:)`.
+    @Published var streamingActivity: StreamingActivity = .loading
+    internal var pendingStreamingActivity: StreamingActivity?
+    internal var streamingActivityTask: Task<Void, Never>?
 
     /// Unsent composer contents. Kept here rather than in ChatView so they survive the view
     /// being rebuilt, e.g. when a size-class change swaps the iPhone drawer for the split view.
@@ -559,6 +564,7 @@ final class ChatViewModel: ObservableObject {
         activeGenerationID = nil
         isGenerating = false
         streamingMessageID = nil
+        resetStreamingActivity()
         currentStreamTask?.cancel()
         currentGenerationTask?.cancel()
     }
@@ -890,6 +896,7 @@ final class ChatViewModel: ObservableObject {
             return .cancelled
         }
 
+        resetStreamingActivity()
         streamingMessageID = assistantMessage.id
 
         guard let resetState = prepareStreamResetState(
@@ -1208,6 +1215,16 @@ final class ChatViewModel: ObservableObject {
             scheduleCoalescedSave()
         }
 
+        @MainActor
+        func updateStreamingActivity() {
+            let bridge = preparation.webSearchBridge
+            requestStreamingActivity(.current(
+                // A finished search counts as output: the model is now reading the results.
+                hasReceivedOutput: result.wroteAny || !(bridge?.allInvocations.isEmpty ?? true),
+                isSearching: bridge?.hasSearchInProgress == true
+            ))
+        }
+
         do {
             let stream = try await makeGenerationStream(from: preparation)
             let iterator = StreamEventIterator(stream: stream)
@@ -1254,9 +1271,11 @@ final class ChatViewModel: ObservableObject {
                 switch nextEvent {
                 case .text(let newText):
                     guard !newText.isEmpty else { continue }
+                    let isFirstOutput = !result.wroteAny
                     if !appendStreamingChunk(newText, into: &result) {
                         continue
                     }
+                    if isFirstOutput { updateStreamingActivity() }
                     renderIfThrottled()
                 case .toolCall:
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }),
@@ -1268,6 +1287,7 @@ final class ChatViewModel: ObservableObject {
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
                     }
                 case .searchActivityChanged:
+                    updateStreamingActivity()
                     if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                         syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
                         conversation.lastUpdated = Date()
@@ -1593,6 +1613,7 @@ final class ChatViewModel: ObservableObject {
         guard streamingGenerationID == generationID else { return }
         streamingGenerationID = nil
         streamingMessageID = nil
+        resetStreamingActivity()
         immediateSave()
         currentStreamTask = nil
     }

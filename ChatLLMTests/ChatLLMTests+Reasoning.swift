@@ -91,6 +91,81 @@ extension ChatLLMTests {
         #expect(offset >= -0.4 && offset < 1.4)
     }
 
+    /// A date `phase` (0..<1) of the way through a shimmer sweep.
+    private func shimmerDate(atPhase phase: Double) -> Date {
+        Date(timeIntervalSinceReferenceDate: InlineThinkingView.shimmerPeriod * (1_000 + phase))
+    }
+
+    @Test func statusLabelSwapWaitsOnlyWhileTheGlowCrossesTheLabel() {
+        // Band hasn't reached the label yet, or has already left it: swap right away.
+        #expect(InlineThinkingView.remainingSweepDuration(at: shimmerDate(atPhase: 0.02)) == 0)
+        #expect(InlineThinkingView.remainingSweepDuration(at: shimmerDate(atPhase: 0.95)) == 0)
+
+        // Mid-sweep: wait until the band has left the trailing edge.
+        let midSweep = shimmerDate(atPhase: 0.5)
+        let remaining = InlineThinkingView.remainingSweepDuration(at: midSweep)
+        #expect(remaining > 0 && remaining < InlineThinkingView.shimmerPeriod)
+        let afterSweep = midSweep.addingTimeInterval(remaining + 0.001)
+        #expect(InlineThinkingView.shimmerOffset(at: afterSweep) - 0.25 >= 1)
+    }
+
+    @Test func streamingActivityFollowsFirstTokenAndSearches() {
+        #expect(StreamingActivity.current(hasReceivedOutput: false, isSearching: false) == .loading)
+        #expect(StreamingActivity.current(hasReceivedOutput: true, isSearching: false) == .thinking)
+        #expect(StreamingActivity.current(hasReceivedOutput: false, isSearching: true) == .searching)
+        #expect(StreamingActivity.current(hasReceivedOutput: true, isSearching: true) == .searching)
+    }
+
+    @Test func streamingActivityKeepsLoadingUntilTheSweepFinishes() async throws {
+        let viewModel = try makeChat([])
+        #expect(viewModel.streamingActivity == .loading)
+
+        // First token mid-sweep: "Loading…" stays up until the glow has passed.
+        viewModel.requestStreamingActivity(.thinking, now: shimmerDate(atPhase: 0.5))
+        #expect(viewModel.streamingActivity == .loading)
+
+        // A search starting before the swap replaces the pending target.
+        viewModel.requestStreamingActivity(.searching, now: shimmerDate(atPhase: 0.6))
+        #expect(viewModel.streamingActivity == .loading)
+
+        // Going back to the label already shown drops the pending swap.
+        viewModel.requestStreamingActivity(.loading, now: shimmerDate(atPhase: 0.7))
+        #expect(viewModel.pendingStreamingActivity == nil)
+
+        // Between sweeps the swap is immediate.
+        viewModel.requestStreamingActivity(.searching, now: shimmerDate(atPhase: 0.95))
+        #expect(viewModel.streamingActivity == .searching)
+
+        // Near the end of a sweep the swap lands shortly after.
+        viewModel.requestStreamingActivity(.thinking, now: shimmerDate(atPhase: 0.85))
+        #expect(viewModel.streamingActivity == .searching)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(viewModel.streamingActivity == .thinking)
+
+        viewModel.resetStreamingActivity()
+        #expect(viewModel.streamingActivity == .loading)
+    }
+
+    @Test func reasoningStatusShowsSearchesEvenAfterReasoningCompletes() {
+        typealias Bubble = ReasoningMessageBubble
+        #expect(Bubble.liveActivity(isStreaming: true, hasCompletedReasoning: false, activity: .loading) == .loading)
+        #expect(Bubble.liveActivity(isStreaming: true, hasCompletedReasoning: false, activity: .thinking) == .thinking)
+        #expect(Bubble.liveActivity(isStreaming: true, hasCompletedReasoning: true, activity: .searching) == .searching)
+        // Finished thinking and not searching: fall back to "Thought for…".
+        #expect(Bubble.liveActivity(isStreaming: true, hasCompletedReasoning: true, activity: .thinking) == nil)
+        #expect(Bubble.liveActivity(isStreaming: false, hasCompletedReasoning: false, activity: .searching) == nil)
+    }
+
+    @Test func plainReplyShowsSearchingBelowItsTextOnlyWhileSearching() {
+        let message = Message(role: .assistant, text: "Let me check.", order: 0, isFinal: false)
+        #expect(MessageCellView.showsSearchingBelowText(message: message, isStreaming: true, activity: .searching))
+        #expect(!MessageCellView.showsSearchingBelowText(message: message, isStreaming: true, activity: .thinking))
+        #expect(!MessageCellView.showsSearchingBelowText(message: message, isStreaming: false, activity: .searching))
+
+        let reasoning = Message(role: .assistant, text: "", order: 0, isFinal: false, isReasoningMode: true)
+        #expect(!MessageCellView.showsSearchingBelowText(message: reasoning, isStreaming: true, activity: .searching))
+    }
+
     @Test func thinkingShimmerStopsOnceReasoningCompletes() throws {
         let schema = Schema([Conversation.self, ChatLLM.Message.self, MessageAttachment.self])
         let container = try ModelContainer(

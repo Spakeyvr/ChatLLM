@@ -131,11 +131,7 @@ struct MessageCellView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Bubble or loading placeholder
             if message.role == .assistant, isCurrentlyStreaming, !hasContent {
-                if message.isReasoningMode {
-                    InlineThinkingView(onTap: nil)
-                } else {
-                    LoadingIndicatorView(isModelLoading: true)
-                }
+                LoadingIndicatorView(activity: viewModel.streamingActivity)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     MessageBubble(message: message, viewModel: viewModel)
@@ -157,6 +153,15 @@ struct MessageCellView: View {
                             }
                         }
 
+                    // Reasoning bubbles show the search in their own status label; plain
+                    // replies get one below the text written so far.
+                    if Self.showsSearchingBelowText(
+                        message: message,
+                        isStreaming: isCurrentlyStreaming,
+                        activity: viewModel.streamingActivity
+                    ) {
+                        LoadingIndicatorView(activity: .searching)
+                    }
                 }
             }
 
@@ -195,6 +200,11 @@ struct MessageCellView: View {
         }
     }
 
+    static func showsSearchingBelowText(message: Message, isStreaming: Bool, activity: StreamingActivity) -> Bool {
+        message.role == .assistant && isStreaming && activity == .searching &&
+            !message.isReasoningMode && !message.text.contains("<thinking>")
+    }
+
     private func extractSourcesFromMessage() -> String? {
         let candidateText = message.isReasoningMode
             ? (message.finalAnswer ?? message.displayText)
@@ -209,10 +219,11 @@ struct MessageCellView: View {
 // MARK: - Loading indicator reusing the shimmer style
 
 struct LoadingIndicatorView: View {
-    var isModelLoading: Bool = false
+    @Environment(\.locale) private var locale
+    var activity: StreamingActivity = .loading
 
     var body: some View {
-        InlineThinkingView(text: isModelLoading ? Strings.loading : Strings.thinking, onTap: nil)
+        InlineThinkingView(text: activity.label(locale: locale), onTap: nil)
             .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
@@ -363,20 +374,40 @@ struct ReasoningMessageBubble: View {
         !hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
     }
 
+    /// The live status to show in place of "Thought for…": the reply's current activity
+    /// while reasoning streams, and a search even after reasoning has wrapped up.
+    static func liveActivity(
+        isStreaming: Bool,
+        hasCompletedReasoning: Bool,
+        activity: StreamingActivity
+    ) -> StreamingActivity? {
+        guard isStreaming else { return nil }
+        if activity == .searching || !hasCompletedReasoning { return activity }
+        return nil
+    }
+
     var body: some View {
         // Parse once per body pass; every access rescans the full message text.
         let parsed = parsedContent
         let reasoningText = parsed.reasoning
         let hasReasoningContent = !(reasoningText?.isEmpty ?? true)
         let hasCompletedReasoning = Self.hasCompletedReasoning(message, hasReasoningContent: hasReasoningContent)
+        let liveActivity = Self.liveActivity(
+            isStreaming: isCurrentlyStreaming,
+            hasCompletedReasoning: hasCompletedReasoning,
+            activity: viewModel.streamingActivity
+        )
         let reasoningStatusText: String? = {
+            if let liveActivity {
+                return liveActivity.label(locale: locale)
+            }
             if hasCompletedReasoning {
                 if let duration = message.reasoningDuration ?? message.generationDuration {
                     return String(localized: "Thought for \(ThoughtDurationFormatter.string(for: duration))", bundle: .appLocalized, locale: locale)
                 }
                 return String(localized: "Thought", bundle: .appLocalized, locale: locale)
             }
-            return isCurrentlyStreaming ? String(localized: "Thinking…", bundle: .appLocalized, locale: locale) : nil
+            return nil
         }()
 
         HStack(alignment: .bottom, spacing: 8) {
@@ -390,7 +421,8 @@ struct ReasoningMessageBubble: View {
                     InlineThinkingView(
                         text: reasoningStatusText,
                         onTap: hasReasoningContent ? { showReasoningSheet = true } : nil,
-                        isAnimating: Self.thinkingIndicatorAnimates(for: message, hasReasoningContent: hasReasoningContent)
+                        isAnimating: liveActivity != nil ||
+                            Self.thinkingIndicatorAnimates(for: message, hasReasoningContent: hasReasoningContent)
                     )
                 }
 

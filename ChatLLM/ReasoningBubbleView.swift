@@ -16,7 +16,9 @@ struct InlineThinkingView: View {
     var isAnimating: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let shimmerPeriod: TimeInterval = 1.6
+    static let shimmerPeriod: TimeInterval = 1.6
+    /// Half the width of the glow band, in unit-point space.
+    private static let shimmerBandHalfWidth: CGFloat = 0.25
 
     var body: some View {
         Group {
@@ -45,11 +47,25 @@ struct InlineThinkingView: View {
         return -0.4 + 1.8 * CGFloat(phase)
     }
 
+    /// Time until the glow band currently crossing the label has left it, or 0 when no band
+    /// is over the label. Swapping the text then never cuts a sweep off mid-word.
+    static func remainingSweepDuration(at date: Date) -> TimeInterval {
+        let offset = shimmerOffset(at: date)
+        let bandIsOverLabel = offset + shimmerBandHalfWidth > 0 && offset - shimmerBandHalfWidth < 1
+        guard bandIsOverLabel else { return 0 }
+        let phase = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: shimmerPeriod) / shimmerPeriod
+        let phaseWhenBandLeaves = (1 + shimmerBandHalfWidth + 0.4) / 1.8
+        return (Double(phaseWhenBandLeaves) - phase) * shimmerPeriod
+    }
+
     @ViewBuilder
     private func thinkingLabel(animatesGlow: Bool) -> some View {
         Text(text)
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            .contentTransition(.opacity)
+            .animation(.easeInOut(duration: 0.25), value: text)
             .overlay {
                 if animatesGlow && !reduceMotion {
                     // Derive the sweep from wall-clock time rather than view state, so the
@@ -65,8 +81,8 @@ struct InlineThinkingView: View {
                                 .init(color: .white.opacity(0.85), location: 0.5),
                                 .init(color: .clear, location: 1),
                             ],
-                            startPoint: UnitPoint(x: shimmerOffset - 0.25, y: 0.5),
-                            endPoint: UnitPoint(x: shimmerOffset + 0.25, y: 0.5)
+                            startPoint: UnitPoint(x: shimmerOffset - Self.shimmerBandHalfWidth, y: 0.5),
+                            endPoint: UnitPoint(x: shimmerOffset + Self.shimmerBandHalfWidth, y: 0.5)
                         )
                     }
                     .mask {

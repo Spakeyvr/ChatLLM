@@ -180,7 +180,7 @@ struct ChatView: View {
                     if viewModel.isGenerating,
                        let streamingID = viewModel.streamingMessageID,
                        !sortedMessages.contains(where: { $0.id == streamingID }) {
-                        LoadingIndicatorView(isModelLoading: modelBackendBridge.modelManager?.isLoading ?? false)
+                        LoadingIndicatorView(activity: viewModel.streamingActivity)
                             .padding(.vertical, 8)
                     }
                 }
