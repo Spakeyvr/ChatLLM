@@ -241,11 +241,11 @@ private struct AddOptionsSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
                 // Every attach option imports an image, so all of them depend
-                // on the model reading images itself.
+                // on the model reading images itself. Unavailable options stay
+                // visible but grayed out, so the row keeps the same layout.
                 HStack(spacing: 12) {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        AttachTile(icon: "camera", label: "Camera", action: onCamera)
-                    }
+                    AttachTile(icon: "camera", label: "Camera", action: onCamera)
+                        .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                     AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
                     AttachTile(icon: "doc.badge.arrow.up", label: "Files", action: onFile)
                 }
