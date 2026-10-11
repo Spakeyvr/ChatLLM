@@ -79,6 +79,16 @@ extension ChatLLMTests {
         return defaults
     }
 
+    /// Polls `condition` for up to five seconds and records an issue if it
+    /// never holds.
+    func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(condition())
+    }
+
     func makeTestImage(width: Int, height: Int) -> UIImage {
         let size = CGSize(width: width, height: height)
         return UIGraphicsImageRenderer(size: size).image { context in

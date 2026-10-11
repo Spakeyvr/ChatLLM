@@ -4,14 +4,6 @@ import SwiftData
 @testable import ChatLLM
 
 extension ChatLLMTests {
-    private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition(), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(condition())
-    }
-
     @Test func independentFixturesDoNotShareBackendPreferencesOrModelStorage() throws {
         let other = ChatTestEnvironment()
         testEnvironment.defaults.set("mlx", forKey: "selectedLLMBackend")

@@ -565,10 +565,9 @@ extension ChatLLMTests {
 
         let sendTask = Task { await viewModel.send(userText: "Hello") }
 
-        for _ in 0..<50 {
-            if viewModel.isGenerating { break }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        // `isGenerating` turns on before `send` appends the turn's messages;
+        // a streaming message ID means the assistant placeholder exists.
+        try await waitUntil { viewModel.streamingMessageID != nil }
 
         #expect(viewModel.isGenerating)
         #expect(conversation.messages.contains(where: { $0.role == .assistant }))
@@ -596,10 +595,9 @@ extension ChatLLMTests {
         )
         let sendTask = Task { await viewModel.send(userText: "Hello") }
 
-        for _ in 0..<50 {
-            if viewModel.isGenerating { break }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        // `isGenerating` turns on before `send` appends the turn's messages;
+        // a streaming message ID means the assistant placeholder exists.
+        try await waitUntil { viewModel.streamingMessageID != nil }
 
         #expect(viewModel.isGenerating)
         #expect(await viewModel.cancelGenerationAndWait())
