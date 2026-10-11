@@ -90,7 +90,7 @@ extension ChatViewModel {
         }
 
         guard isGenerationActive(generationID) else { return }
-        await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: userPrompt)
+        await finishAutoNamingIfNeeded(turn.needsAutoNaming)
     }
 
     // MARK: - Private Helpers
