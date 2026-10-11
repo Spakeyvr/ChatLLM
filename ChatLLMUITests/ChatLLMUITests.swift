@@ -337,6 +337,32 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testDeletingTheOpenChatOpensABlankChat() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
+        app.launch()
+        let demoMessage = app.staticTexts["What changed in SwiftUI web views this year?"]
+        XCTAssertTrue(demoMessage.waitForExistence(timeout: 5))
+
+        openSidebar(in: app)
+        let demoChatRow = app.staticTexts["Web Search Preview"]
+        XCTAssertTrue(demoChatRow.waitForExistence(timeout: 5))
+        demoChatRow.swipeLeft()
+        let delete = app.buttons["Delete"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+
+        // The sidebar stays open for further edits while a blank chat takes the open chat's place.
+        XCTAssertTrue(app.buttons["sidebar.dismiss"].exists)
+        XCTAssertTrue(app.staticTexts["Second Chat"].exists)
+        app.buttons["sidebar.dismiss"].tap()
+
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(demoMessage.exists)
+        XCTAssertFalse(app.staticTexts["Select a Conversation"].exists)
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

@@ -402,15 +402,10 @@ struct ContentView: View {
                     currentViewModel = nil
                 }
                 
-                // Only choose a new selection automatically on regular width.
-                if horizontalSizeClass == .regular {
-                    selection = newConversations.first
-                } else {
-                    // In compact, clear selection so we don't auto-push a detail.
-                    selection = nil
-                }
+                openDraftChat()
             }
         } else if selection == nil,
+                  draftConversation == nil,
                   horizontalSizeClass == .regular,
                   let first = newConversations.first {
             // Only auto-select the first conversation on regular width.
@@ -641,27 +636,31 @@ struct ContentView: View {
             AppHaptics.impact(.medium)
         }
         Task { @MainActor in
-            currentViewModel?.deactivate()
-            let convo = Conversation(
-                title: String(localized: "New Chat", bundle: .appLocalized),
-                chatPreferences: storedChatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            convo.reasoningMode = reasoningModeDefault
-            let backendBridge = ModelBackendBridge.shared
-            convo.preferredBackendRawValue = backendBridge.selectedBackend.rawValue
-            convo.preferredModelID = backendBridge.selectedModelID
-            // Set draft BEFORE clearing selection so handleSelectionChange preserves this vm.
-            draftConversation = convo
-            currentViewModel = createViewModel(for: convo)
-            backendBridge.bindConversation(convo)
-            selection = nil
-            // Push detail column on compact (iPhone) so the draft chat is immediately visible.
-            preferredCompactColumn = .detail
+            openDraftChat()
             closeSidebar()
             if !searchText.isEmpty {
                 clearSearch()
             }
         }
+    }
+
+    private func openDraftChat() {
+        currentViewModel?.deactivate()
+        let convo = Conversation(
+            title: String(localized: "New Chat", bundle: .appLocalized),
+            chatPreferences: storedChatPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        convo.reasoningMode = reasoningModeDefault
+        let backendBridge = ModelBackendBridge.shared
+        convo.preferredBackendRawValue = backendBridge.selectedBackend.rawValue
+        convo.preferredModelID = backendBridge.selectedModelID
+        // Set draft BEFORE clearing selection so handleSelectionChange preserves this vm.
+        draftConversation = convo
+        currentViewModel = createViewModel(for: convo)
+        backendBridge.bindConversation(convo)
+        selection = nil
+        // Push detail column on compact (iPhone) so the draft chat is immediately visible.
+        preferredCompactColumn = .detail
     }
 
     private func clearSearch() {
@@ -749,11 +748,10 @@ struct ContentView: View {
             currentViewModel = nil
         }
         
-        // Update selection safely - find next available conversation before deleting
+        // Deleting the open chat replaces it with a blank one behind the sidebar,
+        // so the user never lands on an empty placeholder.
         if selection?.id == conversationID {
-            let remainingConversations = conversations.filter { $0.id != conversationID }
-            // Only auto-advance selection on regular width to avoid auto-push in compact.
-            selection = (horizontalSizeClass == .regular) ? remainingConversations.first : nil
+            openDraftChat()
         }
         
         // Wrap deletion in animation to ensure smooth UI updates
