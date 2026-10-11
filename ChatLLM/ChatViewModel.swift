@@ -716,18 +716,38 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    private struct ContextWindowError: LocalizedError {
+    /// Explains a context overflow with the limit and fixes of the backend
+    /// that hit it; the MLX Context Window setting means nothing to Apple's model.
+    struct ContextWindowError: LocalizedError {
+        enum Backend {
+            case mlx
+            case appleIntelligence
+        }
+
         let tokenLimit: Int
+        let backend: Backend
 
         var errorDescription: String? {
-            return String(localized: """
-            Context window limit reached. This device is currently capped at about \(tokenLimit) tokens for on-device MLX chats.
+            switch backend {
+            case .mlx:
+                return String(localized: """
+                Context window limit reached. This device is currently capped at about \(tokenLimit) tokens for on-device MLX chats.
 
-            Try one of these solutions:
-            • Start a new chat or trim earlier messages
-            • Lower the Context Window setting
-            • Shorten your system prompt or the latest message
-            """, bundle: .appLocalized)
+                Try one of these solutions:
+                • Start a new chat or trim earlier messages
+                • Lower the Context Window setting
+                • Shorten your system prompt or the latest message
+                """, bundle: .appLocalized)
+            case .appleIntelligence:
+                return String(localized: """
+                Context window limit reached. Apple Intelligence can hold about \(tokenLimit) tokens per request on this device.
+
+                Try one of these solutions:
+                • Start a new chat or trim earlier messages
+                • Attach fewer images
+                • Shorten your system prompt or the latest message
+                """, bundle: .appLocalized)
+            }
         }
     }
 
@@ -811,6 +831,18 @@ final class ChatViewModel: ObservableObject {
 
         func next() async throws -> StreamEvent? {
             try await iterator.next()
+        }
+    }
+
+    private func contextWindowError(for backendRequest: StreamBackendRequest) -> ContextWindowError {
+        switch backendRequest {
+        case .mlx:
+            ContextWindowError(tokenLimit: effectiveContextWindowTokenLimit(), backend: .mlx)
+        case .foundation:
+            ContextWindowError(
+                tokenLimit: ModelBackendBridge.foundationModelsContextSize,
+                backend: .appleIntelligence
+            )
         }
     }
 
@@ -1293,7 +1325,7 @@ final class ChatViewModel: ObservableObject {
             )
             if let liveTarget = conversation.messages.first(where: { $0.id == preparation.targetID }) {
                 let message = isContextWindowError(error)
-                    ? ContextWindowError(tokenLimit: effectiveContextWindowTokenLimit()).localizedDescription
+                    ? contextWindowError(for: preparation.backendRequest).localizedDescription
                     : (error as NSError).localizedDescription
                 liveTarget.generationError = message
                 if result.cumulativeText.isEmpty {
