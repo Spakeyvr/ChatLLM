@@ -7,6 +7,7 @@
 
 import Testing
 import Foundation
+import FoundationModels
 import MLXLMCommon
 import UIKit
 @testable import ChatLLM
@@ -81,7 +82,7 @@ extension ChatLLMTests {
 
         let request = viewModel.buildFoundationRequest(
             upToOrderExclusive: 1,
-            includeLatestUserImages: true
+            includeImages: true
         )
 
         #expect(request.imageURLs == [turn.attachment.actualFileURL])
@@ -100,31 +101,82 @@ extension ChatLLMTests {
         #expect(request.prompt == "What does the sign say?")
     }
 
-    @Test func buildFoundationRequestOnlySendsTheLatestUserTurnsImages() async throws {
-        let firstURL = try await saveTestImage()
-        let secondURL = try await saveTestImage()
-        defer {
-            Task {
-                try? await ImageStore.shared.delete(url: firstURL)
-                try? await ImageStore.shared.delete(url: secondURL)
+    @Test func buildFoundationRequestSendsTheThreeNewestImagesAcrossTurns() async throws {
+        var urls: [URL] = []
+        for _ in 0..<4 { urls.append(try await saveTestImage()) }
+        defer { Task { for url in urls { try? await ImageStore.shared.delete(url: url) } } }
+        let viewModel = try makeViewModel()
+        let questions = ["What is this?", "And this?", "How about this?", "Last one?"]
+        var turns: [(message: ChatLLM.Message, attachment: MessageAttachment)] = []
+        for (index, question) in questions.enumerated() {
+            turns.append(appendImageTurn(to: viewModel, text: question, order: index * 2, imageURL: urls[index]))
+            if index < questions.count - 1 {
+                appendAssistantTurn(to: viewModel, text: "Answer \(index + 1).", order: index * 2 + 1)
             }
         }
-        let viewModel = try makeViewModel()
-        appendImageTurn(to: viewModel, text: "What breed is this?", order: 0, imageURL: firstURL)
-        appendAssistantTurn(to: viewModel, text: "It looks like a beagle.", order: 1)
-        let latest = appendImageTurn(to: viewModel, text: "And this one?", order: 2, imageURL: secondURL)
 
-        let request = viewModel.buildFoundationRequest(
-            upToOrderExclusive: 3,
-            includeLatestUserImages: true
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 7, includeImages: true)
+
+        let userHistory = request.history.filter { $0.role == .user }
+        #expect(userHistory.map(\.content) == ["What is this?", "And this?", "How about this?"])
+        #expect(userHistory.map(\.imageURLs) == [
+            [],
+            [turns[1].attachment.actualFileURL],
+            [turns[2].attachment.actualFileURL]
+        ])
+        #expect(request.prompt == "Last one?")
+        #expect(request.imageURLs == [turns[3].attachment.actualFileURL])
+    }
+
+    @Test func buildFoundationRequestKeepsTheNewestImagesOfATurnOverTheLimit() async throws {
+        var urls: [URL] = []
+        for _ in 0..<4 { urls.append(try await saveTestImage()) }
+        defer { Task { for url in urls { try? await ImageStore.shared.delete(url: url) } } }
+        let viewModel = try makeViewModel()
+        let turn = appendImageTurn(to: viewModel, text: "Compare these.", order: 0, imageURL: urls[0])
+        for url in urls.dropFirst() {
+            let attachment = MessageAttachment(type: .image, fileURL: url, fileName: url.lastPathComponent)
+            attachment.message = turn.message
+            turn.message.attachments.append(attachment)
+        }
+
+        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 1, includeImages: true)
+
+        #expect(request.imageURLs == turn.message.attachments.dropFirst().map(\.actualFileURL))
+    }
+
+    @Test func foundationPromptBudgetLeavesRoomForTheReplyAndInstructions() {
+        let instructions = String(repeating: "a", count: 400)
+
+        let budget = ChatViewModel.foundationPromptBudgetTokens(contextSize: 4_096, instructions: instructions)
+
+        // 4,096 − 1,024 reply − 100 instruction − 256 overhead.
+        #expect(budget == 2_716)
+    }
+
+    @Test func foundationSessionLabelsImagesInConversationOrder() {
+        let first = URL(fileURLWithPath: "/tmp/first.jpg")
+        let second = URL(fileURLWithPath: "/tmp/second.jpg")
+        let request = LLMRequest(
+            history: [
+                .init(role: .user, content: "What is this?", imageURLs: [first]),
+                .init(role: .assistant, content: "A dog."),
+                .init(role: .user, content: "And this?", imageURLs: [second]),
+                .init(role: .assistant, content: "A cat.")
+            ],
+            prompt: "Which is bigger?"
         )
 
-        #expect(request.imageURLs == [latest.attachment.actualFileURL])
-        #expect(request.history == [
-            .init(role: .user, content: "What breed is this?"),
-            .init(role: .assistant, content: "It looks like a beagle.")
-        ])
-        #expect(request.prompt == "And this one?")
+        let session = OnDeviceLLMGenerator.makeSession(for: request, tools: [])
+
+        let labels: [String] = session.transcript.flatMap { entry -> [String] in
+            guard case .prompt(let prompt) = entry else { return [] }
+            return prompt.segments.compactMap { segment in
+                guard case .attachment(let attachment) = segment else { return nil }
+                return attachment.label
+            }
+        }
+        #expect(labels == ["image-1", "image-2"])
     }
 
     @Test func buildFoundationRequestSkipsImageFilesThatNoLongerExist() throws {
@@ -138,7 +190,7 @@ extension ChatLLMTests {
 
         let request = viewModel.buildFoundationRequest(
             upToOrderExclusive: 1,
-            includeLatestUserImages: true
+            includeImages: true
         )
 
         #expect(request.imageURLs.isEmpty)
@@ -153,7 +205,7 @@ extension ChatLLMTests {
 
         let nativeRequest = viewModel.buildFoundationRequest(
             upToOrderExclusive: 1,
-            includeLatestUserImages: true
+            includeImages: true
         )
         let textRequest = viewModel.buildFoundationRequest(upToOrderExclusive: 1)
 

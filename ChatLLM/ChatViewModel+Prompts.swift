@@ -170,6 +170,14 @@ extension ChatViewModel {
     nonisolated private static let promptMessageReserveTokens = 12
     nonisolated private static let minimumPromptMessageCost = 24
 
+    /// Newest images the Apple model reads per request. On an iPhone 16 Pro a
+    /// photo plus a short question used about 300 of the 4,096-token window.
+    static let foundationImageLimit = 3
+    /// Budget per image sent; photos measured at roughly 150–250 tokens.
+    static let foundationImageTokenEstimate = 256
+    /// Room kept for the Apple model's reply.
+    static let foundationReplyReserveTokens = 1_024
+
     func effectiveContextWindowTokenLimit() -> Int {
         let bridge = backendBridge
         let model = bridge.selectedModelID.flatMap { bridge.modelManager?.model(withID: $0) } ??
@@ -206,13 +214,36 @@ extension ChatViewModel {
         }
     }
 
-    private func trimmedSnapshotsForPrompt(from snapshots: [MessageSnapshot]) -> [MessageSnapshot] {
-        let tokenBudget = effectivePromptBudgetTokenLimit()
+    /// Tokens left for conversation turns once the Apple model's reply,
+    /// instructions and tool schemas have room in its context window.
+    static func foundationPromptBudgetTokens(contextSize: Int, instructions: String) -> Int {
+        max(
+            minimumPromptBudgetTokens,
+            contextSize
+                - foundationReplyReserveTokens
+                - heuristicPromptTokenCount(for: instructions)
+                - promptOverheadReserveTokens
+        )
+    }
+
+    /// Keeps the newest turns that fit `tokenBudget`. Up to `imageLimit` of the
+    /// newest images ride along as pixels, and each one sent is budgeted.
+    private func trimmedSnapshotsForFoundationPrompt(
+        from snapshots: [MessageSnapshot],
+        tokenBudget: Int,
+        imageLimit: Int
+    ) -> (snapshots: [MessageSnapshot], imageURLsByOrder: [Int: [URL]]) {
         var keptSnapshots: [MessageSnapshot] = []
+        var imageURLsByOrder: [Int: [URL]] = [:]
         var usedTokens = 0
+        var remainingImages = imageLimit
 
         for snapshot in promptCandidates(from: snapshots, maxMessages: nil) {
+            let imageURLs = snapshot.role == .user
+                ? Array(Self.readableImageURLs(in: snapshot).suffix(remainingImages))
+                : []
             let estimatedTokens = estimatedPromptTokenCost(for: snapshot)
+                + imageURLs.count * Self.foundationImageTokenEstimate
 
             if usedTokens + estimatedTokens > tokenBudget && !keptSnapshots.isEmpty {
                 break
@@ -220,13 +251,23 @@ extension ChatViewModel {
 
             keptSnapshots.append(snapshot)
             usedTokens += estimatedTokens
+            if !imageURLs.isEmpty {
+                imageURLsByOrder[snapshot.order] = imageURLs
+                remainingImages -= imageURLs.count
+            }
 
             if usedTokens > tokenBudget {
                 break
             }
         }
 
-        return Array(keptSnapshots.reversed())
+        return (Array(keptSnapshots.reversed()), imageURLsByOrder)
+    }
+
+    private static func readableImageURLs(in snapshot: MessageSnapshot) -> [URL] {
+        snapshot.attachments
+            .filter { $0.type == .image && FileManager.default.fileExists(atPath: $0.actualFileURL.path) }
+            .map(\.actualFileURL)
     }
 
     private func trimmedSnapshotsForMLXPrompt(
@@ -336,7 +377,7 @@ extension ChatViewModel {
         modelIdentity: String = "Apple Intelligence",
         webSearchAvailable: Bool = false,
         forceWebSearchRequired: Bool = false,
-        includeLatestUserImages: Bool = false
+        includeImages: Bool = false
     ) -> LLMRequest {
         // Eagerly snapshot all message properties to avoid SwiftData fault errors across async boundaries.
         let allSnapshots = messageSnapshots(upToOrderExclusive: maxOrderExclusive)
@@ -346,41 +387,6 @@ extension ChatViewModel {
         // otherwise fall back to the conversation-level toggles.
         let reasoningActive = currentReasoningActive
             ?? (conversation.reasoningMode || conversation.smartReasoningMode)
-
-        let snapshots = trimmedSnapshotsForPrompt(from: allSnapshots)
-        let latestUserOrder = snapshots
-            .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map(\.order)
-            .max()
-
-        // Like MLX, only the latest user turn sends pixels: the small on-device
-        // context cannot hold every image in a conversation.
-        let latestUserImageURLs: [URL] = if includeLatestUserImages {
-            snapshots
-                .first { $0.order == latestUserOrder }?
-                .attachments
-                .filter { $0.type == .image && FileManager.default.fileExists(atPath: $0.actualFileURL.path) }
-                .map(\.actualFileURL) ?? []
-        } else {
-            []
-        }
-
-        // Snapshots are already filtered to finalized, non-system, non-blank turns;
-        // the custom system prompt is injected separately below.
-        var turns: [LLMRequest.Turn] = snapshots.compactMap { msg in
-            switch msg.role {
-            case .user:
-                let userText = userTextApplyingChatPreferences(
-                    promptUserText(for: msg),
-                    isLatestUserMessage: msg.order == latestUserOrder
-                )
-                return .init(role: .user, content: userText)
-            case .assistant:
-                return .init(role: .assistant, content: assistantContent(of: msg).removingSourcesBlocks())
-            default:
-                return nil
-            }
-        }
 
         // Static prefix first (stable across turns → friendly to KV-cache reuse),
         // volatile datetime appended last.
@@ -403,14 +409,49 @@ extension ChatViewModel {
 
         systemPrompt += "\n\n" + Self.currentDateTimeContext()
 
+        let trimmed = trimmedSnapshotsForFoundationPrompt(
+            from: allSnapshots,
+            tokenBudget: Self.foundationPromptBudgetTokens(
+                contextSize: ModelBackendBridge.foundationModelsContextSize,
+                instructions: systemPrompt
+            ),
+            imageLimit: includeImages ? Self.foundationImageLimit : 0
+        )
+        let snapshots = trimmed.snapshots
+        let latestUserOrder = snapshots
+            .filter { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(\.order)
+            .max()
+
+        // Snapshots are already filtered to finalized, non-system, non-blank turns;
+        // the custom system prompt is in the instructions above.
+        var turns: [LLMRequest.Turn] = snapshots.compactMap { msg in
+            switch msg.role {
+            case .user:
+                let userText = userTextApplyingChatPreferences(
+                    promptUserText(for: msg),
+                    isLatestUserMessage: msg.order == latestUserOrder
+                )
+                return .init(
+                    role: .user,
+                    content: userText,
+                    imageURLs: trimmed.imageURLsByOrder[msg.order] ?? []
+                )
+            case .assistant:
+                return .init(role: .assistant, content: assistantContent(of: msg).removingSourcesBlocks())
+            default:
+                return nil
+            }
+        }
+
         // The latest user request is sent to respond/streamResponse; prior turns
         // seed the native transcript, rather than being quoted as another prompt.
-        let prompt = turns.last?.role == .user ? turns.removeLast().content : ""
+        let latestTurn = turns.last?.role == .user ? turns.removeLast() : nil
         return LLMRequest(
             instructions: systemPrompt,
             history: turns,
-            prompt: prompt,
-            imageURLs: latestUserImageURLs
+            prompt: latestTurn?.content ?? "",
+            imageURLs: latestTurn?.imageURLs ?? []
         )
     }
 

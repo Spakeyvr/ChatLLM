@@ -1098,7 +1098,7 @@ final class ChatViewModel: ObservableObject {
                 modelIdentity: ModelBackendBridge.Backend.foundationModels.displayName,
                 webSearchAvailable: webSearchAvailable,
                 forceWebSearchRequired: resetState.forceSearchRequired,
-                includeLatestUserImages: allowNativeImages && promptBridge.nativeImageInputAvailable
+                includeImages: allowNativeImages && promptBridge.nativeImageInputAvailable
             )
             if let instruction = additionalUserInstruction, !instruction.isEmpty {
                 request.prompt += "\n\n" + instruction

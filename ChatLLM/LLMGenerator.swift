@@ -16,6 +16,8 @@ struct LLMRequest: Sendable, Equatable {
         enum Role: Sendable { case user, assistant }
         let role: Role
         let content: String
+        /// Images attached to this turn and sent to the model as pixels.
+        var imageURLs: [URL] = []
     }
 
     var instructions: String = ""
@@ -90,8 +92,16 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         guard !request.history.isEmpty else { return session }
 
         // Retain the framework-generated instructions entry, including tool schemas.
+        var imageNumber = 0
         let history: [Transcript.Entry] = request.history.map { turn in
-            let segments: [Transcript.Segment] = [.text(.init(content: turn.content))]
+            let images: [Transcript.Segment] = turn.imageURLs.map { url in
+                imageNumber += 1
+                return .attachment(.init(
+                    content: .image(.init(imageURL: url)),
+                    label: imageLabel(imageNumber)
+                ))
+            }
+            let segments = images + [.text(.init(content: turn.content))]
             switch turn.role {
             case .user:
                 return .prompt(.init(segments: segments))
@@ -104,13 +114,20 @@ final class OnDeviceLLMGenerator: LLMGenerator {
     }
 
     /// Images go before the text so the question reads as being about them.
+    /// Labels continue the numbering of images earlier in the conversation.
     static func makePrompt(for request: LLMRequest) -> Prompt {
-        Prompt {
+        let earlierImageCount = request.history.reduce(0) { $0 + $1.imageURLs.count }
+        return Prompt {
             request.imageURLs.enumerated().map { index, url in
-                Attachment(imageURL: url).label("image-\(index + 1)")
+                Attachment(imageURL: url).label(imageLabel(earlierImageCount + index + 1))
             }
             request.prompt
         }
+    }
+
+    /// Numbered in conversation order, so "image-1" is the oldest image sent.
+    nonisolated static func imageLabel(_ number: Int) -> String {
+        "image-\(number)"
     }
 
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
