@@ -337,6 +337,38 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testSwipingRightFromAMessageOpensTheSidebar() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        let userMessage = app.staticTexts["What changed in SwiftUI web views this year?"]
+        XCTAssertTrue(userMessage.waitForExistence(timeout: 5))
+
+        // Messages have no swipe actions, so a rightward swipe that starts on
+        // one belongs to the sidebar drawer.
+        let start = userMessage.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
+        let end = start.withOffset(CGVector(dx: app.frame.width * 0.7, dy: 0))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        XCTAssertTrue(app.buttons["sidebar.dismiss"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testLongPressingAMessageOffersCopyAndShare() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        let userMessage = app.staticTexts["What changed in SwiftUI web views this year?"]
+        XCTAssertTrue(userMessage.waitForExistence(timeout: 5))
+
+        userMessage.press(forDuration: 1.0)
+
+        XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Share"].exists)
+        XCTAssertTrue(app.buttons["Edit"].exists)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = XCUIApplication()

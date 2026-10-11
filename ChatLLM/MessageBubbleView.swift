@@ -149,16 +149,6 @@ struct MessageCellView: View {
                                 }
                             )
                         }
-                        .swipeActions {
-                            MessageSwipeActionsView(
-                                message: message,
-                                onEdit: onEdit,
-                                onShare: onShare,
-                                onCopy: { text in
-                                    UIPasteboard.general.string = text
-                                }
-                            )
-                        }
                         .accessibilityActions {
                             if message.role == .user {
                                 Button("Edit") {
@@ -958,54 +948,6 @@ struct MessageContextMenuView: View {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 150_000_000) // ~150 ms
             action()
-        }
-    }
-}
-
-// MARK: - Message swipe actions
-
-struct MessageSwipeActionsView: View {
-    let message: Message
-    let onEdit: (Message) -> Void
-    let onShare: (String) -> Void
-    let onCopy: (String) -> Void
-
-    var body: some View {
-        Button {
-            // Small deferral improves reliability
-            Task { @MainActor in
-                await Task.yield()
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                onCopy(message.userVisibleText)
-            }
-        } label: {
-            Label("Copy", systemImage: "doc.on.doc")
-        }
-        .tint(.green)
-
-        Button {
-            // Small deferral improves reliability when share controller presents
-            Task { @MainActor in
-                await Task.yield()
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                onShare(message.userVisibleText)
-            }
-        } label: {
-            Label("Share", systemImage: "square.and.arrow.up")
-        }
-        .tint(.blue)
-
-        if message.role == .user {
-            Button {
-                Task { @MainActor in
-                    await Task.yield()
-                    try? await Task.sleep(nanoseconds: 120_000_000)
-                    onEdit(message)
-                }
-            } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            .tint(.orange)
         }
     }
 }
