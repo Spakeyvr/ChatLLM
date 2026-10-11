@@ -847,6 +847,9 @@ private struct DeveloperMessageSheet: View {
                             if let promptTokenCount = message.generationPromptTokenCount {
                                 DeveloperStatRow(label: String(localized: "Prompt tokens", bundle: .appLocalized, locale: locale), value: "\(promptTokenCount)")
                             }
+                            if message.generationBackend == ModelBackendBridge.Backend.foundationModels.displayName {
+                                DeveloperStatRow(label: String(localized: "Context window", bundle: .appLocalized, locale: locale), value: "\(ModelBackendBridge.foundationModelsContextSize)")
+                            }
                             if let cachedPromptTokenCount = message.generationCachedPromptTokenCount,
                                cachedPromptTokenCount > 0 {
                                 DeveloperStatRow(label: String(localized: "Cached prompt tokens", bundle: .appLocalized, locale: locale), value: "\(cachedPromptTokenCount)")

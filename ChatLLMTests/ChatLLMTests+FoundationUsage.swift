@@ -1,0 +1,102 @@
+//
+//  ChatLLMTests+FoundationUsage
+//  ChatLLMTests
+//
+//  Part of the single @Suite(.serialized) ChatLLMTests suite.
+//
+
+import Testing
+import Foundation
+import FoundationModels
+@testable import ChatLLM
+
+/// Answers with fixed text and reports fixed usage, like the Apple model does
+/// once a response completes.
+private struct UsageReportingGenerator: LLMGenerator {
+    let metrics: GenerationMetrics
+
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        try await streamResponse(to: request, tools: tools, onMetrics: { _ in })
+    }
+
+    func streamResponse(
+        to request: LLMRequest,
+        tools: [any FoundationModelTool],
+        onMetrics: @escaping @Sendable (GenerationMetrics) -> Void
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield("The sign says OPEN.")
+            onMetrics(metrics)
+            continuation.finish()
+        }
+    }
+}
+
+extension ChatLLMTests {
+    @Test func foundationUsageMapsOntoGenerationMetrics() {
+        let metrics = OnDeviceLLMGenerator.generationMetrics(
+            inputTokens: 261,
+            cachedInputTokens: 40,
+            outputTokens: 12,
+            timeToFirstToken: 0.5,
+            totalTime: 2.0
+        )
+
+        #expect(metrics == GenerationMetrics(
+            promptTokenCount: 261,
+            cachedPromptTokenCount: 40,
+            promptTime: 0.5,
+            outputTokenCount: 12,
+            decodeTime: 1.5,
+            timeToFirstToken: 0.5
+        ))
+    }
+
+    @Test func foundationUsageWithoutAnyOutputCountsTheWholeTimeAsPrompt() {
+        let metrics = OnDeviceLLMGenerator.generationMetrics(
+            inputTokens: 80,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            timeToFirstToken: nil,
+            totalTime: 1.2
+        )
+
+        #expect(metrics.promptTime == 1.2)
+        #expect(metrics.decodeTime == 0)
+        #expect(metrics.timeToFirstToken == nil)
+    }
+
+    @Test func foundationReplyRecordsTheUsageTheModelReported() async throws {
+        let reported = GenerationMetrics(
+            promptTokenCount: 261,
+            cachedPromptTokenCount: 0,
+            promptTime: 0.4,
+            outputTokenCount: 6,
+            decodeTime: 0.3,
+            timeToFirstToken: 0.4
+        )
+        let viewModel = try makeViewModel(generator: UsageReportingGenerator(metrics: reported))
+
+        await viewModel.send(userText: "What does the sign say?")
+
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        #expect(reply.generationBackend == ModelBackendBridge.Backend.foundationModels.displayName)
+        #expect(reply.generationPromptTokenCount == 261)
+        #expect(reply.generationOutputTokenCount == 6)
+        #expect(reply.generationTimeToFirstToken == 0.4)
+    }
+
+    @Test func foundationReplyFromAGeneratorWithoutUsageRecordsNoTokenCounts() async throws {
+        let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
+            AsyncThrowingStream { continuation in
+                continuation.yield("Hello.")
+                continuation.finish()
+            }
+        ]))
+
+        await viewModel.send(userText: "Hi")
+
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        #expect(reply.generationPromptTokenCount == nil)
+    }
+}

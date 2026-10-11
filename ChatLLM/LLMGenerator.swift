@@ -7,6 +7,7 @@
 
 import Foundation
 import FoundationModels
+import OSLog
 
 /// Keep trusted instructions and conversation roles separate from user text.
 /// Serializing roles into the prompt teaches the model to echo that serialization.
@@ -26,6 +27,25 @@ struct LLMRequest: Sendable, Equatable {
 
 protocol LLMGenerator {
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error>
+
+    /// Streams like `streamResponse(to:tools:)` and, once the response
+    /// completes, reports the token counts the model measured for it.
+    func streamResponse(
+        to request: LLMRequest,
+        tools: [any FoundationModelTool],
+        onMetrics: @escaping @Sendable (GenerationMetrics) -> Void
+    ) async throws -> AsyncThrowingStream<String, Error>
+}
+
+extension LLMGenerator {
+    /// Generators that cannot measure usage stream without reporting it.
+    func streamResponse(
+        to request: LLMRequest,
+        tools: [any FoundationModelTool],
+        onMetrics: @escaping @Sendable (GenerationMetrics) -> Void
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        try await streamResponse(to: request, tools: tools)
+    }
 }
 
 extension LLMRequest {
@@ -51,6 +71,8 @@ nonisolated private func makeSafetyBlockedError() -> NSError {
 }
 
 final class OnDeviceLLMGenerator: LLMGenerator {
+
+    nonisolated private static let logger = Logger(subsystem: "Nevio.ChatLLM", category: "OnDeviceLLMGenerator")
 
     nonisolated private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
 
@@ -92,6 +114,14 @@ final class OnDeviceLLMGenerator: LLMGenerator {
     }
 
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        try await streamResponse(to: request, tools: tools, onMetrics: { _ in })
+    }
+
+    func streamResponse(
+        to request: LLMRequest,
+        tools: [any FoundationModelTool],
+        onMetrics: @escaping @Sendable (GenerationMetrics) -> Void
+    ) async throws -> AsyncThrowingStream<String, Error> {
         guard isAvailable() else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: String(localized: "On‑device model unavailable on this device.", bundle: .appLocalized)])
@@ -102,6 +132,9 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         return TaskBackedAsyncThrowingStream.make { continuation in
             Task {
                 do {
+                    let clock = ContinuousClock()
+                    let startedAt = clock.now
+                    var firstPartialAt: ContinuousClock.Instant?
                     var lastYieldedUTF8Count = 0
                     var iterator = session.streamResponse(to: prompt).makeAsyncIterator()
                     while let partial = try await iterator.next() {
@@ -109,6 +142,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                             continuation.finish()
                             return
                         }
+                        if firstPartialAt == nil { firstPartialAt = clock.now }
                         let newContent = partial.content
                         if let delta = Self.incrementalDelta(
                             from: newContent,
@@ -117,6 +151,18 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                             continuation.yield(delta)
                         }
                     }
+                    let usage = session.usage
+                    let metrics = Self.generationMetrics(
+                        inputTokens: usage.input.totalTokenCount,
+                        cachedInputTokens: usage.input.cachedTokenCount,
+                        outputTokens: usage.output.totalTokenCount,
+                        timeToFirstToken: firstPartialAt.map { Self.seconds(startedAt.duration(to: $0)) },
+                        totalTime: Self.seconds(startedAt.duration(to: clock.now))
+                    )
+                    Self.logger.notice(
+                        "Foundation Models usage: input=\(metrics.promptTokenCount, privacy: .public) cached=\(metrics.cachedPromptTokenCount, privacy: .public) output=\(metrics.outputTokenCount, privacy: .public) images=\(request.imageURLs.count, privacy: .public)"
+                    )
+                    onMetrics(metrics)
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
@@ -129,6 +175,32 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                 }
             }
         }
+    }
+
+    /// Maps the session's measured usage onto the stats MLX reports. The
+    /// framework exposes no prefill timing, so time to first token stands in
+    /// for prompt time, and decoding is the rest of the response.
+    nonisolated static func generationMetrics(
+        inputTokens: Int,
+        cachedInputTokens: Int,
+        outputTokens: Int,
+        timeToFirstToken: TimeInterval?,
+        totalTime: TimeInterval
+    ) -> GenerationMetrics {
+        let promptTime = timeToFirstToken ?? totalTime
+        return GenerationMetrics(
+            promptTokenCount: inputTokens,
+            cachedPromptTokenCount: cachedInputTokens,
+            promptTime: promptTime,
+            outputTokenCount: outputTokens,
+            decodeTime: max(0, totalTime - promptTime),
+            timeToFirstToken: timeToFirstToken
+        )
+    }
+
+    nonisolated private static func seconds(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
     nonisolated static func incrementalDelta(

@@ -262,6 +262,12 @@ class ModelBackendBridge: ObservableObject {
         SystemLanguageModel.default.availability == .available
     }
 
+    /// Tokens the Apple Intelligence model can hold in one request, including
+    /// instructions, history, images and the reply.
+    nonisolated static var foundationModelsContextSize: Int {
+        SystemLanguageModel.default.contextSize
+    }
+
     /// Whether the selected model reads images. Image attachments are only
     /// offered when it does.
     var nativeImageInputAvailable: Bool {

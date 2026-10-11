@@ -1157,7 +1157,7 @@ final class ChatViewModel: ObservableObject {
             backendLabel = "MLX"
             modelName = manager.currentModel?.displayName
         case .foundation:
-            backendLabel = "Apple Intelligence"
+            backendLabel = ModelBackendBridge.Backend.foundationModels.displayName
             modelName = "Foundation Models"
         }
 
@@ -1372,7 +1372,11 @@ final class ChatViewModel: ObservableObject {
                         let gateLease = FoundationModelsGateLease(gate: Self.fmGate)
                         do {
                             try Task.checkCancellation()
-                            let textStream = try await self.generator.streamResponse(to: request, tools: tools)
+                            let textStream = try await self.generator.streamResponse(
+                                to: request,
+                                tools: tools,
+                                onMetrics: { metrics in continuation.yield(.metrics(metrics)) }
+                            )
                             for try await chunk in textStream {
                                 try Task.checkCancellation()
                                 continuation.yield(.text(chunk))
