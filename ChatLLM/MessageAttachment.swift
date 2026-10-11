@@ -40,12 +40,6 @@ final class MessageAttachment {
     var createdAt: Date
     var fileName: String
     
-    // --- UPDATED: Store full VisionAnalysisResult ---
-    var analysisResultsData: Data? // JSON-encoded VisionAnalysisResult
-    var detectionProcessed: Bool = false
-    var detectionSummary: String? // Human-readable summary
-    // --- END UPDATE ---
-    
     @Relationship var message: Message?
     
     init(
@@ -84,46 +78,6 @@ final class MessageAttachment {
             print("Warning: Error constructing file URL: \(error)")
             return fileURL // Fallback to stored URL
         }
-    }
-    
-    // MARK: - Detection Results Management
-    
-    /// --- NEW: Store comprehensive VisionAnalysisResult ---
-    @MainActor
-    func storeAnalysisResult(_ result: VisionAnalysisResult) {
-        let encoder = JSONEncoder()
-        if let data = try? encoder.encode(result) {
-            self.analysisResultsData = data
-            self.detectionProcessed = true
-            self.detectionSummary = result.generateSummary() // Use the smart summary
-        } else {
-            print("Error: Failed to encode VisionAnalysisResult")
-        }
-    }
-    
-    /// --- NEW: Retrieve stored VisionAnalysisResult ---
-    @MainActor
-    func getAnalysisResult() -> VisionAnalysisResult? {
-        guard let data = analysisResultsData else { return nil }
-        let decoder = JSONDecoder()
-        do {
-            return try decoder.decode(VisionAnalysisResult.self, from: data)
-        } catch {
-            print("Error: Failed to decode VisionAnalysisResult: \(error)")
-            // Fallback for old [DetectedObject] data
-            if let oldDetections = try? decoder.decode([DetectedObject].self, from: data) {
-                print("Warning: Decoded legacy [DetectedObject] data.")
-                // For legacy data, create the result
-                return VisionAnalysisResult(objects: oldDetections)
-            }
-            return nil
-        }
-    }
-    
-    /// --- LEGACY (for compatibility if needed, but prefer getAnalysisResult) ---
-    @MainActor
-    func getDetectionResults() -> [DetectedObject]? {
-        return getAnalysisResult()?.objects
     }
     
     /// Load the image from disk

@@ -290,7 +290,6 @@ extension ChatLLMTests {
         #expect(loaded.appLanguage == "en")
         #expect(loaded.messageFontSize == 16.0)
         #expect(loaded.autoDeleteDays == 30)
-        #expect(loaded.visionConfidenceThreshold == 0.5)
         // Haptics default on even though `bool(forKey:)` would say false.
         #expect(loaded.enableHaptics)
         #expect(!loaded.sendOnReturn)
@@ -330,7 +329,6 @@ extension ChatLLMTests {
         draft.autoDeleteDays = 7
         draft.developerModeEnabled = true
         draft.disableRAMPrecautions = true
-        draft.visionConfidenceThreshold = 0.8
         draft.disableToolCalls = true
 
         draft.persist(to: defaults, comparedTo: baseline)

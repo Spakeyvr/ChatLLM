@@ -14,12 +14,6 @@ struct AdvancedSettingsView: View {
                 }
                 .accessibilityIdentifier("settings.mlx")
                 NavigationLink {
-                    ImageAnalysisSettingsView(settings: $settings)
-                } label: {
-                    Label("Image Analysis", systemImage: "viewfinder")
-                }
-                .accessibilityIdentifier("settings.imageAnalysis")
-                NavigationLink {
                     DeveloperSettingsView(settings: $settings)
                 } label: {
                     Label("Developer", systemImage: "hammer")
@@ -132,26 +126,6 @@ private struct MLXSettingsView: View {
             }
         }
         .navigationTitle("On-Device Models")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct ImageAnalysisSettingsView: View {
-    @Binding var settings: AppSettingsDraft
-
-    var body: some View {
-        Form {
-            Section {
-                LabeledContent("Confidence Threshold", value: settings.visionConfidenceThreshold.formatted(.percent.precision(.fractionLength(0))))
-                Slider(value: $settings.visionConfidenceThreshold, in: 0.1...0.9, step: 0.05) {
-                    Text("Confidence Threshold")
-                }
-                .accessibilityValue(settings.visionConfidenceThreshold.formatted(.percent.precision(.fractionLength(0))))
-            } footer: {
-                Text("Higher confidence reduces false detections but may miss objects. Used only by the Apple Vision fallback when the selected model cannot analyze images directly.")
-            }
-        }
-        .navigationTitle("Image Analysis")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

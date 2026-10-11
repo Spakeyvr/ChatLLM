@@ -2,9 +2,8 @@
 //  ChatViewModel+ImageAttachments.swift
 //  ChatLLM
 //
-//  Image turns keep the user's own words in `Message.text`. Vision analysis
-//  lives on the attachment and is only added to prompts for backends that
-//  cannot read the image itself.
+//  Images are sent only to models that read them directly. The composer
+//  disables attachments for every other model.
 //
 
 import Foundation
@@ -14,21 +13,10 @@ import OSLog
 
 extension ChatViewModel {
 
-    private var canUseNativeImageSupport: Bool {
-        backendBridge.nativeImageInputAvailable
-    }
-
-    /// Send a user message with an image attachment
-    /// - Parameters:
-    ///   - text: The message text
-    ///   - image: The image to attach
-    ///   - detections: Pre-computed object detections (optional, legacy support)
-    ///   - analysisResult: Full Vision analysis result (preferred)
+    /// Send a user message with an image attachment.
     func sendWithImage(
         text: String,
         image: UIImage,
-        detections: [DetectedObject]? = nil,
-        analysisResult: VisionAnalysisResult? = nil,
         regenerateTitle: Bool = false,
         editedUserMessageID: UUID? = nil
     ) async {
@@ -36,45 +24,29 @@ extension ChatViewModel {
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let userPrompt = trimmed.isEmpty ? "What do you see in this image?" : trimmed
-        
+
         guard !isRegenerating else { return }
         await runGeneration { generationID in
-            if self.canUseNativeImageSupport {
-                await self.sendWithNativeImage(
-                    userPrompt: userPrompt,
-                    image: image,
-                    detections: detections,
-                    analysisResult: analysisResult,
-                    generationID: generationID,
-                    regenerateTitle: regenerateTitle,
-                    editedUserMessageID: editedUserMessageID
-                )
-            } else {
-                await self.sendWithVisionFallback(
-                    userPrompt: userPrompt,
-                    image: image,
-                    detections: detections,
-                    analysisResult: analysisResult,
-                    generationID: generationID,
-                    regenerateTitle: regenerateTitle,
-                    editedUserMessageID: editedUserMessageID
-                )
-            }
+            await self.sendImageTurn(
+                userPrompt: userPrompt,
+                image: image,
+                generationID: generationID,
+                regenerateTitle: regenerateTitle,
+                editedUserMessageID: editedUserMessageID
+            )
         }
     }
 
-    private func sendWithNativeImage(
+    private func sendImageTurn(
         userPrompt: String,
         image: UIImage,
-        detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?,
         generationID: UUID,
         regenerateTitle: Bool,
         editedUserMessageID: UUID?
     ) async {
         let shouldUseReasoning = await resolvedReasoningMode(
             for: userPrompt,
-            logContext: "native image query"
+            logContext: "image query"
         )
 
         guard isGenerationActive(generationID) else { return }
@@ -84,219 +56,41 @@ extension ChatViewModel {
             forceAutoNaming: regenerateTitle,
             replacingMessageID: editedUserMessageID
         ) else { return }
-        let userMsg = turn.message
-        guard let canonicalImageURL = await attachImage(
-            image,
-            detections: detections,
-            analysisResult: analysisResult,
-            to: userMsg
-        ) else {
-            await sendWithVisionFallback(
-                userPrompt: userPrompt,
-                image: image,
-                detections: detections,
-                analysisResult: analysisResult,
-                generationID: generationID,
-                existingUserMessage: userMsg,
-                needsAutoNaming: turn.needsAutoNaming
-            )
-            return
+
+        let isAttached: Bool
+        do {
+            try await addImageAttachment(image, to: turn.message)
+            isAttached = true
+        } catch {
+            logger.error("Failed to attach image: \((error as NSError).localizedDescription, privacy: .public)")
+            isAttached = false
         }
         guard isGenerationActive(generationID) else { return }
         let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
 
-        guard isGenerationActive(generationID) else { return }
-
-        let firstAttempt = await streamAssistant(
-            into: assistantMsg,
-            basedOnHistoryUpTo: assistantMsg.order,
-            additionalUserInstruction: nil,
-            disableWebSearch: true,
-            allowNativeImages: true,
-            generationID: generationID
-        )
-
-        if firstAttempt == .failedBeforeOutput && !assistantMsg.hasContent && isGenerationActive(generationID) {
-            logger.warning("Native image generation failed before output; falling back to Vision analysis context")
-
-            let cachedAttachmentAnalysis = userMsg.attachments
-                .first(where: { $0.type == .image })?
-                .getAnalysisResult()
-            let resolvedAnalysis = await resolveVisionAnalysisResult(
-                canonicalImageURL: canonicalImageURL,
-                fallbackImage: image,
-                detections: detections,
-                analysisResult: analysisResult ?? cachedAttachmentAnalysis
-            )
-            storeImageAnalysis(
-                resolvedAnalysis,
-                detections: detections,
-                on: userMsg
-            )
-
-            conversation.lastUpdated = Date()
-            immediateSave()
-
+        if isAttached {
+            guard isGenerationActive(generationID) else { return }
             _ = await streamAssistant(
                 into: assistantMsg,
                 basedOnHistoryUpTo: assistantMsg.order,
                 additionalUserInstruction: nil,
                 disableWebSearch: true,
-                allowNativeImages: false,
+                allowNativeImages: true,
                 generationID: generationID
             )
+        } else {
+            // Answering without the image would read as if the model had seen it.
+            assistantMsg.generationError = String(
+                localized: "The image couldn't be saved, so it wasn't sent. Try attaching it again.",
+                bundle: .appLocalized
+            )
+            assistantMsg.markAsComplete()
+            conversation.lastUpdated = Date()
+            immediateSave()
         }
 
         guard isGenerationActive(generationID) else { return }
         await finishAutoNamingIfNeeded(turn.needsAutoNaming, userText: userPrompt)
-    }
-
-    private func sendWithVisionFallback(
-        userPrompt: String,
-        image: UIImage,
-        detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?,
-        generationID: UUID,
-        existingUserMessage: Message? = nil,
-        needsAutoNaming existingNeedsAutoNaming: Bool? = nil,
-        regenerateTitle: Bool = false,
-        editedUserMessageID: UUID? = nil
-    ) async {
-        let resolvedAnalysis = await resolveVisionAnalysisResult(
-            canonicalImageURL: nil,
-            fallbackImage: image,
-            detections: detections,
-            analysisResult: analysisResult
-        )
-
-        let shouldUseReasoning = await resolvedReasoningMode(
-            for: userPrompt,
-            logContext: "image query"
-        )
-
-        guard isGenerationActive(generationID) else { return }
-
-        let userMsg: Message
-        let needsAutoNaming: Bool
-        let isAttached: Bool
-        if let existingUserMessage {
-            userMsg = existingUserMessage
-            needsAutoNaming = existingNeedsAutoNaming ?? false
-            isAttached = false
-        } else {
-            guard let turn = prepareUserMessageForSend(
-                userPrompt,
-                forceAutoNaming: regenerateTitle,
-                replacingMessageID: editedUserMessageID
-            ) else { return }
-            userMsg = turn.message
-            needsAutoNaming = turn.needsAutoNaming
-            isAttached = await attachImage(
-                image,
-                detections: nil,
-                analysisResult: resolvedAnalysis,
-                to: userMsg
-            ) != nil
-        }
-        if !isAttached {
-            // Without an attachment the analysis has nowhere else to live.
-            userMsg.text = Self.visionEnhancedText(
-                userPrompt: userPrompt,
-                analysisResult: resolvedAnalysis
-            )
-            conversation.lastUpdated = Date()
-            immediateSave()
-        }
-        guard isGenerationActive(generationID) else { return }
-        let assistantMsg = appendAssistantPlaceholder(isReasoningMode: shouldUseReasoning)
-
-        guard isGenerationActive(generationID) else { return }
-
-        _ = await streamAssistant(
-            into: assistantMsg,
-            basedOnHistoryUpTo: assistantMsg.order,
-            additionalUserInstruction: nil,
-            disableWebSearch: true,
-            allowNativeImages: false,
-            generationID: generationID
-        )
-
-        guard isGenerationActive(generationID) else { return }
-        await finishAutoNamingIfNeeded(needsAutoNaming, userText: userPrompt)
-    }
-
-    private func attachImage(
-        _ image: UIImage,
-        detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?,
-        to message: Message
-    ) async -> URL? {
-        do {
-            let attachment = try await addImageAttachment(image, to: message)
-            storeImageAnalysis(analysisResult, detections: detections, on: attachment)
-            return attachment.actualFileURL
-        } catch {
-            logger.error("Failed to attach image: \((error as NSError).localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
-    private func storeImageAnalysis(
-        _ analysisResult: VisionAnalysisResult?,
-        detections: [DetectedObject]?,
-        on message: Message
-    ) {
-        guard let attachment = message.attachments.first(where: { $0.type == .image }) else {
-            return
-        }
-        storeImageAnalysis(analysisResult, detections: detections, on: attachment)
-    }
-
-    private func storeImageAnalysis(
-        _ analysisResult: VisionAnalysisResult?,
-        detections: [DetectedObject]?,
-        on attachment: MessageAttachment
-    ) {
-        if let analysisResult {
-            attachment.storeAnalysisResult(analysisResult)
-        } else if let detections, !detections.isEmpty {
-            attachment.storeAnalysisResult(VisionAnalysisResult(objects: detections))
-        }
-    }
-
-    private func resolveVisionAnalysisResult(
-        canonicalImageURL: URL?,
-        fallbackImage: UIImage,
-        detections: [DetectedObject]?,
-        analysisResult: VisionAnalysisResult?
-    ) async -> VisionAnalysisResult? {
-        if let analysisResult {
-            return analysisResult
-        }
-
-        if let detections, !detections.isEmpty {
-            return VisionAnalysisResult(objects: detections)
-        }
-
-        let analyzer = VisionAnalyzer()
-        // Use a lighter analysis set in the fallback path — we're already under memory pressure
-        // (native VLM generation failed). Body pose, hands, saliency, and face quality are
-        // not needed for the fallback Vision context sent to the LLM.
-        var options = AnalysisOptions.objectsAndText
-        options.minimumTextConfidence = 0.3
-        options.useAccurateOCR = true
-
-        if let canonicalImageURL {
-            logger.debug("Vision fallback source: canonical attachment \(canonicalImageURL.lastPathComponent, privacy: .public)")
-            if let canonicalImage = await DiskBackedImageLoader.loadImage(at: canonicalImageURL) {
-                return try? await analyzer.analyze(image: canonicalImage, options: options)
-            }
-            logger.warning("Failed to load canonical attachment for fallback analysis; using the prepared in-memory image")
-        } else {
-            logger.warning("No canonical attachment URL for fallback analysis; using the prepared in-memory image")
-        }
-
-        return try? await analyzer.analyze(image: fallbackImage, options: options)
     }
 
     // MARK: - Private Helpers

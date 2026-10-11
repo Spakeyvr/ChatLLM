@@ -10,7 +10,7 @@ import MLXLMCommon
 import os.log
 
 // swiftlint:disable:next force_try
-private let _nativeImageVisionFallbackRegex = try! NSRegularExpression(
+private let _legacyImageAnalysisRegex = try! NSRegularExpression(
     pattern: #"--- Image Analysis Data ---.*?--- End Image Analysis ---\s*User's question:\s*"#,
     options: [.dotMatchesLineSeparators, .caseInsensitive])
 
@@ -50,7 +50,6 @@ extension ChatViewModel {
     private struct AttachmentSnapshot {
         let type: AttachmentType
         let actualFileURL: URL
-        let analysis: VisionAnalysisResult?
     }
 
     private struct MessageSnapshot {
@@ -69,11 +68,7 @@ extension ChatViewModel {
             .sortedByOrder
             .map { message in
                 let attachmentSnapshots = message.attachments.map { attachment in
-                    AttachmentSnapshot(
-                        type: attachment.type,
-                        actualFileURL: attachment.actualFileURL,
-                        analysis: attachment.type == .image ? attachment.getAnalysisResult() : nil
-                    )
+                    AttachmentSnapshot(type: attachment.type, actualFileURL: attachment.actualFileURL)
                 }
                 return MessageSnapshot(
                     order: message.order,
@@ -111,32 +106,22 @@ extension ChatViewModel {
         return prompts.joined(separator: "\n\n")
     }
 
-    /// The user text a backend sees for one turn. Vision analysis is stored on
-    /// the image attachment and only spliced in when the pixels are not sent.
-    private func promptUserText(
-        for snapshot: MessageSnapshot,
-        sendsImagesNatively: Bool,
-        isLatestUserMessage: Bool
-    ) -> String {
-        let images = snapshot.attachments.filter { $0.type == .image }
-        guard !images.isEmpty else { return snapshot.text }
+    /// Image turns saved while the app still described images in text carry
+    /// that description inline. Models only see the user's own words now.
+    private func promptUserText(for snapshot: MessageSnapshot) -> String {
+        guard snapshot.text.contains(Self.imageAnalysisMarker) else { return snapshot.text }
 
-        // Turns saved before analysis moved to the attachment carry it inline.
-        if snapshot.text.contains(Self.imageAnalysisMarker) {
-            return sendsImagesNatively
-                ? stripVisionFallbackFromNativeImageUserText(snapshot.text)
-                : snapshot.text
-        }
-        guard !sendsImagesNatively else { return snapshot.text }
-
-        if let analysis = images.lazy.compactMap(\.analysis).first {
-            return Self.visionEnhancedText(userPrompt: snapshot.text, analysisResult: analysis)
-        }
-        // An older image the model never saw is better left unmentioned than
-        // described as unreadable; the reply that followed it carries context.
-        return isLatestUserMessage
-            ? Self.visionEnhancedText(userPrompt: snapshot.text, analysisResult: nil)
-            : snapshot.text
+        let ns = snapshot.text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        let result = _legacyImageAnalysisRegex.stringByReplacingMatches(
+            in: snapshot.text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        return result
+            .replacingOccurrences(of: "\n\nPlease respond based on the image analysis data above.", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func userTextApplyingChatPreferences(
@@ -312,19 +297,10 @@ extension ChatViewModel {
         )
     }
 
-    /// Budgets image turns at their Vision-summary length, which also leaves
-    /// room for the pixels when a backend reads the image itself.
     private func promptBudgetContent(
         for snapshot: MessageSnapshot
     ) -> String {
-        switch snapshot.role {
-        case .assistant:
-            assistantContent(of: snapshot)
-        case .user:
-            promptUserText(for: snapshot, sendsImagesNatively: false, isLatestUserMessage: false)
-        case .system:
-            snapshot.text
-        }
+        snapshot.role == .assistant ? assistantContent(of: snapshot) : promptUserText(for: snapshot)
     }
 
     /// The part of an assistant turn that is replayed into later prompts:
@@ -394,15 +370,9 @@ extension ChatViewModel {
         var turns: [LLMRequest.Turn] = snapshots.compactMap { msg in
             switch msg.role {
             case .user:
-                let isLatestUserMessage = msg.order == latestUserOrder
-                let text = promptUserText(
-                    for: msg,
-                    sendsImagesNatively: isLatestUserMessage && !latestUserImageURLs.isEmpty,
-                    isLatestUserMessage: isLatestUserMessage
-                )
                 let userText = userTextApplyingChatPreferences(
-                    text,
-                    isLatestUserMessage: isLatestUserMessage
+                    promptUserText(for: msg),
+                    isLatestUserMessage: msg.order == latestUserOrder
                 )
                 return .init(role: .user, content: userText)
             case .assistant:
@@ -412,20 +382,12 @@ extension ChatViewModel {
             }
         }
 
-        let hasVisionImageAnalysisData = turns.contains {
-            $0.role == .user && $0.content.contains(Self.imageAnalysisMarker)
-        }
-
         // Static prefix first (stable across turns → friendly to KV-cache reuse),
         // volatile datetime appended last.
         var systemPrompt = Self.baseSystemPrompt(modelIdentity: modelIdentity)
 
         if let customSystemPrompt = customSystemPromptText(from: allSnapshots) {
             systemPrompt += "\n\n" + customSystemPrompt
-        }
-
-        if hasVisionImageAnalysisData {
-            systemPrompt += "\n\n" + Self.foundationVisionImageInstructions
         }
 
         if reasoningActive {
@@ -450,27 +412,6 @@ extension ChatViewModel {
             prompt: prompt,
             imageURLs: latestUserImageURLs
         )
-    }
-
-    private func stripVisionFallbackFromNativeImageUserText(_ text: String) -> String {
-        guard text.contains(Self.imageAnalysisMarker) else {
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        let ns = text as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        var result = _nativeImageVisionFallbackRegex.stringByReplacingMatches(
-            in: text,
-            options: [],
-            range: range,
-            withTemplate: ""
-        )
-        result = result.replacingOccurrences(
-            of: "\n\nPlease respond based on the image analysis data above.",
-            with: ""
-        )
-
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Qwen3.5 Message Builder (MLX)
@@ -548,7 +489,7 @@ extension ChatViewModel {
             } catch {
                 if !warnedForPreparationFailure {
                     warnedForPreparationFailure = true
-                    logger.warning("Native image preprocessing failed before generation; will trigger Vision fallback. Error: \(error.localizedDescription, privacy: .public)")
+                    logger.warning("Native image preprocessing failed before generation. Error: \(error.localizedDescription, privacy: .public)")
                 }
                 throw error
             }
@@ -669,13 +610,8 @@ extension ChatViewModel {
             case .user:
                 let includeImages = includeLatestUserImages && msg.order == latestUserOrder
                 let images = includeImages ? (try await nativeImageInputs(from: msg.attachments)) : []
-                let userText = promptUserText(
-                    for: msg,
-                    sendsImagesNatively: !images.isEmpty,
-                    isLatestUserMessage: msg.order == latestUserOrder
-                )
                 let userTextWithPreferences = userTextApplyingChatPreferences(
-                    userText,
+                    promptUserText(for: msg),
                     isLatestUserMessage: msg.order == latestUserOrder
                 )
                 messages.append(.user(userTextWithPreferences, images: images))
@@ -707,65 +643,6 @@ extension ChatViewModel {
         - NEVER provide illegal content or encourage illegal actions
         """
     }
-
-    /// Wraps a user question with the Vision summary of its image, for models
-    /// that cannot read the image itself.
-    internal static func visionEnhancedText(
-        userPrompt: String,
-        analysisResult: VisionAnalysisResult?
-    ) -> String {
-        let imageContext: String
-        if let result = analysisResult {
-            if !result.isEmpty {
-                imageContext = result.generateDetailedDescription()
-            } else {
-                imageContext = """
-                [IMAGE ANALYSIS]
-
-                The Vision framework analyzed the image but found:
-                - No specific objects detected
-                - No text recognized (OCR found nothing)
-                - No faces detected
-
-                This could mean the image contains:
-                - Stylized or artistic text that OCR couldn't read
-                - Illustrations or artwork without clear objects
-                - Content with low contrast or unusual fonts
-
-                Please base your response on what the user is asking about.
-                """
-            }
-        } else {
-            imageContext = """
-            [IMAGE ANALYSIS]
-
-            An image was attached but the Vision framework couldn't process it.
-            This might be due to the image format or content type.
-
-            Please acknowledge that you can see an image was shared but cannot analyze its contents directly.
-            """
-        }
-
-        return """
-        \(imageAnalysisMarker)
-        \(imageContext)
-        --- End Image Analysis ---
-
-        User's question: \(userPrompt)
-
-        Please respond based on the image analysis data above.
-        """
-    }
-
-    internal static let foundationVisionImageInstructions: String = """
-    IMAGE ANALYSIS INSTRUCTIONS:
-    - The user message may contain a "--- Image Analysis Data ---" block generated by Apple's Vision framework.
-    - Treat that block as structured observations about the attached image, including OCR text, objects, faces, and scene hints.
-    - When users ask what text says, quote from the provided analysis data directly when possible.
-    - Do not claim you cannot analyze the image if usable analysis data is present.
-    - If the analysis is partial, answer with what the data supports and state limits briefly.
-    - Focus on the user's actual question rather than restating the full analysis block.
-    """
 
     internal static func webSearchSystemPrompt(reasoningEnabled: Bool, forceSearchRequired: Bool) -> String {
         let currentYear = Calendar.current.component(.year, from: Date())

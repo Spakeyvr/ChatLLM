@@ -262,14 +262,14 @@ class ModelBackendBridge: ObservableObject {
         SystemLanguageModel.default.availability == .available
     }
 
-    /// Whether the current backend reads image pixels itself. When it does not,
-    /// images reach the model only as a Vision analysis summary in the prompt.
+    /// Whether the selected model reads images. Image attachments are only
+    /// offered when it does.
     var nativeImageInputAvailable: Bool {
         switch selectedBackend {
         case .foundationModels:
             return SystemLanguageModel.default.capabilities.contains(.vision)
         case .mlx:
-            return modelManager?.currentModel?.supportsNativeImages ?? false
+            return selectedMLXModel?.supportsNativeImages ?? false
         }
     }
 

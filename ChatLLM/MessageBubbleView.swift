@@ -1100,34 +1100,15 @@ struct MessageImageAttachmentView: View {
                 Button {
                     showFullscreen = true
                 } label: {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(maxWidth: 240, maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                            )
-
-                        if let detections = attachment.getDetectionResults(), !detections.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "viewfinder.circle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.blue)
-
-                                Text("\(detections.count) objects detected")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .clipShape(Capsule())
-                            .padding(.top, 4)
-                        }
-                    }
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: 240, maxHeight: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
             } else if isLoading {

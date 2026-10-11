@@ -17,7 +17,6 @@ nonisolated enum AppSettingsKeys {
     static let autoDeleteDays = "autoDeleteDays"
     static let developerModeEnabled = "developerModeEnabled"
     static let disableRAMPrecautions = "disableRAMPrecautions"
-    static let visionConfidenceThreshold = "visionConfidenceThreshold"
     static let disableToolCalls = "disableToolCalls"
     static let selectedLLMBackend = "selectedLLMBackend"
     static let selectedCustomModelID = "selectedCustomModelID"
@@ -41,7 +40,6 @@ struct AppSettingsDraft: Equatable {
     var autoDeleteDays: Int
     var developerModeEnabled: Bool
     var disableRAMPrecautions: Bool
-    var visionConfidenceThreshold: Double
     var disableToolCalls: Bool
 
     static func load(from defaults: UserDefaults = .standard) -> Self {
@@ -66,7 +64,6 @@ struct AppSettingsDraft: Equatable {
             autoDeleteDays: defaults.object(forKey: AppSettingsKeys.autoDeleteDays) as? Int ?? 30,
             developerModeEnabled: defaults.bool(forKey: AppSettingsKeys.developerModeEnabled),
             disableRAMPrecautions: defaults.bool(forKey: AppSettingsKeys.disableRAMPrecautions),
-            visionConfidenceThreshold: defaults.object(forKey: AppSettingsKeys.visionConfidenceThreshold) as? Double ?? 0.5,
             disableToolCalls: defaults.bool(forKey: AppSettingsKeys.disableToolCalls)
         )
     }
@@ -89,7 +86,6 @@ struct AppSettingsDraft: Equatable {
             autoDeleteDays: 30,
             developerModeEnabled: false,
             disableRAMPrecautions: false,
-            visionConfidenceThreshold: 0.5,
             disableToolCalls: false
         )
     }
@@ -146,9 +142,6 @@ struct AppSettingsDraft: Equatable {
         }
         if previous?.disableRAMPrecautions != disableRAMPrecautions {
             defaults.set(disableRAMPrecautions, forKey: AppSettingsKeys.disableRAMPrecautions)
-        }
-        if previous?.visionConfidenceThreshold != visionConfidenceThreshold {
-            defaults.set(visionConfidenceThreshold, forKey: AppSettingsKeys.visionConfidenceThreshold)
         }
         if previous?.disableToolCalls != disableToolCalls {
             defaults.disableToolCalls = disableToolCalls

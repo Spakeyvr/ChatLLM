@@ -46,12 +46,7 @@ struct ChatView: View {
     @State private var showImagePicker = false
     @State private var selectedImage: UIImage?
     @State private var selectedImageToken = UUID()
-    /// Set while an image send awaits Vision analysis, so a second tap cannot
-    /// start a duplicate send before the image is cleared from the composer.
-    @State private var isPreparingImageSend = false
-    @State private var detectedObjects: [DetectedObject]?
     @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var fullImageAnalysis: VisionAnalysisResult?
 
     // Error handling states
     @State private var errorAlert: ErrorAlert?
@@ -79,8 +74,8 @@ struct ChatView: View {
     }
     private var lastMessageID: UUID? { sortedMessages.last?.id }
 
-    private var shouldPrecomputeVisionAnalysis: Bool {
-        !modelBackendBridge.nativeImageInputAvailable
+    private var imageInputAvailable: Bool {
+        modelBackendBridge.nativeImageInputAvailable
     }
 
     private var webSearchToggleAvailable: Bool {
@@ -414,7 +409,7 @@ struct ChatView: View {
             placeholder: String(localized: "Ask anything", bundle: .appLocalized, locale: locale),
             focusRequest: composerFocusRequest,
             isEditing: editingSession != nil,
-            canSend: !isPreparingImageSend && (selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+            canSend: selectedImage != nil || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             isGenerating: viewModel.isGenerating,
             onSend: {
                 Task { await sendIfPossible() }
@@ -432,6 +427,7 @@ struct ChatView: View {
             onFileImporter: {
                 isFileImporterPresented = true
             },
+            imageInputAvailable: imageInputAvailable,
             forceSearch: $forceSearch,
             searchAvailable: webSearchToggleAvailable,
             disableToolCalls: disableToolCallsBinding,
@@ -464,15 +460,16 @@ struct ChatView: View {
 
         // Check if we have an image to send
         if let image = selectedImage {
-            guard !viewModel.isGenerating, !isPreparingImageSend else { return }
-            isPreparingImageSend = true
-            defer { isPreparingImageSend = false }
-
-            var analysis = fullImageAnalysis
-            var detections = detectedObjects ?? []
-            if shouldPrecomputeVisionAnalysis && analysis == nil {
-                analysis = await analyzeImage(image)
-                detections = analysis?.objects ?? detections
+            guard !viewModel.isGenerating else { return }
+            // An image picked before switching to a text-only model stays in
+            // the composer; that model would answer without seeing it.
+            guard imageInputAvailable else {
+                await handleError(
+                    ImageError.unsupportedByModel,
+                    title: String(localized: "Can't Send Image", bundle: .appLocalized),
+                    retry: nil
+                )
+                return
             }
 
             let replacementText = textToSend.isEmpty ? "Describe what you see" : textToSend
@@ -486,8 +483,6 @@ struct ChatView: View {
                 await viewModel.sendWithImage(
                     text: replacementText,
                     image: image,
-                    detections: detections,
-                    analysisResult: analysis,
                     regenerateTitle: editingCommit.requiresTitleRegeneration,
                     editedUserMessageID: editingCommit.messageID
                 )
@@ -598,20 +593,8 @@ struct ChatView: View {
     }
 
     private func prepareSelectedImage(_ image: UIImage) async {
-        let token = await MainActor.run {
+        await MainActor.run {
             setSelectedImage(image)
-        }
-        let shouldAnalyze = await MainActor.run {
-            shouldPrecomputeVisionAnalysis
-        }
-        if shouldAnalyze {
-            await runVisionAnalysis(on: image, token: token)
-        } else {
-            await MainActor.run {
-                guard selectedImageToken == token else { return }
-                detectedObjects = nil
-                fullImageAnalysis = nil
-            }
         }
     }
 
@@ -627,46 +610,16 @@ struct ChatView: View {
     }
 
     @MainActor
-    @discardableResult
-    private func setSelectedImage(_ image: UIImage) -> UUID {
+    private func setSelectedImage(_ image: UIImage) {
         selectedImage = image
-        detectedObjects = nil
-        fullImageAnalysis = nil
         selectedImageToken = UUID()
         forceSearch = false
-        return selectedImageToken
     }
 
     @MainActor
     private func clearSelectedImage() {
         selectedImage = nil
-        detectedObjects = nil
-        fullImageAnalysis = nil
         selectedImageToken = UUID()
-    }
-
-    private func analyzeImage(_ image: UIImage) async -> VisionAnalysisResult? {
-        let analyzer = VisionAnalyzer()
-        var options = AnalysisOptions.all
-        options.minimumTextConfidence = 0.3
-        options.useAccurateOCR = true
-        return try? await analyzer.analyze(image: image, options: options)
-    }
-
-    private func runVisionAnalysis(on image: UIImage, token: UUID) async {
-        if let result = await analyzeImage(image) {
-            await MainActor.run {
-                guard selectedImageToken == token else { return }
-                detectedObjects = result.objects
-                fullImageAnalysis = result
-            }
-        } else {
-            await MainActor.run {
-                guard selectedImageToken == token else { return }
-                detectedObjects = []
-                fullImageAnalysis = nil
-            }
-        }
     }
 
     // MARK: - Error Types
@@ -675,7 +628,7 @@ struct ChatView: View {
         case noData
         case invalidFormat
         case accessDenied
-        case ocrFailed
+        case unsupportedByModel
 
         var errorDescription: String? {
             switch self {
@@ -685,8 +638,8 @@ struct ChatView: View {
                 return String(localized: "The selected file is not a valid image.", bundle: .appLocalized)
             case .accessDenied:
                 return String(localized: "Access to the file was denied.", bundle: .appLocalized)
-            case .ocrFailed:
-                return String(localized: "Failed to extract text from the image.", bundle: .appLocalized)
+            case .unsupportedByModel:
+                return String(localized: "The selected model can't read images. Remove the image or switch to a model that supports images.", bundle: .appLocalized)
             }
         }
     }

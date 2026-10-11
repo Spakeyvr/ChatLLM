@@ -526,7 +526,7 @@ final class ChatLLMUITests: XCTestCase {
             settingsBackButton(in: app).tap()
         }
         app.buttons["settings.advanced"].tap()
-        for (id, title) in [("mlx", "On-Device Models"), ("imageAnalysis", "Image Analysis"), ("developer", "Developer")] {
+        for (id, title) in [("mlx", "On-Device Models"), ("developer", "Developer")] {
             app.buttons["settings.\(id)"].tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 3))
             captureSettingsScreenshot("settings-\(id)", in: app)

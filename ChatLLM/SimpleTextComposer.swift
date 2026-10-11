@@ -45,6 +45,7 @@ struct SimpleTextComposer: View {
     var onCamera: (() -> Void)?
     var onPhotosPicker: (() -> Void)?
     var onFileImporter: (() -> Void)?
+    var imageInputAvailable: Bool = true
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
     @Binding var disableToolCalls: Bool
@@ -113,6 +114,7 @@ struct SimpleTextComposer: View {
                             onCamera: { showAddSheet = false; onCamera?() },
                             onPhotoLibrary: { showAddSheet = false; onPhotosPicker?() },
                             onFile: { showAddSheet = false; onFileImporter?() },
+                            imageInputAvailable: imageInputAvailable,
                             forceSearch: $forceSearch,
                             searchAvailable: searchAvailable,
                             disableToolCalls: $disableToolCalls,
@@ -225,6 +227,7 @@ private struct AddOptionsSheet: View {
     var onCamera: () -> Void
     var onPhotoLibrary: () -> Void
     var onFile: () -> Void
+    var imageInputAvailable: Bool
     @Binding var forceSearch: Bool
     var searchAvailable: Bool
     @Binding var disableToolCalls: Bool
@@ -237,6 +240,8 @@ private struct AddOptionsSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
+                // Every attach option imports an image, so all of them depend
+                // on the model reading images itself.
                 HStack(spacing: 12) {
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         AttachTile(icon: "camera", label: "Camera", action: onCamera)
@@ -244,9 +249,18 @@ private struct AddOptionsSheet: View {
                     AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
                     AttachTile(icon: "doc.badge.arrow.up", label: "Files", action: onFile)
                 }
+                .disabled(!imageInputAvailable)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
-                .padding(.bottom, 24)
+                .padding(.bottom, imageInputAvailable ? 24 : 8)
+
+                if !imageInputAvailable {
+                    Text("This model can't read images.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                }
 
                 Divider()
                     .padding(.horizontal, 20)
@@ -347,6 +361,7 @@ private struct AddOptionsSheet: View {
 }
 
 private struct AttachTile: View {
+    @Environment(\.isEnabled) private var isEnabled
     let icon: String
     let label: LocalizedStringKey
     let action: () -> Void
@@ -365,7 +380,7 @@ private struct AttachTile: View {
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.primary)
+        .foregroundStyle(isEnabled ? .primary : .tertiary)
     }
 }
 

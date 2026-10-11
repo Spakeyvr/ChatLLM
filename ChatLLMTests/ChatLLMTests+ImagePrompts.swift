@@ -12,17 +12,27 @@ import UIKit
 @testable import ChatLLM
 
 extension ChatLLMTests {
-    private static let signAnalysis = VisionAnalysisResult(
-        textBlocks: [RecognizedText(text: "OPEN 24 HOURS", confidence: 0.95, boundingBox: .zero)]
-    )
+    /// How image turns were saved while the app still described images in text.
+    private static let legacyImageTurnText = """
+    --- Image Analysis Data ---
+    [IMAGE ANALYSIS]
+
+    TEXT CONTENT:
+      "OPEN 24 HOURS"
+
+    --- End Image Analysis ---
+
+    User's question: What does the sign say?
+
+    Please respond based on the image analysis data above.
+    """
 
     @discardableResult
     private func appendImageTurn(
         to viewModel: ChatViewModel,
         text: String,
         order: Int,
-        imageURL: URL,
-        analysis: VisionAnalysisResult? = nil
+        imageURL: URL
     ) -> (message: ChatLLM.Message, attachment: MessageAttachment) {
         let message = ChatLLM.Message(
             role: .user,
@@ -36,9 +46,6 @@ extension ChatLLMTests {
             fileURL: imageURL,
             fileName: imageURL.lastPathComponent
         )
-        if let analysis {
-            attachment.storeAnalysisResult(analysis)
-        }
         attachment.message = message
         message.attachments.append(attachment)
         viewModel.conversation.messages.append(message)
@@ -61,7 +68,7 @@ extension ChatLLMTests {
         try await ImageStore.shared.save(image: makeTestImage(width: 64, height: 48), maxDimension: 64)
     }
 
-    @Test func buildFoundationRequestSendsTheLatestImageInsteadOfItsVisionSummary() async throws {
+    @Test func buildFoundationRequestSendsTheLatestImageWithThePlainQuestion() async throws {
         let imageURL = try await saveTestImage()
         defer { Task { try? await ImageStore.shared.delete(url: imageURL) } }
         let viewModel = try makeViewModel()
@@ -69,8 +76,7 @@ extension ChatLLMTests {
             to: viewModel,
             text: "What does the sign say?",
             order: 0,
-            imageURL: imageURL,
-            analysis: Self.signAnalysis
+            imageURL: imageURL
         )
 
         let request = viewModel.buildFoundationRequest(
@@ -80,29 +86,18 @@ extension ChatLLMTests {
 
         #expect(request.imageURLs == [turn.attachment.actualFileURL])
         #expect(request.prompt == "What does the sign say?")
-        #expect(!request.instructions.contains("IMAGE ANALYSIS INSTRUCTIONS"))
     }
 
-    @Test func buildFoundationRequestAddsTheStoredVisionSummaryWhenImagesAreNotSent() async throws {
+    @Test func buildFoundationRequestSendsOnlyTheQuestionWhenImagesAreNotIncluded() async throws {
         let imageURL = try await saveTestImage()
         defer { Task { try? await ImageStore.shared.delete(url: imageURL) } }
         let viewModel = try makeViewModel()
-        let turn = appendImageTurn(
-            to: viewModel,
-            text: "What does the sign say?",
-            order: 0,
-            imageURL: imageURL,
-            analysis: Self.signAnalysis
-        )
+        appendImageTurn(to: viewModel, text: "What does the sign say?", order: 0, imageURL: imageURL)
 
         let request = viewModel.buildFoundationRequest(upToOrderExclusive: 1)
 
         #expect(request.imageURLs.isEmpty)
-        #expect(request.prompt.contains("--- Image Analysis Data ---"))
-        #expect(request.prompt.contains("OPEN 24 HOURS"))
-        #expect(request.prompt.contains("User's question: What does the sign say?"))
-        #expect(request.instructions.contains("IMAGE ANALYSIS INSTRUCTIONS"))
-        #expect(turn.message.text == "What does the sign say?")
+        #expect(request.prompt == "What does the sign say?")
     }
 
     @Test func buildFoundationRequestOnlySendsTheLatestUserTurnsImages() async throws {
@@ -132,34 +127,13 @@ extension ChatLLMTests {
         #expect(request.prompt == "And this one?")
     }
 
-    @Test func buildFoundationRequestStripsLegacyInlineAnalysisWhenSendingTheImage() async throws {
-        let imageURL = try await saveTestImage()
-        defer { Task { try? await ImageStore.shared.delete(url: imageURL) } }
-        let viewModel = try makeViewModel()
-        let legacyText = ChatViewModel.visionEnhancedText(
-            userPrompt: "What is this?",
-            analysisResult: Self.signAnalysis
-        )
-        appendImageTurn(to: viewModel, text: legacyText, order: 0, imageURL: imageURL)
-
-        let nativeRequest = viewModel.buildFoundationRequest(
-            upToOrderExclusive: 1,
-            includeLatestUserImages: true
-        )
-        let textRequest = viewModel.buildFoundationRequest(upToOrderExclusive: 1)
-
-        #expect(nativeRequest.prompt == "What is this?")
-        #expect(textRequest.prompt == legacyText)
-    }
-
-    @Test func buildFoundationRequestFallsBackToTheVisionSummaryWhenTheImageFileIsMissing() throws {
+    @Test func buildFoundationRequestSkipsImageFilesThatNoLongerExist() throws {
         let viewModel = try makeViewModel()
         appendImageTurn(
             to: viewModel,
             text: "What does the sign say?",
             order: 0,
-            imageURL: URL(fileURLWithPath: "/tmp/missing-\(UUID().uuidString).jpg"),
-            analysis: Self.signAnalysis
+            imageURL: URL(fileURLWithPath: "/tmp/missing-\(UUID().uuidString).jpg")
         )
 
         let request = viewModel.buildFoundationRequest(
@@ -168,42 +142,30 @@ extension ChatLLMTests {
         )
 
         #expect(request.imageURLs.isEmpty)
-        #expect(request.prompt.contains("OPEN 24 HOURS"))
+        #expect(request.prompt == "What does the sign say?")
     }
 
-    @Test func buildFoundationRequestLeavesOlderUnanalyzedImageTurnsAsPlainText() async throws {
+    @Test func buildFoundationRequestStripsLegacyInlineImageDescriptions() async throws {
         let imageURL = try await saveTestImage()
         defer { Task { try? await ImageStore.shared.delete(url: imageURL) } }
         let viewModel = try makeViewModel()
-        appendImageTurn(to: viewModel, text: "Describe this photo", order: 0, imageURL: imageURL)
-        appendAssistantTurn(to: viewModel, text: "A red bicycle against a wall.", order: 1)
-        viewModel.conversation.messages.append(
-            ChatLLM.Message(
-                role: .user,
-                text: "What color is it?",
-                order: 2,
-                conversation: viewModel.conversation,
-                isFinal: true
-            )
+        appendImageTurn(to: viewModel, text: Self.legacyImageTurnText, order: 0, imageURL: imageURL)
+
+        let nativeRequest = viewModel.buildFoundationRequest(
+            upToOrderExclusive: 1,
+            includeLatestUserImages: true
         )
+        let textRequest = viewModel.buildFoundationRequest(upToOrderExclusive: 1)
 
-        let request = viewModel.buildFoundationRequest(upToOrderExclusive: 3)
-
-        #expect(request.history.first == .init(role: .user, content: "Describe this photo"))
-        #expect(!request.instructions.contains("IMAGE ANALYSIS INSTRUCTIONS"))
+        #expect(nativeRequest.prompt == "What does the sign say?")
+        #expect(textRequest.prompt == "What does the sign say?")
     }
 
-    @Test func buildQwenMessagesAddsTheStoredVisionSummaryWhenImagesAreNotSent() async throws {
+    @Test func buildQwenMessagesStripsLegacyInlineImageDescriptions() async throws {
         let imageURL = try await saveTestImage()
         defer { Task { try? await ImageStore.shared.delete(url: imageURL) } }
         let viewModel = try makeViewModel()
-        appendImageTurn(
-            to: viewModel,
-            text: "What does the sign say?",
-            order: 0,
-            imageURL: imageURL,
-            analysis: Self.signAnalysis
-        )
+        appendImageTurn(to: viewModel, text: Self.legacyImageTurnText, order: 0, imageURL: imageURL)
 
         let messages = try await viewModel.buildQwenMessages(
             upToOrderExclusive: 1,
@@ -211,8 +173,14 @@ extension ChatLLMTests {
         )
         let userMessage = try #require(messages.last(where: { $0.role == .user }))
 
-        #expect(userMessage.content.contains("OPEN 24 HOURS"))
-        #expect(userMessage.content.contains("User's question: What does the sign say?"))
+        #expect(userMessage.content == "What does the sign say?")
         #expect(userMessage.images.isEmpty)
+    }
+
+    @Test func mlxBackendWithoutALoadedModelCannotTakeImages() throws {
+        let bridge = ModelBackendBridge(defaults: try makeScratchDefaults(#function))
+        bridge.selectedBackend = .mlx
+
+        #expect(!bridge.nativeImageInputAvailable)
     }
 }

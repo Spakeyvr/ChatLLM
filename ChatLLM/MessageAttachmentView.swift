@@ -15,7 +15,6 @@ struct FullscreenAttachmentImageView: View {
             if let image {
                 FullscreenImageView(
                     image: image,
-                    detections: attachment.getDetectionResults(),
                     isPresented: $isPresented
                 )
             } else if finishedLoading {
@@ -36,10 +35,8 @@ struct FullscreenAttachmentImageView: View {
 
 struct FullscreenImageView: View {
     let image: UIImage
-    let detections: [DetectedObject]?
     @Binding var isPresented: Bool
     
-    @State private var showDetections = true
     @State private var isDraggingToDismiss = false
     @State private var dragOffset: CGSize = .zero
     
@@ -52,8 +49,9 @@ struct FullscreenImageView: View {
             
             // The Zoomable View
             ZoomableScrollView {
-                // Renamed to avoid conflict with your existing struct
-                AttachmentDetectionOverlay(image: image, detections: showDetections ? detections : nil)
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
             }
             .offset(y: dragOffset.height)
             .gesture(
@@ -86,17 +84,6 @@ struct FullscreenImageView: View {
                         .foregroundStyle(.primary)
                     
                     Spacer()
-                    
-                    if detections != nil && !detections!.isEmpty {
-                        Button {
-                            withAnimation { showDetections.toggle() }
-                        } label: {
-                            Image(systemName: showDetections ? "eye.fill" : "eye.slash.fill")
-                                .frame(width: 22, height: 22)
-                        }
-                        .buttonStyle(.glass)
-                        .foregroundStyle(.primary)
-                    }
                 }
                 .padding(.horizontal)
                 .padding(.top, 8)
@@ -180,49 +167,5 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
                 y: scrollView.contentSize.height * 0.5 + offsetY
             )
         }
-    }
-}
-
-// MARK: - Detection Overlay (Renamed)
-
-/// Renamed from 'ImageWithDetections' to avoid conflicts if you have that defined elsewhere
-struct AttachmentDetectionOverlay: View {
-    let image: UIImage
-    let detections: [DetectedObject]?
-    
-    var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .overlay {
-                if let detections = detections {
-                    GeometryReader { geo in
-                        ForEach(detections, id: \.label) { detection in
-                            let rect = detection.boundingBox
-                            let pixelRect = CGRect(
-                                x: rect.minX * geo.size.width,
-                                y: rect.minY * geo.size.height,
-                                width: rect.width * geo.size.width,
-                                height: rect.height * geo.size.height
-                            )
-                            
-                            ZStack(alignment: .topLeading) {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.yellow, lineWidth: 2)
-                                Text("\(detection.label) \(Int(detection.confidence * 100))%")
-                                    .font(.caption2)
-                                    .bold()
-                                    .padding(4)
-                                    .background(Color.yellow)
-                                    .foregroundStyle(.black)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                                    .offset(y: -20)
-                            }
-                            .frame(width: pixelRect.width, height: pixelRect.height)
-                            .position(x: pixelRect.midX, y: pixelRect.midY)
-                        }
-                    }
-                }
-            }
     }
 }

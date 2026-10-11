@@ -42,52 +42,6 @@ extension ChatLLMTests {
         #expect(attachment.actualFileURL.standardizedFileURL == expected.standardizedFileURL)
     }
 
-    @Test func attachmentAnalysisResultRoundTripsWithASummary() {
-        let attachment = MessageAttachment(
-            type: .image,
-            fileURL: URL(fileURLWithPath: "pic.jpg"),
-            fileName: "pic.jpg"
-        )
-        let result = VisionAnalysisResult(
-            objects: [DetectedObject(label: "cat", confidence: 0.9, boundingBox: .zero)],
-            sceneLabels: ["indoor"]
-        )
-
-        attachment.storeAnalysisResult(result)
-
-        #expect(attachment.detectionProcessed)
-        #expect(attachment.detectionSummary?.isEmpty == false)
-        #expect(attachment.getAnalysisResult()?.objects.map(\.label) == ["cat"])
-        #expect(attachment.getDetectionResults()?.count == 1)
-    }
-
-    @Test func attachmentDecodesLegacyDetectionPayloads() throws {
-        let attachment = MessageAttachment(
-            type: .image,
-            fileURL: URL(fileURLWithPath: "pic.jpg"),
-            fileName: "pic.jpg"
-        )
-        // Chats saved before the payload became a VisionAnalysisResult still hold
-        // a bare object array; those attachments must keep opening.
-        attachment.analysisResultsData = try JSONEncoder().encode(
-            [DetectedObject(label: "dog", confidence: 0.5, boundingBox: .zero)]
-        )
-
-        #expect(attachment.getAnalysisResult()?.objects.map(\.label) == ["dog"])
-    }
-
-    @Test func attachmentWithoutAnalysisReturnsNothing() {
-        let attachment = MessageAttachment(
-            type: .image,
-            fileURL: URL(fileURLWithPath: "pic.jpg"),
-            fileName: "pic.jpg"
-        )
-
-        #expect(attachment.getAnalysisResult() == nil)
-        #expect(attachment.getDetectionResults() == nil)
-        #expect(!attachment.detectionProcessed)
-    }
-
     // MARK: - Image store
 
     @Test func imageStoreSavesAReadableDownscaledImage() async throws {

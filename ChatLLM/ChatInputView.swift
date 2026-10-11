@@ -22,6 +22,7 @@ struct ComposerView: View {
     let onCamera: () -> Void
     let onPhotosPicker: () -> Void
     let onFileImporter: () -> Void
+    var imageInputAvailable: Bool = true
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
     @Binding var disableToolCalls: Bool
@@ -45,6 +46,7 @@ struct ComposerView: View {
             onCamera: onCamera,
             onPhotosPicker: onPhotosPicker,
             onFileImporter: onFileImporter,
+            imageInputAvailable: imageInputAvailable,
             forceSearch: $forceSearch,
             searchAvailable: searchAvailable,
             disableToolCalls: $disableToolCalls,

@@ -7,7 +7,7 @@ It supports two backends:
 - `Apple Intelligence` via `FoundationModels`
 - `MLX` via locally downloaded Qwen 3.5 multimodal models and LFM2.5 text models
 
-The app also includes optional web search with Tavily, image attachments, Vision-based image analysis, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
+The app also includes optional web search with Tavily, image attachments, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
 
 ## Features
 
@@ -16,7 +16,7 @@ The app also includes optional web search with Tavily, image attachments, Vision
 - Per-chat backend/model selection before a conversation starts
 - Reasoning mode and smart reasoning support
 - Optional Tavily-powered web search for time-sensitive answers
-- Image attachments sent natively to Apple Intelligence (when the system model reports vision support) and to multimodal MLX models, with a Vision analysis fallback for OCR, objects, faces, barcodes, scene labels, and saliency
+- Image attachments for models that read images directly: Apple Intelligence (when the system model reports vision support) and the multimodal MLX models. Attachments are disabled for text-only models
 - Markdown and LaTeX rendering in assistant responses
 - SwiftData conversation persistence
 - Prompt presets, appearance settings, MLX tuning controls, and privacy controls
@@ -44,7 +44,7 @@ The app currently exposes these downloadable local models:
 - `Qwen 3.5 0.8B (4-bit)` about `625 MB`
 - `LFM2.5 2.6B (4-bit)` about `1.60 GB`
 
-The Qwen models are configured as multimodal MLX models with reasoning support and native image support. LFM2.5 is text-only with always-on reasoning and native tool calling.
+The Qwen models are configured as multimodal MLX models with reasoning support and native image support. LFM2.5 is text-only with always-on reasoning and native tool calling, so image attachments are disabled while it is selected.
 
 LFM2.5 uses [LiquidAI/LFM2.5-2.6B-MLX-4bit](https://huggingface.co/LiquidAI/LFM2.5-2.6B-MLX-4bit).
 This official 4-bit package retains LiquidAI's 6-bit embedding exception. Its
@@ -98,7 +98,6 @@ Key app files:
 - [ChatViewModel.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
 - [ModelBackendBridge.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ModelBackendBridge.swift): backend selection and capability gating
 - [MLXModelManager.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
-- [VisionAnalyzer.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/VisionAnalyzer.swift): Vision-based image analysis pipeline
 - [TavilySearchService.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/TavilySearchService.swift): optional web search integration
 
 ## Architecture Overview
@@ -107,7 +106,6 @@ Key app files:
 - `SwiftData` stores conversations, messages, and attachments
 - `FoundationModels` powers Apple Intelligence chats when available
 - `MLX` powers downloadable local Qwen and LFM models
-- `Vision` handles OCR and image analysis fallback
 - `UserDefaults` and Keychain store user settings and the Tavily API key
 
 ## Testing
@@ -165,7 +163,6 @@ App Intents or App Shortcuts to it.
 - Backend selection is effectively locked once a conversation has messages
 - Web search depends on both network connectivity and a configured Tavily key
 - MLX behavior is memory-sensitive and includes device-specific tuning
-- Image analysis may be precomputed when the selected model does not support native images
 
 ## License
 
