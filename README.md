@@ -1,169 +1,91 @@
 # ChatLLM
 
-ChatLLM is a SwiftUI iPhone and iPad app for fully local chat with on-device language models.
+ChatLLM is an iPhone and iPad app for chatting with language models that run entirely on your device. It works with Apple Intelligence on supported hardware, and it can also download open models and run them locally with MLX. Your conversations stay on the device.
 
-It supports two backends:
-
-- `Apple Intelligence` via `FoundationModels`
-- `MLX` via locally downloaded Qwen 3.5 multimodal models and LFM2.5 text models
-
-The app also includes optional web search with Tavily, image attachments, SwiftData-backed conversation history, onboarding, model management, and UI/UI automation tests.
+The app is in beta, so expect some rough edges.
 
 ## Features
 
-- On-device chat with Apple Foundation Models when supported by the device
-- Local MLX model execution with downloadable Qwen 3.5 and LFM2.5 models
-- Per-chat backend/model selection before a conversation starts
-- Reasoning mode and smart reasoning support
-- Optional Tavily-powered web search for time-sensitive answers
-- Image attachments for models that read images directly: Apple Intelligence (when the system model reports vision support) and the multimodal MLX models. Attachments are disabled for text-only models
-- Markdown and LaTeX rendering in assistant responses
-- SwiftData conversation persistence
-- Prompt presets, appearance settings, MLX tuning controls, and privacy controls
-- Chat export and bulk deletion tools
+- **Two backends.** Use Apple Intelligence through Apple's Foundation Models framework, or download an open model and run it with MLX. You choose the backend and model for each chat.
+- **Image input.** Attach photos from the camera, your library, or Files when the selected model supports images.
+- **Reasoning.** Models that can reason show their thinking separately from the answer. You can turn reasoning on for a chat, or let the app decide when it is useful.
+- **Optional web search.** Add your own Tavily API key and the model can search the web when a question needs current information. Answers that used search list their sources.
+- **Rich formatting.** Replies support Markdown and LaTeX math. Everything needed to render them ships with the app, so it works offline.
+- **Chat history.** Chats are saved on the device and titled automatically. You can export them, delete them in bulk, or have old chats removed after a set time.
+- **Customization.** Settings cover response style, appearance, text size, haptics, interface language (English, German, or Spanish), and generation options for MLX models.
+
+## Models
+
+Apple Intelligence needs no download. It is available when the device supports it and Apple Intelligence is turned on in system settings.
+
+MLX models are downloaded from Hugging Face inside the app, under Manage Models. The catalog includes Qwen 3.5 models in several sizes, which can read images, and LFM2.5, which is text only. Downloads continue in the background if you leave the app.
+
+Larger models need more memory. On iPhone, the app checks the device's RAM and only offers models and features (such as web search) that the device can handle. You can turn these checks off under Settings > Advanced, but the app may become slow or crash.
 
 ## Requirements
 
-- Xcode 27 or newer
-- iOS 27.0 SDK
-- iPhone or iPad target
-- A physical device is recommended for real model testing
+- iOS or iPadOS 27 or later
+- Xcode 27 or newer to build the app
+- A device with Apple Intelligence support, if you want to use that backend
 
-Notes:
+MLX models also run in the iOS Simulator on Apple silicon Macs. Memory use and speed in the simulator are not representative of a real device, so test those on hardware.
 
-- The project deployment target is `iOS 27.0`.
-- `FoundationModels` requires device support for Apple Intelligence.
-- MLX model downloads and execution are supported on Apple-silicon iPhone and iPad simulators as well as physical devices. A physical device is still recommended for representative memory and performance testing.
+## Building
 
-## Included MLX Models
+Open the project in Xcode:
 
-The app currently exposes these downloadable local models:
+```bash
+open ChatLLM.xcodeproj
+```
 
-- `Qwen 3.5 4B (4-bit hybrid)` about `2.66 GB`
-- `Qwen 3.5 2B (4-bit)` about `1.75 GB`
-- `Qwen 3.5 0.8B (4-bit)` about `625 MB`
-- `LFM2.5 2.6B (4-bit)` about `1.60 GB`
+Select the `ChatLLM` scheme, pick a simulator or connected device, and run. Xcode resolves the Swift packages automatically.
 
-The Qwen models are configured as multimodal MLX models with reasoning support and native image support. LFM2.5 is text-only with always-on reasoning and native tool calling, so image attachments are disabled while it is selected.
+To check that the app compiles from the command line:
 
-LFM2.5 uses [LiquidAI/LFM2.5-2.6B-MLX-4bit](https://huggingface.co/LiquidAI/LFM2.5-2.6B-MLX-4bit).
-This official 4-bit package retains LiquidAI's 6-bit embedding exception. Its
-131,072-token architecture limit remains subject to the app's device memory and
-context limits. Existing SmolLM selections migrate to LFM; users download the new
-weights through Manage Models. Conversation history is preserved.
+```bash
+xcodebuild -project ChatLLM.xcodeproj -scheme ChatLLM -destination 'generic/platform=iOS Simulator' build
+```
 
-## Optional Setup
-
-### Tavily Web Search
-
-Web search is optional. To enable it:
-
-1. Get an API key from `https://tavily.com`
-2. Open the app
-3. Enter the key during onboarding or later in `Settings > Tavily Search`
-
-The key is stored locally in Keychain.
-
-### MLX Models
-
-MLX is optional. You can use the app immediately with Apple Foundation Models on supported devices.
-
-To use MLX:
-
-1. Launch the app
-2. Open onboarding or `Manage Models`
-3. Download one of the available MLX models
-4. Start a new chat and select the MLX backend/model before sending the first message
-
-## Running the Project
-
-1. Open [ChatLLM.xcodeproj](/Users/nevio/Developer/ChatLLM/ChatLLM.xcodeproj)
-2. Select the `ChatLLM` scheme
-3. Choose an iPhone or iPad simulator/device
-4. Build and run
-
-Swift Package dependencies are resolved through Xcode. The project includes MLX-related packages plus supporting Apple and Hugging Face packages through SwiftPM.
-
-## Project Structure
-
-- [ChatLLM](/Users/nevio/Developer/ChatLLM/ChatLLM): main app target
-- [ChatLLMTests](/Users/nevio/Developer/ChatLLM/ChatLLMTests): unit tests
-- [ChatLLMUITests](/Users/nevio/Developer/ChatLLM/ChatLLMUITests): UI tests
-- [Vendor/mlx-swift-lm](/Users/nevio/Developer/ChatLLM/Vendor/mlx-swift-lm): local MLX package source
-
-Key app files:
-
-- [ContentView.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ContentView.swift): app shell, sidebar, chat selection, settings/export flow
-- [ChatView.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ChatView.swift): conversation screen and composer integration
-- [ChatViewModel.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ChatViewModel.swift): message flow, streaming, persistence, OCR helpers
-- [ModelBackendBridge.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/ModelBackendBridge.swift): backend selection and capability gating
-- [MLXModelManager.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/MLXModelManager.swift): MLX model download, loading, memory handling, and inference sessions
-- [TavilySearchService.swift](/Users/nevio/Developer/ChatLLM/ChatLLM/TavilySearchService.swift): optional web search integration
-
-## Architecture Overview
-
-- `SwiftUI` drives the entire interface
-- `SwiftData` stores conversations, messages, and attachments
-- `FoundationModels` powers Apple Intelligence chats when available
-- `MLX` powers downloadable local Qwen and LFM models
-- `UserDefaults` and Keychain store user settings and the Tavily API key
+Warnings are treated as errors, so any new warning will fail the build.
 
 ## Testing
 
-The repository includes:
+Run the tests with Product > Test in Xcode, or from the terminal:
 
-- unit tests in `ChatLLMTests`
-- UI tests in `ChatLLMUITests`
-
-Run them from Xcode with `Product > Test`. For a faster unit-only check, add
-`-only-testing:ChatLLMTests` to the simulator `xcodebuild test` command.
-
-Unit tests construct chat view models through the fixture factories in
-`ChatLLMTests+Factories.swift`. Each test owns a backend bridge, a disposable
-preferences domain, and temporary model storage; fixture model managers do not
-restore background downloads, and fixture view models do not read the Keychain.
-Use these factories instead of production singletons when adding tests.
-
-Cancellation tests cover preparation, streaming, reasoning, pending web searches,
-regeneration, and switching chats. Math tests load the actual bundled WebView and
-verify environment rendering and local font loading.
-
-### Real LFM simulator checks
-
-Download LFM2.5 through Manage Models in the chosen simulator first. These opt-in
-tests use actual model weights and GPU generation; the search integration mocks
-only Tavily's HTTP response so no API key is needed. Run with parallel testing
-disabled to use that simulator's installed model directory:
-
-```sh
-TEST_RUNNER_CHATLLM_RUN_LFM_INTEGRATION=1 xcodebuild \
-  -project ChatLLM.xcodeproj -scheme ChatLLM \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  -parallel-testing-enabled NO \
-  '-only-testing:ChatLLMTests/ChatLLMTests/lfmRealModelSearchRoundTrip()' \
-  -only-testing:ChatLLMUITests/ChatLLMLFMIntegrationTests test
+```bash
+xcodebuild -project ChatLLM.xcodeproj -scheme ChatLLM -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-The UI check verifies a real answer, the reasoning sheet, and a contextual
-follow-up. Physical-device memory/performance and authenticated Tavily access
-require separate device/network checks.
+Replace the simulator name with one installed on your Mac. Unit tests use Swift Testing and live in `ChatLLMTests/`. UI tests use XCTest and live in `ChatLLMUITests/`. The tests use mocks and launch flags, so they do not need downloaded models, network access, or an API key.
 
-App and test targets treat compiler warnings as errors. The vendored Cmlx target
-has one explicit exception for upstream 64-to-32-bit conversion diagnostics;
-this is a scoped diagnostic policy, not a claim that upstream narrowing was
-eliminated. Deprecation and Swift concurrency diagnostics remain enabled.
-See `Vendor/mlx-swift/README-ChatLLM.md` for the local compatibility patches.
+## Web search setup
 
-App and test targets skip App Intents metadata extraction because they declare
-no App Intents. Remove `LM_SKIP_METADATA_EXTRACTION` from a target if adding
-App Intents or App Shortcuts to it.
+1. Create an API key at [tavily.com](https://tavily.com).
+2. Enter it during onboarding or later under Settings > Web Search.
 
-## Notes for Contributors
+The key is stored in the Keychain. It is only sent to Tavily, together with your search queries.
 
-- Backend selection is effectively locked once a conversation has messages
-- Web search depends on both network connectivity and a configured Tavily key
-- MLX behavior is memory-sensitive and includes device-specific tuning
+## Project structure
+
+```
+ChatLLM/            App source code
+  RenderingAssets/  Bundled Markdown and math rendering files
+ChatLLMTests/       Unit tests
+ChatLLMUITests/     UI tests
+Vendor/             Local copies of the MLX Swift packages
+Scripts/            Helper scripts
+```
+
+The packages in `Vendor/` include a few local patches. `Vendor/mlx-swift/README-ChatLLM.md` describes each change.
+
+## Translations
+
+The interface is available in English, German, and Spanish. See [LOCALIZATION.md](LOCALIZATION.md) for how to add or update strings.
+
+## Support
+
+Email [chatllm@icloud.com](mailto:chatllm@icloud.com), or join the Discord server linked under Settings > About & Support in the app.
 
 ## License
 
-See [LICENSE](LICENSE).
+ChatLLM is released under the Apache 2.0 license. See [LICENSE](LICENSE).
