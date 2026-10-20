@@ -1092,12 +1092,11 @@ final class ChatViewModel: ObservableObject {
         guard isGenerationActive(generationID) else { return nil }
 
         if selectedBackend == .mlx, let manager = promptBridge.modelManager {
+            // A chat's model is locked once it has messages, so a failed load would leave
+            // it unable to reply. Retry the load; generation waits for it and, if it fails
+            // again, reports why.
             if let selectedModelID, manager.currentModel?.id != selectedModelID && !manager.isLoading {
-                failStreamPreparation(
-                    target: resetState.target,
-                    message: String(localized: "Selected MLX model is not loaded. Wait for it to load or choose another backend.", bundle: .appLocalized)
-                )
-                return nil
+                manager.startLoading(modelID: selectedModelID, source: "send.retry")
             }
             do {
                 let prompt = try await buildQwenPrompt(

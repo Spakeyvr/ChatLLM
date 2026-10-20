@@ -284,4 +284,80 @@ extension ChatLLMTests {
 
         #expect(manager.loadError?.contains("not downloaded") == true)
     }
+
+    @Test func sendingWithAModelThatFailedToLoadRetriesAndExplainsWhy() async throws {
+        let manager = makeModelManager(deviceSupportProfile: makeDeviceProfile(isPhone: false))
+        let model = MLXModelManager.MLXModelInfo(
+            id: "missing-files-test-model",
+            name: "Missing Files",
+            localDirName: "MissingFilesTest",
+            hfRepoId: "local/missing-files",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            description: "Marked downloaded, but its files are gone.",
+            contextLength: 4096,
+            isAvailable: true,
+            supportsReasoning: false
+        )
+        manager.availableModels = [model]
+        let bridge = testEnvironment.bridge
+        bridge.modelManager = manager
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = model.id
+
+        let viewModel = try makeViewModel()
+        await viewModel.send(userText: "Hello")
+
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        let error = try #require(reply.generationError)
+        #expect(error.contains("MissingFilesTest"))
+        #expect(manager.loadError != nil)
+    }
+
+    @Test func retryingTheSelectedModelsLoadDoesNotResetThePipeline() {
+        let manager = makeModelManager(deviceSupportProfile: makeDeviceProfile(isPhone: false))
+        let model = MLXModelManager.MLXModelInfo(
+            id: "missing-files-test-model",
+            name: "Missing Files",
+            localDirName: "MissingFilesTest",
+            hfRepoId: "local/missing-files",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            description: "Marked downloaded, but its files are gone.",
+            contextLength: 4096,
+            isAvailable: true,
+            supportsReasoning: false
+        )
+        manager.availableModels = [model]
+        let bridge = makeBackendBridge()
+        bridge.modelManager = manager
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = model.id
+
+        var resets = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: .modelPipelineWillReset, object: bridge, queue: nil
+        ) { _ in resets += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        // Reopening the chat retries the failed load; a send waiting on it must survive.
+        bridge.switchToMLXModel(model.id, source: "test.retry")
+        #expect(resets == 0)
+
+        // Replacing a loaded model still resets, so in-flight generation stops first.
+        manager.currentModel = MLXModelManager.MLXModelInfo(
+            id: "loaded-test-model",
+            name: "Loaded",
+            localDirName: "LoadedTest",
+            hfRepoId: "local/loaded",
+            parameters: "1B",
+            downloadSizeLabel: "1 GB",
+            description: "Currently loaded.",
+            contextLength: 4096,
+            isAvailable: true,
+            supportsReasoning: false
+        )
+        bridge.switchToMLXModel(model.id, source: "test.switch")
+        #expect(resets == 1)
+    }
 }

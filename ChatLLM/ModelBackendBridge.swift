@@ -206,6 +206,8 @@ class ModelBackendBridge: ObservableObject {
             return
         }
 
+        let isRetryingSelectedModel = selectedBackend == .mlx && selectedModelID == modelID
+            && manager.currentModel == nil
         selectedModelID = modelID
         selectedBackend = .mlx
         defaults.set(modelID, forKey: AppSettingsKeys.selectedCustomModelID)
@@ -216,7 +218,11 @@ class ModelBackendBridge: ObservableObject {
         let isAlreadyPending = manager.pendingModelToLoad?.id == modelID && manager.isLoading
         guard !isAlreadyLoaded, !isAlreadyPending else { return }
 
-        notifyPipelineReset(reason: "backend.mlx.\(modelID)")
+        // Retrying a failed load swaps no pipeline, and the only generation it could
+        // affect is a send waiting on this very load.
+        if !isRetryingSelectedModel {
+            notifyPipelineReset(reason: "backend.mlx.\(modelID)")
+        }
         manager.startLoading(modelID: modelID, source: source)
     }
 

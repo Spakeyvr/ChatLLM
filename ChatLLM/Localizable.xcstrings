@@ -5872,28 +5872,6 @@
         }
       }
     },
-    "Selected MLX model is not loaded. Wait for it to load or choose another backend." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das gewählte MLX-Modell ist nicht geladen. Warte, bis es geladen ist, oder wähle ein anderes Backend."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Selected MLX model is not loaded. Wait for it to load or choose another backend."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El modelo MLX seleccionado no está cargado. Espera a que se cargue o elige otro motor."
-          }
-        }
-      }
-    },
     "Send" : {
       "localizations" : {
         "de" : {
