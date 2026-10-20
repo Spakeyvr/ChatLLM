@@ -122,7 +122,6 @@ struct ModelRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(model.name) \(model.parameterCount)")
                         .font(.headline)
-                        .foregroundStyle(model.isAvailable ? .primary : .secondary)
 
                     Text(model.description)
                         .font(.caption)
