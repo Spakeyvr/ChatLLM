@@ -102,7 +102,7 @@ extension MLXModelManager {
             if let compatibilityError = compatibilityError(for: model) {
                 loadError = compatibilityError
             } else {
-                loadError = String(localized: "Model '\(model.localDirName)' not found in Documents/Models/. Use the Download button to fetch it.", bundle: .appLocalized)
+                loadError = String(localized: "\(model.displayName)'s files are missing. Download it again in Manage Models.", bundle: .appLocalized)
             }
             return
         }

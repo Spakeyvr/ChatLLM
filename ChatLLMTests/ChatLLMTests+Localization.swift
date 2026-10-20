@@ -31,6 +31,12 @@ extension ChatLLMTests {
             == "Das Modell „Qwen 3.5“ ist noch nicht heruntergeladen. Lade es unter „Modelle verwalten“ herunter, bevor du es auswählst.")
     }
 
+    @Test func missingModelFilesErrorIsTranslated() {
+        let name = "Qwen 3.5 2B (4-bit)"
+        #expect(String(localized: "\(name)'s files are missing. Download it again in Manage Models.", bundle: AppLanguage.german.bundle)
+            == "Die Dateien von Qwen 3.5 2B (4-bit) fehlen. Lade es unter „Modelle verwalten“ erneut herunter.")
+    }
+
     @Test func sourceCountsUseLocalizedSingularAndPlural() {
         for (language, singular, plural) in [
             (AppLanguage.english, "1 source", "2 sources"),

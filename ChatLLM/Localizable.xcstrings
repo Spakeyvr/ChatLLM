@@ -117,6 +117,28 @@
         }
       }
     },
+    "%@'s files are missing. Download it again in Manage Models." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Dateien von %@ fehlen. Lade es unter „Modelle verwalten“ erneut herunter."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@'s files are missing. Download it again in Manage Models."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faltan los archivos de %@. Vuelve a descargarlo en «Gestionar modelos»."
+          }
+        }
+      }
+    },
     "%@, %@" : {
       "shouldTranslate" : false
     },
@@ -3952,28 +3974,6 @@
         }
       }
     },
-    "Model '%@' not found in Documents/Models/. Use the Download button to fetch it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modell „%@“ wurde nicht in Documents/Models/ gefunden. Lade es über die Schaltfläche Herunterladen herunter."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Model '%@' not found in Documents/Models/. Use the Download button to fetch it."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se ha encontrado el modelo «%@» en Documents/Models/. Usa el botón Descargar para obtenerlo."
-          }
-        }
-      }
-    },
     "Model Error" : {
       "localizations" : {
         "de" : {
@@ -6865,24 +6865,24 @@
         }
       }
     },
-    "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or start a new chat and choose Apple Intelligence from the model menu." : {
+    "The selected MLX model isn't ready. %@\n\nTry again, or start a new chat and choose Apple Intelligence from the model menu." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das gewählte MLX-Modell ist noch nicht bereit. %@\n\nWarte, bis es geladen ist, oder starte einen neuen Chat und wähle im Modellmenü Apple Intelligence."
+            "value" : "Das gewählte MLX-Modell ist nicht bereit. %@\n\nVersuche es erneut oder starte einen neuen Chat und wähle im Modellmenü Apple Intelligence."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or start a new chat and choose Apple Intelligence from the model menu."
+            "value" : "The selected MLX model isn't ready. %@\n\nTry again, or start a new chat and choose Apple Intelligence from the model menu."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El modelo MLX seleccionado aún no está listo. %@\n\nEspera a que se cargue o inicia un chat nuevo y elige Apple Intelligence en el menú de modelos."
+            "value" : "El modelo MLX seleccionado no está listo. %@\n\nVuelve a intentarlo o inicia un chat nuevo y elige Apple Intelligence en el menú de modelos."
           }
         }
       }

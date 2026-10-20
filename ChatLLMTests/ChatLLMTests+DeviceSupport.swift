@@ -310,7 +310,8 @@ extension ChatLLMTests {
 
         let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
         let error = try #require(reply.generationError)
-        #expect(error.contains("MissingFilesTest"))
+        #expect(error.contains("Missing Files 1B"))
+        #expect(!error.contains("Documents/"))
         #expect(manager.loadError != nil)
     }
 
