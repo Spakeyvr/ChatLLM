@@ -338,11 +338,28 @@ struct ContentView: View {
         ]
         conversation.messages = fillerMessages + [userMessage, assistantMessage]
         modelContext.insert(conversation)
+        if arguments.contains("-ui-test-image-message") {
+            attachFixtureImage(to: userMessage)
+        }
         if arguments.contains("-ui-test-second-chat") {
             seedSecondChatFixture()
         }
         try? modelContext.save()
         return conversation
+    }
+
+    private func attachFixtureImage(to message: Message) {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 240))
+        }
+        Task { @MainActor in
+            guard let url = try? await ImageStore.shared.save(image: image) else { return }
+            let attachment = MessageAttachment(type: .image, fileURL: url, fileName: url.lastPathComponent)
+            message.attachments.append(attachment)
+            attachment.message = message
+            try? modelContext.save()
+        }
     }
 
     private func seedSecondChatFixture() {

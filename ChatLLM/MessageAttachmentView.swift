@@ -17,19 +17,32 @@ struct FullscreenAttachmentImageView: View {
                     image: image,
                     isPresented: $isPresented
                 )
-            } else if finishedLoading {
-                ContentUnavailableView(
-                    "Image unavailable",
-                    systemImage: "photo.badge.exclamationmark"
-                )
             } else {
-                ProgressView()
+                // The cover has no backdrop of its own and can't be swiped away,
+                // so placeholder states need the black backdrop and Done button too.
+                ZStack(alignment: .topLeading) {
+                    Color.black.ignoresSafeArea()
+                    Group {
+                        if finishedLoading {
+                            ContentUnavailableView(
+                                "Image unavailable",
+                                systemImage: "photo.badge.exclamationmark"
+                            )
+                        } else {
+                            ProgressView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    FullscreenDoneButton(isPresented: $isPresented)
+                }
             }
         }
         .task {
             image = await attachment.loadImage()
             finishedLoading = true
         }
+        // The viewer is always on black, so its controls use dark appearance.
+        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -77,17 +90,8 @@ struct FullscreenImageView: View {
             
             // Custom toolbar overlay
             VStack {
-                HStack {
-                    Button("Done") { isPresented = false }
-                        .buttonStyle(.glass)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
-                    
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .opacity(isDraggingToDismiss ? 0 : 1)
+                FullscreenDoneButton(isPresented: $isPresented)
+                    .opacity(isDraggingToDismiss ? 0 : 1)
                 
                 Spacer()
             }
@@ -101,6 +105,23 @@ struct FullscreenImageView: View {
         let dragHeight = Double(abs(dragOffset.height))
         let threshold = 300.0
         return max(0.4, 1.0 - (dragHeight / threshold))
+    }
+}
+
+private struct FullscreenDoneButton: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        HStack {
+            Button("Done") { isPresented = false }
+                .buttonStyle(.glass)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
     }
 }
 

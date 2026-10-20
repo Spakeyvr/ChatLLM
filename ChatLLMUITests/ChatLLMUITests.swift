@@ -420,6 +420,22 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testImageAttachmentOpensFullScreenAndCloses() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
+        app.launch()
+        let thumbnail = app.images.firstMatch
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+
+        thumbnail.tap()
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 3))
+        done.tap()
+        XCTAssertFalse(done.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.textViews.firstMatch.exists)
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

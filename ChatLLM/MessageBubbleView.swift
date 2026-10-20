@@ -1111,11 +1111,14 @@ struct MessageImageAttachmentView: View {
         .task {
             await loadImage()
         }
-        .sheet(isPresented: $showFullscreen) {
+        // A full-screen cover, not a sheet: the viewer has its own drag-to-dismiss,
+        // and its backdrop fades to reveal the chat while dragging.
+        .fullScreenCover(isPresented: $showFullscreen) {
             FullscreenAttachmentImageView(
                 attachment: attachment,
                 isPresented: $showFullscreen
             )
+            .presentationBackground(.clear)
         }
     }
 
