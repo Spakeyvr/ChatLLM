@@ -361,4 +361,10 @@ extension ChatLLMTests {
         bridge.switchToMLXModel(model.id, source: "test.switch")
         #expect(resets == 1)
     }
+
+    @Test func modelInfoStatusSeparatesUndownloadedFromUnsupported() {
+        #expect(ModelInfoSheet.statusText(isAvailable: true, isSupportedOnDevice: true) == "Downloaded")
+        #expect(ModelInfoSheet.statusText(isAvailable: false, isSupportedOnDevice: true) == "Not downloaded")
+        #expect(ModelInfoSheet.statusText(isAvailable: false, isSupportedOnDevice: false) == "Not supported on this device")
+    }
 }

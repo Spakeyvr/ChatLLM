@@ -43,7 +43,10 @@ struct ModelSelectionView: View {
                     }
                 }
                 .sheet(item: $selectedModelForInfo) { model in
-                    ModelInfoSheet(model: model)
+                    ModelInfoSheet(
+                        model: model,
+                        isSupportedOnDevice: modelManager?.availabilityIssue(for: model) == nil
+                    )
                 }
         }
     }
@@ -262,7 +265,22 @@ struct ModelRow: View {
 
 struct ModelInfoSheet: View {
     let model: MLXModelManager.MLXModelInfo
+    var isSupportedOnDevice = true
     @Environment(\.dismiss) private var dismiss
+
+    private var statusText: String {
+        Self.statusText(isAvailable: model.isAvailable, isSupportedOnDevice: isSupportedOnDevice)
+    }
+
+    static func statusText(isAvailable: Bool, isSupportedOnDevice: Bool) -> String {
+        if isAvailable {
+            return String(localized: "Downloaded", bundle: .appLocalized)
+        }
+        if !isSupportedOnDevice {
+            return String(localized: "Not supported on this device", bundle: .appLocalized)
+        }
+        return String(localized: "Not downloaded", bundle: .appLocalized)
+    }
 
     var body: some View {
         NavigationStack {
@@ -271,12 +289,9 @@ struct ModelInfoSheet: View {
                     InfoRow(label: "Name", value: model.name)
                     InfoRow(label: "Parameters", value: model.parameters)
                     InfoRow(label: "Context Length", value: String(localized: "\(model.contextLength) tokens", bundle: .appLocalized))
-                    InfoRow(label: "Status", value: model.isAvailable ? String(localized: "Available", bundle: .appLocalized) : String(localized: "Not Available", bundle: .appLocalized))
+                    InfoRow(label: "Status", value: statusText)
                     InfoRow(label: "Reasoning", value: model.supportsReasoning ? String(localized: "Supported", bundle: .appLocalized) : String(localized: "Not supported", bundle: .appLocalized))
                     InfoRow(label: "Package", value: model.loadPolicy.packageDescription)
-                    if let architectureHint = model.loadPolicy.architectureHint {
-                        InfoRow(label: "Architecture", value: architectureHint)
-                    }
                 }
 
                 Section("Description") {
@@ -288,6 +303,9 @@ struct ModelInfoSheet: View {
                     InfoRow(label: "Model ID", value: model.id)
                     InfoRow(label: "HF Repository", value: model.hfRepoId)
                     InfoRow(label: "Directory", value: model.localDirName)
+                    if let architectureHint = model.loadPolicy.architectureHint {
+                        InfoRow(label: "Architecture", value: architectureHint)
+                    }
                 }
             }
             .navigationTitle("Model Information")

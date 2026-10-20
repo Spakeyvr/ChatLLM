@@ -992,28 +992,6 @@
         }
       }
     },
-    "Available" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verfügbar"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Available"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Disponible"
-          }
-        }
-      }
-    },
     "Available Models" : {
       "localizations" : {
         "de" : {
@@ -4394,24 +4372,24 @@
         }
       }
     },
-    "Not Available" : {
+    "Not downloaded" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nicht verfügbar"
+            "value" : "Nicht heruntergeladen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Not Available"
+            "value" : "Not downloaded"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No disponible"
+            "value" : "No descargado"
           }
         }
       }
@@ -4456,6 +4434,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No compatible"
+          }
+        }
+      }
+    },
+    "Not supported on this device" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Gerät nicht unterstützt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not supported on this device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No compatible con este dispositivo"
           }
         }
       }
