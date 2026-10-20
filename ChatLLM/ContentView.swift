@@ -133,6 +133,8 @@ struct ContentView: View {
             )
             .sheet(item: $chatExport, onDismiss: cleanupExportFile) { export in
                 ActivityView(activityItems: [export.url])
+                    // Match the system share sheet instead of a mostly empty full-height sheet.
+                    .presentationDetents([.medium, .large])
             }
     }
 
@@ -931,7 +933,11 @@ struct ContentView: View {
         }
         
         // Write to temporary file
-        let fileName = "chat-export-\(Date().timeIntervalSince1970).txt"
+        // A readable, sortable name for Files and AirDrop instead of a raw timestamp.
+        let fileNameFormatter = DateFormatter()
+        fileNameFormatter.locale = Locale(identifier: "en_US_POSIX")
+        fileNameFormatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let fileName = "ChatLLM-Export-\(fileNameFormatter.string(from: Date())).txt"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         
         do {

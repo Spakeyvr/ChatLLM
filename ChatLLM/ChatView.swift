@@ -322,6 +322,8 @@ struct ChatView: View {
             shareText = ""
         }) {
             ActivityView(activityItems: [shareText as Any])
+                // Match the system share sheet instead of a mostly empty full-height sheet.
+                .presentationDetents([.medium, .large])
         }
         .photosPicker(
             isPresented: $showImagePicker,
