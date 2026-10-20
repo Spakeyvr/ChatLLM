@@ -10,6 +10,9 @@ import SwiftUI
 import Combine
 import FoundationModels
 import SwiftData
+import OSLog
+
+nonisolated private let bridgeLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "ModelBackendBridge")
 
 /// Manages backend/model selection and backend-specific capabilities.
 @MainActor
@@ -231,7 +234,7 @@ class ModelBackendBridge: ObservableObject {
         do {
             try activeConversation?.modelContext?.save()
         } catch {
-            print("Failed to persist backend selection: \(error)")
+            bridgeLogger.error("Failed to persist backend selection: \((error as NSError).localizedDescription, privacy: .public)")
         }
     }
 

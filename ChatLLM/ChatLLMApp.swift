@@ -8,6 +8,9 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import OSLog
+
+nonisolated private let storeLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "PersistentStore")
 
 final class ChatLLMAppDelegate: NSObject, UIApplicationDelegate {
     func application(
@@ -98,7 +101,7 @@ struct ChatLLMApp: App {
                 lastError = error
             }
         }
-        print("Could not create SwiftData container; using in-memory store for this launch: \(String(describing: lastError))")
+        storeLogger.error("Could not create SwiftData container; using in-memory store for this launch: \(String(describing: lastError), privacy: .public)")
 
         // Leave the on-disk store where it is so a later launch (or an app
         // update that fixes a migration) can still open it. Keep a copy aside
@@ -124,7 +127,7 @@ struct ChatLLMApp: App {
                     to: backupURL.appendingPathComponent(url.lastPathComponent)
                 )
             } catch {
-                print("Could not back up SwiftData store file \(url.lastPathComponent): \(error)")
+                storeLogger.error("Could not back up SwiftData store file \(url.lastPathComponent, privacy: .public): \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
     }
@@ -181,7 +184,7 @@ enum PersistentStoreRecovery {
             try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
             return backupURL
         } catch {
-            print("Could not create SwiftData recovery directory: \(error)")
+            storeLogger.error("Could not create SwiftData recovery directory: \((error as NSError).localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -195,7 +198,7 @@ enum PersistentStoreRecovery {
             do {
                 try FileManager.default.removeItem(at: url)
             } catch {
-                print("Could not remove unreadable SwiftData store file \(url.lastPathComponent): \(error)")
+                storeLogger.error("Could not remove unreadable SwiftData store file \(url.lastPathComponent, privacy: .public): \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
     }

@@ -24,6 +24,9 @@
 import Foundation
 import SwiftData
 import UIKit
+import OSLog
+
+nonisolated private let attachmentLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "MessageAttachment")
 
 enum AttachmentType: String, Codable, Sendable {
     case image
@@ -75,7 +78,7 @@ final class MessageAttachment {
             let attachmentsDir = documentsURL.appendingPathComponent("Attachments", isDirectory: true)
             return attachmentsDir.appendingPathComponent(fileURL.lastPathComponent)
         } catch {
-            print("Warning: Error constructing file URL: \(error)")
+            attachmentLogger.warning("Error constructing attachment file URL: \((error as NSError).localizedDescription, privacy: .public)")
             return fileURL // Fallback to stored URL
         }
     }
@@ -91,8 +94,7 @@ final class MessageAttachment {
             return image
         }
 
-        print("Warning: Failed to load image from: \(imageURL.path)")
-        print("   File exists: \(FileManager.default.fileExists(atPath: imageURL.path))")
+        attachmentLogger.warning("Failed to load attachment image \(imageURL.lastPathComponent, privacy: .public); file exists: \(FileManager.default.fileExists(atPath: imageURL.path), privacy: .public)")
         return nil
     }
 }

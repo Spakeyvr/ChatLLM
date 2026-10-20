@@ -9,6 +9,9 @@ import SwiftUI
 import SwiftData
 import FoundationModels
 import UIKit
+import OSLog
+
+nonisolated private let contentLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "ContentView")
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -708,7 +711,7 @@ struct ContentView: View {
                 try self.modelContext.save()
                 AppHaptics.notification(.success)
             } catch {
-                print("Failed to save renamed conversation: \(error)")
+                contentLogger.error("Failed to save renamed conversation: \((error as NSError).localizedDescription, privacy: .public)")
                 AppHaptics.notification(.error)
                 self.errorMessage = String(localized: "Failed to rename conversation. Please try again.", bundle: .appLocalized)
             }
@@ -765,7 +768,7 @@ struct ContentView: View {
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
         } catch {
-            print("Failed to save after deleting conversation: \(error)")
+            contentLogger.error("Failed to save after deleting conversation: \((error as NSError).localizedDescription, privacy: .public)")
             AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete conversation. Please try again.", bundle: .appLocalized)
             
@@ -773,7 +776,7 @@ struct ContentView: View {
             do {
                 try modelContext.save()
             } catch {
-                print("Failed to recover after delete error: \(error)")
+                contentLogger.error("Failed to recover after delete error: \((error as NSError).localizedDescription, privacy: .public)")
             }
         }
     }
@@ -834,7 +837,7 @@ struct ContentView: View {
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
             AppHaptics.notification(.success)
         } catch {
-            print("Failed to save after deleting all conversations: \(error)")
+            contentLogger.error("Failed to save after deleting all conversations: \((error as NSError).localizedDescription, privacy: .public)")
             AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete all conversations. Please try again.", bundle: .appLocalized)
         }
@@ -879,7 +882,7 @@ struct ContentView: View {
             // Ensure the kept conversation is selected after deletion
             selection = current
         } catch {
-            print("Failed to save after deleting conversations except current: \(error)")
+            contentLogger.error("Failed to save after deleting conversations except current: \((error as NSError).localizedDescription, privacy: .public)")
             AppHaptics.notification(.error)
             errorMessage = String(localized: "Failed to delete conversations. Please try again.", bundle: .appLocalized)
         }
@@ -988,9 +991,9 @@ struct ContentView: View {
             try modelContext.save()
             deleteAttachmentFiles(attachmentURLsToDelete)
             scheduleAttachmentStorageCleanup(excludingConversationIDs: excludedConversationIDs)
-            print("Auto-deleted \(conversationsToDelete.count) conversations older than \(autoDeleteDays) days")
+            contentLogger.notice("Auto-deleted \(conversationsToDelete.count, privacy: .public) conversations older than \(autoDeleteDays, privacy: .public) days")
         } catch {
-            print("Failed to auto-delete old conversations: \(error)")
+            contentLogger.error("Failed to auto-delete old conversations: \((error as NSError).localizedDescription, privacy: .public)")
         }
     }
 

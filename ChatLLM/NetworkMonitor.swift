@@ -8,6 +8,9 @@
 import Combine
 import Foundation
 import Network
+import OSLog
+
+nonisolated private let networkLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ChatLLM", category: "NetworkMonitor")
 
 enum NetworkPathStatus {
     case satisfied
@@ -51,7 +54,7 @@ final class NetworkMonitor: ObservableObject {
 
     init(
         monitor: PathMonitoring = SystemPathMonitor(),
-        queue: DispatchQueue = DispatchQueue(label: "com.yourapp.networkmonitor")
+        queue: DispatchQueue = DispatchQueue(label: "ChatLLM.NetworkMonitor")
     ) {
         self.monitor = monitor
         self.queue = queue
@@ -78,9 +81,9 @@ final class NetworkMonitor: ObservableObject {
                 }
 
                 if resolvedStatus {
-                    print("Network connection restored")
+                    networkLogger.notice("Network connection restored")
                 } else {
-                    print("Network connection lost")
+                    networkLogger.notice("Network connection lost")
                 }
             }
         }
