@@ -477,7 +477,10 @@ struct ChatView: View {
                 return
             }
 
-            let replacementText = textToSend.isEmpty ? "Describe what you see" : textToSend
+            // Shown as the user's message, so it follows the app language.
+            let replacementText = textToSend.isEmpty
+                ? String(localized: "Describe what you see", bundle: .appLocalized)
+                : textToSend
             guard let editingCommit = commitEditingIfNeeded(replacementText: replacementText) else { return }
 
             // Clear immediately for snappy feel, then send

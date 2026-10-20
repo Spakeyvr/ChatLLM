@@ -1947,6 +1947,28 @@
         }
       }
     },
+    "Describe what you see" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beschreibe, was du siehst"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Describe what you see"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Describe lo que ves"
+          }
+        }
+      }
+    },
     "Description" : {
       "localizations" : {
         "de" : {

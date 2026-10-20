@@ -20,6 +20,11 @@ extension ChatLLMTests {
         #expect(String(localized: "Settings", bundle: AppLanguage.english.bundle) == "Settings")
     }
 
+    @Test func imageOnlyMessagePromptFollowsTheAppLanguage() {
+        #expect(String(localized: "Describe what you see", bundle: AppLanguage.german.bundle) == "Beschreibe, was du siehst")
+        #expect(String(localized: "Describe what you see", bundle: AppLanguage.spanish.bundle) == "Describe lo que ves")
+    }
+
     @Test func sourceCountsUseLocalizedSingularAndPlural() {
         for (language, singular, plural) in [
             (AppLanguage.english, "1 source", "2 sources"),
