@@ -363,6 +363,31 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testDeletingAllChatsFromADraftKeepsTheComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["What changed in SwiftUI web views this year?"].waitForExistence(timeout: 5))
+
+        // Open a blank draft, then delete every saved chat from Settings.
+        openSidebar(in: app)
+        app.buttons["New Chat"].firstMatch.tap()
+        openSettings(in: app)
+        app.buttons["settings.privacy"].tap()
+        app.buttons["settings.deleteAllChats"].tap()
+        let confirm = app.alerts.buttons["Delete"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+
+        // The draft stays usable instead of being replaced by a dead placeholder.
+        if app.buttons["sidebar.dismiss"].waitForExistence(timeout: 3) {
+            app.buttons["sidebar.dismiss"].tap()
+        }
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Start a New Chat"].exists)
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

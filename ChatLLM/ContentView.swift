@@ -811,8 +811,14 @@ struct ContentView: View {
             return
         }
 
-        currentViewModel = nil
-        selection = nil
+        // stopGenerationBeforeDeleting retired the open chat's view model if it
+        // is being deleted. An open draft is unaffected and stays as it is;
+        // otherwise replace the deleted chat with a blank one, as a single
+        // delete does. Clearing the view model under a draft would strand the
+        // UI: New Chat only reveals an existing draft.
+        if draftConversation == nil {
+            openDraftChat()
+        }
 
         let excludedConversationIDs = conversationIDsToDelete
         let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
