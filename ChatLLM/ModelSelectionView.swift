@@ -100,6 +100,7 @@ struct ModelRow: View {
     let onInfo: () -> Void
     let onDelete: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showDeleteConfirmation = false
 
     private var availabilityIssue: String? {
@@ -115,100 +116,25 @@ struct ModelRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-                modelIcon
-
-                // Model Info
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(model.name) \(model.parameterCount)")
-                        .font(.headline)
-
-                    Text(model.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-
-                    if model.isAvailable {
-                        // A Label in a List row snaps its icon to the list's icon column.
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark.circle.fill")
-                            Text("Downloaded")
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("modelSelection.downloaded.\(model.id)")
-                    } else {
-                        if isDownloadingThisModel {
-                            VStack(alignment: .leading, spacing: 2) {
-                                ProgressView(value: modelManager.downloadProgress)
-                                    .frame(maxWidth: 180)
-                                    .accessibilityIdentifier("modelSelection.progress.\(model.id)")
-                                HStack(spacing: 8) {
-                                    Text("\(Int((modelManager.downloadProgress * 100).rounded()))%")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                    Button("Cancel") {
-                                        modelManager.cancelDownload()
-                                    }
-                                    .font(.caption2)
-                                    .foregroundStyle(.red)
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        } else if let availabilityIssue {
-                            Text(availabilityIssue)
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                                .lineLimit(3)
-                        } else {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Button("Download (\(model.downloadSizeLabel))") {
-                                    modelManager.startDownload(for: model)
-                                }
-                                .font(.caption2)
-                                .buttonStyle(.borderedProminent)
-                                .disabled(anotherDownloadInProgress)
-                                .accessibilityIdentifier("modelSelection.download.\(model.id)")
-                                if anotherDownloadInProgress, let activeModel = modelManager.activeDownloadModel {
-                                    Text("\(activeModel.displayName) is downloading")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                } else if let error = modelManager.downloadError(for: model.id) {
-                                    Text(error)
-                                        .font(.caption2)
-                                        .foregroundStyle(.red)
-                                        .lineLimit(2)
-                                }
-                            }
-                        }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // Side by side, the text column shrinks to a word or two per line.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        modelIcon
+                        Spacer()
+                        actions
                     }
+                    modelInfo
                 }
-
-                Spacer()
-
-                // Status and Actions
+            } else {
                 HStack(spacing: 12) {
-                    if model.isAvailable {
-                        Button {
-                            showDeleteConfirmation = true
-                        } label: {
-                            Image(systemName: "trash.fill")
-                                .foregroundStyle(.red)
-                                .imageScale(.large)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    // Info Button
-                    Button(action: onInfo) {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundStyle(.blue)
-                            .imageScale(.large)
-                    }
-                    .buttonStyle(.plain)
+                    modelIcon
+                    modelInfo
+                    Spacer()
+                    actions
                 }
+            }
         }
         .padding(.vertical, 4)
         .alert("Delete Model?", isPresented: $showDeleteConfirmation) {
@@ -216,6 +142,100 @@ struct ModelRow: View {
             Button("Delete", role: .destructive, action: onDelete)
         } message: {
             Text("This will permanently delete \(model.name) \(model.parameterCount) from your device.")
+        }
+    }
+
+    private var modelInfo: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(model.name) \(model.parameterCount)")
+                .font(.headline)
+
+            Text(model.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+
+            if model.isAvailable {
+                // A Label in a List row snaps its icon to the list's icon column.
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("Downloaded")
+                }
+                .font(.caption2)
+                .foregroundStyle(.green)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("modelSelection.downloaded.\(model.id)")
+            } else {
+                if isDownloadingThisModel {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ProgressView(value: modelManager.downloadProgress)
+                            .frame(maxWidth: 180)
+                            .accessibilityIdentifier("modelSelection.progress.\(model.id)")
+                        HStack(spacing: 8) {
+                            Text("\(Int((modelManager.downloadProgress * 100).rounded()))%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Button("Cancel") {
+                                modelManager.cancelDownload()
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } else if let availabilityIssue {
+                    Text(availabilityIssue)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Button("Download (\(model.downloadSizeLabel))") {
+                            modelManager.startDownload(for: model)
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(anotherDownloadInProgress)
+                        .accessibilityIdentifier("modelSelection.download.\(model.id)")
+                        if anotherDownloadInProgress, let activeModel = modelManager.activeDownloadModel {
+                            Text("\(activeModel.displayName) is downloading")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        } else if let error = modelManager.downloadError(for: model.id) {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 12) {
+            if model.isAvailable {
+                Button {
+                    showDeleteConfirmation = true
+                } label: {
+                    Image(systemName: "trash.fill")
+                        .foregroundStyle(.red)
+                        .imageScale(.large)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete")
+            }
+
+            // Info Button
+            Button(action: onInfo) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(.blue)
+                    .imageScale(.large)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Model Information")
         }
     }
 

@@ -188,6 +188,9 @@ final class ChatLLMUITests: XCTestCase {
         XCTAssertTrue(download.waitForExistence(timeout: 5))
         download.tap()
         XCTAssertTrue(element(in: app, identifier: "modelSelection.downloaded.qwen3.5-0.8b-4bit").waitForExistence(timeout: 20))
+        // The icon-only row buttons are named for VoiceOver.
+        XCTAssertTrue(app.buttons["Delete"].exists)
+        XCTAssertTrue(app.buttons["Model Information"].firstMatch.exists)
         app.buttons["Done"].tap()
 
         app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
