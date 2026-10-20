@@ -6554,6 +6554,28 @@
         }
       }
     },
+    "Tavily is receiving too many searches right now. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily erhält gerade zu viele Suchanfragen. Versuche es gleich noch einmal."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily is receiving too many searches right now. Try again in a moment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily está recibiendo demasiadas búsquedas ahora mismo. Vuelve a intentarlo en un momento."
+          }
+        }
+      }
+    },
     "Tavily returned a response ChatLLM could not read." : {
       "localizations" : {
         "de" : {
@@ -6572,6 +6594,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tavily ha devuelto una respuesta que ChatLLM no ha podido leer."
+          }
+        }
+      }
+    },
+    "Tavily returned status %lld." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily hat den Status %lld zurückgegeben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily returned status %lld."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tavily devolvió el estado %lld."
           }
         }
       }

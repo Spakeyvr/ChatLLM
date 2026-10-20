@@ -93,6 +93,7 @@ private struct TavilyAPIErrorResponse: Decodable, Sendable {
 enum TavilySearchError: LocalizedError {
     case invalidQuery
     case invalidAPIKey
+    case rateLimited
     case networkError(Error)
     case noResults
     case decodingError(Error)
@@ -101,6 +102,7 @@ enum TavilySearchError: LocalizedError {
         switch self {
         case .invalidQuery: String(localized: "Enter a search query under 400 characters.", bundle: .appLocalized)
         case .invalidAPIKey: String(localized: "The Tavily API key is missing or invalid.", bundle: .appLocalized)
+        case .rateLimited: String(localized: "Tavily is receiving too many searches right now. Try again in a moment.", bundle: .appLocalized)
         case .networkError(let error): String(localized: "Web search failed: \(error.localizedDescription)", bundle: .appLocalized)
         case .noResults: String(localized: "No relevant web results were found.", bundle: .appLocalized)
         case .decodingError: String(localized: "Tavily returned a response ChatLLM could not read.", bundle: .appLocalized)
@@ -246,7 +248,12 @@ actor TavilySearchService: WebSearchProviding {
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw TavilySearchError.invalidAPIKey
             }
-            let message = parseErrorMessage(from: data) ?? "Tavily returned status \(httpResponse.statusCode)."
+            // perform(_:) already retried, honoring Retry-After.
+            if httpResponse.statusCode == 429 {
+                throw TavilySearchError.rateLimited
+            }
+            let message = parseErrorMessage(from: data)
+                ?? String(localized: "Tavily returned status \(httpResponse.statusCode).", bundle: .appLocalized)
             throw TavilySearchError.networkError(
                 NSError(domain: "Tavily", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
             )

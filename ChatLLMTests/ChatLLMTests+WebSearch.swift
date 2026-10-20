@@ -243,6 +243,24 @@ extension ChatLLMTests {
         #expect(receivedInvalidAPIKey)
     }
 
+    @Test func tavilySearchServiceExplainsARateLimitAfterRetrying() async throws {
+        MockTavilyURLProtocol.responseStatusCode = 429
+        MockTavilyURLProtocol.responseData = Data("{}".utf8)
+
+        let service = try makeSearchService()
+        var receivedRateLimit = false
+
+        do {
+            _ = try await service.search(query: "latest swift release")
+        } catch let error as TavilySearchError {
+            if case .rateLimited = error {
+                receivedRateLimit = true
+            }
+        }
+
+        #expect(receivedRateLimit)
+    }
+
     @Test func webSearchBridgeEnforcesInvocationLimit() async throws {
         let bridge = try makeSearchBridge()
 
