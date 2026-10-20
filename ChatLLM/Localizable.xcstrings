@@ -439,7 +439,7 @@
     "%lld%%" : {
       "shouldTranslate" : false
     },
-    "A quick tour so new users understand what the app can do." : {
+    "A quick look at what the app can do." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -450,7 +450,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A quick tour so new users understand what the app can do."
+            "value" : "A quick look at what the app can do."
           }
         },
         "es" : {

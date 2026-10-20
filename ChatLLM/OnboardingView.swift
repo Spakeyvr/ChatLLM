@@ -351,7 +351,7 @@ struct OnboardingView: View {
     private var stepSubtitle: LocalizedStringKey {
         switch step {
         case .intro:
-            return "A quick tour so new users understand what the app can do."
+            return "A quick look at what the app can do."
         case .tavily:
             return "Optional setup for web search."
         case .mlx:
