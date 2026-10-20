@@ -716,7 +716,8 @@ final class ChatLLMUITests: XCTestCase {
         app.terminate()
         let relaunched = launchApp(resetAppState: false)
         openSettings(in: relaunched)
-        XCTAssertTrue(relaunched.buttons["settings.webSearch"].label.contains("Configured"))
+        // A saved key hides the row's "Set Up" prompt.
+        XCTAssertFalse(relaunched.buttons["settings.webSearch"].label.contains("Set Up"))
         relaunched.buttons["settings.webSearch"].tap()
         relaunched.buttons["settings.removeAPIKey"].tap()
         relaunched.alerts.buttons["Cancel"].tap()
