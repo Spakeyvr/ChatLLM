@@ -30,22 +30,25 @@ extension ChatViewModel {
         guard conversation.smartReasoningMode else { return false }
 
         // Smart reasoning currently uses a local heuristic and only runs for MLX/Qwen thinking models.
-        return useReasoningHeuristic(userText)
+        let needsReasoning = Self.promptNeedsReasoning(userText)
+        logger.debug("Smart reasoning heuristic: needs_reasoning=\(needsReasoning, privacy: .public)")
+        return needsReasoning
     }
 
     /// Heuristic for determining whether an MLX reasoning model should be used.
-    private func useReasoningHeuristic(_ userText: String) -> Bool {
-        let lowercased = userText.lowercased()
+    /// Keywords match on word boundaries, so "ios" doesn't fire on "serious" or
+    /// "fix" on "prefix"; task keywords also match inflections ("fixing", "errors").
+    nonisolated static func promptNeedsReasoning(_ userText: String) -> Bool {
+        let text = normalizedForKeywordMatching(userText)
 
         // Simple questions that definitely don't need reasoning
         let simplePatterns = [
             "what is", "what are", "who is", "who was", "when was", "when is",
-            "hello", "hi ", "hey ", "thanks", "thank you", "goodbye", "bye"
+            "hello", "hi", "hey", "thanks", "thank you", "goodbye", "bye"
         ]
 
-        let isSimpleQuestion = simplePatterns.contains { lowercased.hasPrefix($0) }
+        let isSimpleQuestion = simplePatterns.contains { text.hasPrefix(" \($0) ") }
         if isSimpleQuestion && userText.count < 50 {
-            logger.debug("Heuristic: Simple question detected, no reasoning needed")
             return false
         }
 
@@ -53,7 +56,7 @@ extension ChatViewModel {
         let complexityKeywords = [
             "debug", "fix", "optimize", "improve", "refactor", "architecture",
             "design pattern", "algorithm", "performance", "error", "issue", "problem",
-            "compare", "analyze", "evaluate", "trade-off", "pros and cons",
+            "compare", "analyze", "evaluate", "trade off", "pros and cons",
             "best practice", "approach", "strategy", "implementation",
             "why does", "why is", "how should", "what's wrong", "what's the best",
             "step by step", "walk through", "explain how", "show me how"
@@ -65,7 +68,8 @@ extension ChatViewModel {
             "proof", "derive", "determine", "find the", "compute"
         ]
 
-        // Code-related complexity indicators
+        // Code-related complexity indicators; whole words only, since several
+        // ("class", "struct", "extension") start ordinary words.
         let codeKeywords = [
             "swift", "swiftui", "uikit", "appkit", "xcode", "ios", "macos",
             "function", "class", "struct", "protocol", "extension", "enum",
@@ -73,33 +77,37 @@ extension ChatViewModel {
         ]
 
         // Check for complexity indicators
-        let hasComplexityKeyword = complexityKeywords.contains { lowercased.contains($0) }
-        let hasLogicalKeyword = logicalKeywords.contains { lowercased.contains($0) }
-        let hasCodeKeyword = codeKeywords.contains { lowercased.contains($0) }
+        let hasComplexityKeyword = complexityKeywords.contains { text.contains(" \($0)") }
+        let hasLogicalKeyword = logicalKeywords.contains { text.contains(" \($0)") }
+        let hasCodeKeyword = codeKeywords.contains { keyword in
+            ["", "s", "es"].contains { text.contains(" \(keyword)\($0) ") }
+        }
 
         // Additional heuristics
-        let hasQuestionWords = lowercased.contains("how") || lowercased.contains("why") || lowercased.contains("what")
+        let hasQuestionWords = ["how", "why", "what", "what's"].contains { text.contains(" \($0) ") }
         let isLongQuery = userText.count > 100
         let hasMultipleSentences = userText.components(separatedBy: CharacterSet(charactersIn: ".!?")).count > 2
 
         // Combine heuristics - be somewhat conservative
         if hasComplexityKeyword || hasLogicalKeyword {
-            logger.debug("Heuristic: Complexity/logical keywords found, reasoning needed")
             return true
         }
 
         if hasCodeKeyword && (hasQuestionWords || isLongQuery) {
-            logger.debug("Heuristic: Code-related complex question, reasoning needed")
             return true
         }
 
-        if isLongQuery && hasMultipleSentences && hasQuestionWords {
-            logger.debug("Heuristic: Long multi-sentence question, reasoning needed")
-            return true
-        }
+        return isLongQuery && hasMultipleSentences && hasQuestionWords
+    }
 
-        logger.debug("Heuristic: No complexity indicators found, no reasoning needed")
-        return false
+    /// Lowercased words separated by single spaces, with a space at both ends so
+    /// `" word"` matches only at the start of a word.
+    private nonisolated static func normalizedForKeywordMatching(_ text: String) -> String {
+        let words = text.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+        return " " + words.joined(separator: " ") + " "
     }
 
     // MARK: - Reasoning Response Parsing

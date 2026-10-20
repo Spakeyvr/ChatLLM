@@ -198,6 +198,20 @@ extension ChatLLMTests {
         #expect(!ReasoningMessageBubble.thinkingIndicatorAnimates(for: message, hasReasoningContent: true))
     }
 
+    @Test func smartReasoningMatchesKeywordsOnWordBoundaries() {
+        // Keywords hidden inside ordinary words don't trigger reasoning.
+        #expect(!ChatViewModel.promptNeedsReasoning("Tell me about serious side effects of coffee and what to drink instead"))
+        #expect(!ChatViewModel.promptNeedsReasoning("Give me a prefix for my username"))
+        #expect(!ChatViewModel.promptNeedsReasoning("Show me some classic movies from the nineties, whatever you like"))
+        #expect(!ChatViewModel.promptNeedsReasoning("Hi there"))
+        // Real task keywords still do, including inflected forms.
+        #expect(ChatViewModel.promptNeedsReasoning("I'm fixing a crash in my app"))
+        #expect(ChatViewModel.promptNeedsReasoning("Why does my build fail with these errors?"))
+        #expect(ChatViewModel.promptNeedsReasoning("How do I write an iOS widget?"))
+        #expect(ChatViewModel.promptNeedsReasoning("What’s wrong with this loop?"))
+        #expect(ChatViewModel.promptNeedsReasoning("Can you list the trade-offs of SwiftData versus Core Data?"))
+    }
+
     @Test func chatFollowsGrowingReplyOnlyWhenReaderIsAtBottom() {
         typealias State = ChatView.ScrollFollowState
         let atBottom = State(contentHeight: 1_000, visibleHeight: 600, distanceFromBottom: 0)
