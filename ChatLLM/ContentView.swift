@@ -693,11 +693,8 @@ struct ContentView: View {
     }
 
     private func rename(_ conversation: Conversation) {
-        // Ensure the conversation still exists and is not being modified
-        guard conversations.contains(where: { $0.id == conversation.id }),
-              currentViewModel?.conversation.id != conversation.id || currentViewModel?.isGenerating != true else { 
-            return 
-        }
+        // Renaming mid-reply is fine: auto-naming leaves a user's title alone.
+        guard conversations.contains(where: { $0.id == conversation.id }) else { return }
         
         // Localized inline rename via alert-style prompt
         let alert = UIAlertController(
