@@ -2255,6 +2255,28 @@
         }
       }
     },
+    "Downloaded" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heruntergeladen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloaded"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descargado"
+          }
+        }
+      }
+    },
     "Downloaded file '%@' failed its integrity check. Try downloading the model again." : {
       "localizations" : {
         "de" : {

@@ -128,7 +128,17 @@ struct ModelRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
 
-                    if !model.isAvailable {
+                    if model.isAvailable {
+                        // A Label in a List row snaps its icon to the list's icon column.
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Downloaded")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("modelSelection.downloaded.\(model.id)")
+                    } else {
                         if isDownloadingThisModel {
                             VStack(alignment: .leading, spacing: 2) {
                                 ProgressView(value: modelManager.downloadProgress)

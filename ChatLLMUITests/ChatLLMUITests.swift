@@ -176,6 +176,25 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testDownloadedModelIsMarkedAndNamedPlainlyInTheMenu() throws {
+        let app = launchApp(fakeMLXDownloads: true)
+        XCTAssertTrue(app.buttons["onboarding.skip"].waitForExistence(timeout: 5))
+        app.buttons["onboarding.skip"].tap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+
+        app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
+        app.buttons["Manage Models"].tap()
+        let download = app.buttons["modelSelection.download.qwen3.5-0.8b-4bit"]
+        XCTAssertTrue(download.waitForExistence(timeout: 5))
+        download.tap()
+        XCTAssertTrue(element(in: app, identifier: "modelSelection.downloaded.qwen3.5-0.8b-4bit").waitForExistence(timeout: 20))
+        app.buttons["Done"].tap()
+
+        app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Qwen 3.5 0.8B (4-bit)"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSearchOnlyResponseShowsSourcesWithoutThoughtSummary() throws {
         let app = XCUIApplication()
         app.launchArguments += [
