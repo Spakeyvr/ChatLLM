@@ -23,13 +23,15 @@ struct ConversationRow: View {
     let conversation: Conversation
 
     private var messagePreview: MessagePreview {
-        let nonSystemMessages = conversation.messages.lazy
+        // Find the latest message first: displayText hashes the whole message,
+        // so computing it for every message on each sidebar render adds up.
+        let last = conversation.messages.lazy
             .filter { $0.role != .system }
-            .map { (order: $0.order, role: $0.role, text: $0.displayText) }
+            .max(by: { $0.order < $1.order })
 
-        if let last = nonSystemMessages.max(by: { $0.order < $1.order }) {
+        if let last {
             // Strip <sources>…</sources> blocks and <thinking>…</thinking> from the preview
-            return .message(stripForPreview(last.text))
+            return .message(stripForPreview(last.displayText))
         } else if conversation.messages.isEmpty {
             return .empty
         } else {
