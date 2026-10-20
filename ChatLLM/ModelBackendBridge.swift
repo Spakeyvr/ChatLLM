@@ -202,7 +202,7 @@ class ModelBackendBridge: ObservableObject {
             notifyPipelineReset(reason: "backend.mlx.unavailable.\(modelID)")
             manager.unloadAllModels()
             manager.loadError = manager.availabilityIssue(for: model) ??
-                "Model '\(model.displayName)' is not available. Download it before selecting MLX."
+                String(localized: "Model '\(model.displayName)' isn't downloaded yet. Download it in Manage Models before selecting it.", bundle: .appLocalized)
             return
         }
 

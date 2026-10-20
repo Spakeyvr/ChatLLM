@@ -25,6 +25,12 @@ extension ChatLLMTests {
         #expect(String(localized: "Describe what you see", bundle: AppLanguage.spanish.bundle) == "Describe lo que ves")
     }
 
+    @Test func undownloadedModelErrorIsTranslated() {
+        let name = "Qwen 3.5"
+        #expect(String(localized: "Model '\(name)' isn't downloaded yet. Download it in Manage Models before selecting it.", bundle: AppLanguage.german.bundle)
+            == "Das Modell „Qwen 3.5“ ist noch nicht heruntergeladen. Lade es unter „Modelle verwalten“ herunter, bevor du es auswählst.")
+    }
+
     @Test func sourceCountsUseLocalizedSingularAndPlural() {
         for (language, singular, plural) in [
             (AppLanguage.english, "1 source", "2 sources"),

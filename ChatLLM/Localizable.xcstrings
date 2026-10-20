@@ -3908,6 +3908,28 @@
         }
       }
     },
+    "Model '%@' isn't downloaded yet. Download it in Manage Models before selecting it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell „%@“ ist noch nicht heruntergeladen. Lade es unter „Modelle verwalten“ herunter, bevor du es auswählst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model '%@' isn't downloaded yet. Download it in Manage Models before selecting it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo «%@» aún no se ha descargado. Descárgalo en Gestionar modelos antes de seleccionarlo."
+          }
+        }
+      }
+    },
     "Model '%@' not found in Documents/Models/. Use the Download button to fetch it." : {
       "localizations" : {
         "de" : {
