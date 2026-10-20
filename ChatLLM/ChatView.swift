@@ -258,8 +258,10 @@ struct ChatView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
+                // Not sortedMessages: editing the first message hides every message,
+                // which must not unlock the model mid-conversation.
                 NavigationTitleView(
-                    hasMessages: !sortedMessages.isEmpty,
+                    hasMessages: canStartNewChat,
                     modelBackendBridge: modelBackendBridge
                 )
             }

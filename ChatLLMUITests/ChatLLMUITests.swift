@@ -402,6 +402,24 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testEditingTheFirstMessageKeepsTheModelLocked() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        let message = app.staticTexts["What changed in SwiftUI web views this year?"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Manage Models"].exists)
+
+        message.press(forDuration: 1.0)
+        app.buttons["Edit"].tap()
+        XCTAssertTrue(app.buttons["chat.edit.cancel"].waitForExistence(timeout: 3))
+
+        // The title stays a plain label rather than the model menu.
+        app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
+        XCTAssertFalse(app.buttons["Manage Models"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
