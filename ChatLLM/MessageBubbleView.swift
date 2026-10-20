@@ -403,7 +403,7 @@ struct ReasoningMessageBubble: View {
             }
             if hasCompletedReasoning {
                 if let duration = message.reasoningDuration ?? message.generationDuration {
-                    return String(localized: "Thought for \(ThoughtDurationFormatter.string(for: duration))", bundle: .appLocalized, locale: locale)
+                    return String(localized: "Thought for \(ThoughtDurationFormatter.string(for: duration, locale: locale))", bundle: .appLocalized, locale: locale)
                 }
                 return String(localized: "Thought", bundle: .appLocalized, locale: locale)
             }

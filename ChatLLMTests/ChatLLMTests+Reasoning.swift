@@ -16,12 +16,19 @@ import FoundationModels
 
 extension ChatLLMTests {
     @Test func thoughtDurationFormatterUsesNaturalUnits() {
-        #expect(ThoughtDurationFormatter.string(for: 8) == "8 seconds")
-        #expect(ThoughtDurationFormatter.string(for: 60) == "1 minute")
-        #expect(ThoughtDurationFormatter.string(for: 68) == "1 minute and 8 seconds")
-        #expect(ThoughtDurationFormatter.string(for: 3_600) == "1 hour")
-        #expect(ThoughtDurationFormatter.string(for: 3_608) == "1 hour and 8 seconds")
-        #expect(ThoughtDurationFormatter.string(for: 3_960) == "1 hour and 6 minutes")
+        let english = Locale(identifier: "en")
+        #expect(ThoughtDurationFormatter.string(for: 8, locale: english) == "8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 1, locale: english) == "1 second")
+        #expect(ThoughtDurationFormatter.string(for: 60, locale: english) == "1 minute")
+        #expect(ThoughtDurationFormatter.string(for: 68, locale: english) == "1 minute and 8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 3_600, locale: english) == "1 hour")
+        #expect(ThoughtDurationFormatter.string(for: 3_608, locale: english) == "1 hour and 8 seconds")
+        #expect(ThoughtDurationFormatter.string(for: 3_960, locale: english) == "1 hour and 6 minutes")
+    }
+
+    @Test func thoughtDurationFollowsTheAppLanguage() {
+        #expect(ThoughtDurationFormatter.string(for: 68, locale: Locale(identifier: "de")) == "1 Minute und 8 Sekunden")
+        #expect(ThoughtDurationFormatter.string(for: 3_600, locale: Locale(identifier: "es")) == "1 hora")
     }
 
     @Test func cancellingActiveReasoningCapturesElapsedThinkingTime() throws {
@@ -58,7 +65,7 @@ extension ChatLLMTests {
 
         #expect(message.reasoningCompletedAt == cancelledAt)
         #expect(message.reasoningDuration == 21)
-        #expect(ThoughtDurationFormatter.string(for: message.reasoningDuration ?? 0) == "21 seconds")
+        #expect(ThoughtDurationFormatter.string(for: message.reasoningDuration ?? 0, locale: Locale(identifier: "en")) == "21 seconds")
     }
 
     @Test func reasoningTextSanitizerRemovesAllThinkingTagsAndExtraGaps() {

@@ -512,32 +512,34 @@ nonisolated struct GenerationMetrics: Equatable, Sendable {
 }
 
 enum ThoughtDurationFormatter {
-    nonisolated static func string(for duration: TimeInterval) -> String {
+    /// Formats at most two units ("1 minute and 8 seconds") in `locale`'s language, so the
+    /// "Thought for…" label doesn't mix an English duration into a translated sentence.
+    nonisolated static func string(for duration: TimeInterval, locale: Locale = .autoupdatingCurrent) -> String {
         let totalSeconds = max(1, Int(duration.rounded()))
         let hours = totalSeconds / 3_600
         let minutes = (totalSeconds % 3_600) / 60
         let seconds = totalSeconds % 60
 
+        let parts: [(Int, UnitDuration)]
         if hours > 0 {
-            let hourText = unit(hours, singular: "hour", plural: "hours")
-            if minutes > 0 {
-                return "\(hourText) and \(unit(minutes, singular: "minute", plural: "minutes"))"
-            }
-            guard seconds > 0 else { return hourText }
-            return "\(hourText) and \(unit(seconds, singular: "second", plural: "seconds"))"
+            parts = [(hours, .hours), minutes > 0 ? (minutes, .minutes) : (seconds, .seconds)]
+        } else if minutes > 0 {
+            parts = [(minutes, .minutes), (seconds, .seconds)]
+        } else {
+            parts = [(seconds, .seconds)]
         }
 
-        if minutes > 0 {
-            let minuteText = unit(minutes, singular: "minute", plural: "minutes")
-            guard seconds > 0 else { return minuteText }
-            return "\(minuteText) and \(unit(seconds, singular: "second", plural: "seconds"))"
-        }
-
-        return unit(seconds, singular: "second", plural: "seconds")
+        return parts
+            .filter { $0.0 > 0 }
+            .map { unit($0.0, $0.1, locale: locale) }
+            .formatted(.list(type: .and).locale(locale))
     }
 
-    nonisolated private static func unit(_ value: Int, singular: String, plural: String) -> String {
-        "\(value) \(value == 1 ? singular : plural)"
+    nonisolated private static func unit(_ value: Int, _ unit: UnitDuration, locale: Locale) -> String {
+        Measurement(value: Double(value), unit: unit).formatted(
+            .measurement(width: .wide, usage: .asProvided, numberFormatStyle: .number.precision(.fractionLength(0)))
+                .locale(locale)
+        )
     }
 }
 
