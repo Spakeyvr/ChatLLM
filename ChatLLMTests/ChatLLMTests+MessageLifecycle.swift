@@ -15,6 +15,28 @@ import FoundationModels
 @testable import ChatLLM
 
 extension ChatLLMTests {
+    @Test func sendingANewImageFromAnEditReplacesTheOldImage() async throws {
+        let viewModel = try makeViewModel()
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        let turn = try #require(viewModel.prepareUserMessageForSend("What is this?"))
+        let original = try await viewModel.addImageAttachment(image, to: turn.message)
+        let originalURL = original.actualFileURL
+
+        await viewModel.sendWithImage(text: "And now?", image: image, editedUserMessageID: turn.message.id)
+
+        let attachments = turn.message.attachments
+        #expect(attachments.count == 1)
+        #expect(attachments.first?.actualFileURL != originalURL)
+        #expect(turn.message.text == "And now?")
+
+        for url in [originalURL] + attachments.map(\.actualFileURL) {
+            try? await ImageStore.shared.delete(url: url)
+        }
+    }
+
     @Test func resetForRegenerationClearsDeveloperMetadata() {
         let conversation = Conversation(title: "Test")
         let message = ChatLLM.Message(

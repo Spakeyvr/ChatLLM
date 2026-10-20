@@ -57,9 +57,14 @@ extension ChatViewModel {
             replacingMessageID: editedUserMessageID
         ) else { return }
 
+        // The composer holds one image, so an image sent from an edit replaces the
+        // message's old one rather than joining it.
+        let replacedAttachments = editedUserMessageID == nil ? [] : turn.message.attachments
+
         let isAttached: Bool
         do {
             try await addImageAttachment(image, to: turn.message)
+            removeAttachments(replacedAttachments, from: turn.message)
             isAttached = true
         } catch {
             logger.error("Failed to attach image: \((error as NSError).localizedDescription, privacy: .public)")
@@ -94,6 +99,17 @@ extension ChatViewModel {
     }
 
     // MARK: - Private Helpers
+
+    /// The files are left to the app's orphaned-attachment cleanup.
+    private func removeAttachments(_ attachments: [MessageAttachment], from message: Message) {
+        guard !attachments.isEmpty else { return }
+        let ids = Set(attachments.map(\.id))
+        message.attachments.removeAll { ids.contains($0.id) }
+        for attachment in attachments {
+            context.delete(attachment)
+        }
+        immediateSave()
+    }
     
     /// Add image attachment (basic version)
     @discardableResult
