@@ -7,6 +7,7 @@
 
 import Foundation
 import MLXLMCommon
+import SwiftData
 import os.log
 
 // swiftlint:disable:next force_try
@@ -89,7 +90,11 @@ extension ChatViewModel {
             conversation.smartReasoningMode = false // Disable smart mode when manual mode is enabled
         }
         conversation.lastUpdated = Date()
-        immediateSave()
+        // An unsent draft keeps the setting in memory until its first message;
+        // saving now would add an empty chat to the history.
+        if conversation.modelContext != nil {
+            immediateSave()
+        }
         if previousValue != enabled {
             invalidateMLXConversationSession(reason: "reasoning_mode_changed")
         }
@@ -147,7 +152,11 @@ extension ChatViewModel {
             conversation.reasoningMode = false // Disable manual mode when smart mode is enabled
         }
         conversation.lastUpdated = Date()
-        immediateSave()
+        // An unsent draft keeps the setting in memory until its first message;
+        // saving now would add an empty chat to the history.
+        if conversation.modelContext != nil {
+            immediateSave()
+        }
         if previousValue != enabled {
             invalidateMLXConversationSession(reason: "smart_reasoning_mode_changed")
         }

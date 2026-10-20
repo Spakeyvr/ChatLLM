@@ -15,6 +15,19 @@ import FoundationModels
 @testable import ChatLLM
 
 extension ChatLLMTests {
+    @Test func togglingReasoningInAnUnsentDraftDoesNotSaveIt() throws {
+        let viewModel = try makeViewModel()
+        #expect(viewModel.conversation.modelContext == nil)
+
+        viewModel.setReasoningMode(true)
+        viewModel.setSmartReasoningMode(true)
+
+        // The draft stays out of the chat history but keeps the choice for its first send.
+        #expect(viewModel.conversation.modelContext == nil)
+        #expect(viewModel.conversation.smartReasoningMode)
+        #expect(!viewModel.conversation.reasoningMode)
+    }
+
     @Test func conversationSearchableVisibleTextUsesDisplayedContent() {
         let conversation = Conversation(title: "Vision")
         let user = ChatLLM.Message(
