@@ -211,5 +211,9 @@ extension ChatLLMTests {
         #expect(!scrolledUp.shouldFollow(from: atBottom))
         // The keyboard shrank the viewport while at the bottom: keep the latest message visible.
         #expect(State(contentHeight: 1_000, visibleHeight: 300, distanceFromBottom: 300).shouldFollow(from: atBottom))
+        // Even a small overflow (within the near-bottom threshold) is revealed.
+        #expect(State(contentHeight: 1_000, visibleHeight: 560, distanceFromBottom: 40).shouldFollow(from: atBottom))
+        // Content that still fits the viewport needs no scrolling.
+        #expect(!State(contentHeight: 400, visibleHeight: 560, distanceFromBottom: -160).shouldFollow(from: atBottom))
     }
 }

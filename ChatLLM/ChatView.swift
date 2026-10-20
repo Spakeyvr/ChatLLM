@@ -124,10 +124,12 @@ struct ChatView: View {
         var isNearBottom: Bool { distanceFromBottom <= Self.nearBottomThreshold }
 
         /// Re-pin to the bottom when a size change (not the reader's own scrolling) moved the
-        /// bottom out of view while the reader was there.
+        /// bottom out of view while the reader was there. Any hidden overflow counts, not just
+        /// overflow past the near-bottom threshold: a keyboard covering the last 40 points would
+        /// otherwise leave the reply's action row hidden behind the composer.
         func shouldFollow(from old: ScrollFollowState) -> Bool {
             let sizeChanged = contentHeight != old.contentHeight || visibleHeight != old.visibleHeight
-            return sizeChanged && old.isNearBottom && !isNearBottom
+            return sizeChanged && old.isNearBottom && distanceFromBottom > 0.5
         }
     }
 
@@ -196,10 +198,13 @@ struct ChatView: View {
             // Follow a growing reply (or a shrinking viewport) only while the reader is already
             // at the bottom; someone who scrolled up to read earlier messages stays put.
             .onScrollGeometryChange(for: ScrollFollowState.self) { geometry in
+                // visibleRect spans the insets (navigation bar, composer, keyboard), so
+                // measure against the inset-free container and the inset content bottom.
                 ScrollFollowState(
                     contentHeight: geometry.contentSize.height,
-                    visibleHeight: geometry.visibleRect.height,
-                    distanceFromBottom: geometry.contentSize.height - geometry.visibleRect.maxY
+                    visibleHeight: geometry.containerSize.height,
+                    distanceFromBottom: geometry.contentSize.height + geometry.contentInsets.bottom
+                        - geometry.visibleRect.maxY
                 )
             } action: { old, new in
                 if new.shouldFollow(from: old) {
