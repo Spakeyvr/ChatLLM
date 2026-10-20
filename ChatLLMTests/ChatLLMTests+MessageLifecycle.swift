@@ -484,7 +484,7 @@ extension ChatLLMTests {
         bridge.selectedBackend = .mlx
         bridge.selectedModelID = "qwen3.5-0.8b-4bit"
 
-        #expect(bridge.currentModelDisplayName == "Qwen 3.5 (0.8B (4-bit))")
+        #expect(bridge.currentModelDisplayName == "Qwen 3.5 0.8B (4-bit)")
     }
 
     @Test func bridgeDisplayNameFallsBackForPersistedLFM25Selection() {
@@ -493,7 +493,7 @@ extension ChatLLMTests {
         bridge.selectedBackend = .mlx
         bridge.selectedModelID = "lfm2.5-2.6b-4bit"
 
-        #expect(bridge.currentModelDisplayName == "LFM2.5 (2.6B (4-bit))")
+        #expect(bridge.currentModelDisplayName == "LFM2.5 2.6B (4-bit)")
     }
 
     @Test func reasoningAvailabilityTracksSelectedModelSupport() {

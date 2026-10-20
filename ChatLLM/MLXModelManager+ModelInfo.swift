@@ -111,7 +111,8 @@ extension MLXModelManager {
         /// This checkpoint always opens a thinking block in its chat template.
         var requiresReasoning: Bool { id == "lfm2.5-2.6b-4bit" }
 
-        var displayName: String { "\(name) (\(parameters))" }
+        /// "Qwen 3.5 0.8B (4-bit)": `parameters` already carries its own parenthetical.
+        var displayName: String { "\(name) \(parameters)" }
 
         var parameterCount: String {
             parameters.components(separatedBy: " ").first ?? parameters

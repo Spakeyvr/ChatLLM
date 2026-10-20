@@ -116,7 +116,7 @@ struct NavigationTitleView: View {
                         modelBackendBridge.switchToMLXModel(model.id, source: "chat-input.model")
                     } label: {
                         HStack {
-                            Text("\(model.name) (\(model.parameters))")
+                            Text(model.displayName)
                             if modelBackendBridge.selectedBackend == .mlx && modelBackendBridge.selectedModelID == model.id {
                                 Image(systemName: "checkmark")
                             }

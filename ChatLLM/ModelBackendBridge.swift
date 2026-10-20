@@ -285,22 +285,12 @@ class ModelBackendBridge: ObservableObject {
     /// Get the current model's display name
     var currentModelDisplayName: String? {
         guard let modelID = selectedModelID else { return nil }
-        if let model = modelManager?.model(withID: modelID) {
-            return "\(model.name) (\(model.parameters))"
+        if let model = modelManager?.model(withID: modelID)
+            ?? modelManager?.currentModel.flatMap({ $0.id == modelID ? $0 : nil })
+            ?? MLXModelManager.modelDefinitions.first(where: { $0.id == modelID }) {
+            return model.displayName
         }
-        if let model = modelManager?.currentModel, model.id == modelID {
-            return "\(model.name) (\(model.parameters))"
-        }
-        switch modelID {
-        case "qwen3.5-4b-4bit-hybrid":
-            return "Qwen 3.5 (4B)"
-        case "qwen3.5-2b-4bit":
-            return "Qwen 3.5 (2B)"
-        case "lfm2.5-2.6b-4bit":
-            return "LFM2.5 (2.6B (4-bit))"
-        default:
-            return modelID
-        }
+        return modelID
     }
 
     private var selectedMLXModel: MLXModelManager.MLXModelInfo? {
