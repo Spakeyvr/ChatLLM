@@ -388,6 +388,20 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testUnavailableWebSearchExplainsWhy() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+
+        // No Tavily key is configured after a reset.
+        app.buttons["Add attachment or web search"].tap()
+        let reason = app.staticTexts["composer.webSearchUnavailableReason"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertTrue(reason.label.contains("Tavily"))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

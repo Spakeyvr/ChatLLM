@@ -549,6 +549,28 @@
         }
       }
     },
+    "Add a Tavily API key in Settings to search the web." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Füge in den Einstellungen einen Tavily-API-Schlüssel hinzu, um im Web zu suchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a Tavily API key in Settings to search the web."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Añade una clave de API de Tavily en los ajustes para buscar en la web."
+          }
+        }
+      }
+    },
     "Add an action beneath assistant messages to view raw output and generation diagnostics." : {
       "localizations" : {
         "de" : {
@@ -7527,6 +7549,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Error en la búsqueda web: %@"
+          }
+        }
+      }
+    },
+    "Web search isn't available while an image is attached." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Websuche ist nicht verfügbar, solange ein Bild angehängt ist."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web search isn't available while an image is attached."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La búsqueda web no está disponible mientras haya una imagen adjunta."
+          }
+        }
+      }
+    },
+    "Web search needs an internet connection." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Websuche benötigt eine Internetverbindung."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web search needs an internet connection."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La búsqueda web necesita conexión a internet."
           }
         }
       }

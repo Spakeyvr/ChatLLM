@@ -25,6 +25,7 @@ struct ComposerView: View {
     var imageInputAvailable: Bool = true
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    var searchUnavailableReason: String?
     @Binding var disableToolCalls: Bool
     var toolCallsLockedDisabled: Bool = false
     @Binding var isReasoningEnabled: Bool
@@ -49,6 +50,7 @@ struct ComposerView: View {
             imageInputAvailable: imageInputAvailable,
             forceSearch: $forceSearch,
             searchAvailable: searchAvailable,
+            searchUnavailableReason: searchUnavailableReason,
             disableToolCalls: $disableToolCalls,
             toolCallsLockedDisabled: toolCallsLockedDisabled,
             isReasoningEnabled: $isReasoningEnabled,

@@ -85,6 +85,22 @@ struct ChatView: View {
         viewModel.searchService != nil
     }
 
+    /// Why the Web Search toggle is off limits, shown under it. Nil while tool
+    /// calls are disabled, since that toggle sits right above it.
+    private var webSearchUnavailableReason: String? {
+        guard !webSearchToggleAvailable, !effectiveDisableToolCalls else { return nil }
+        if !networkMonitor.isConnected {
+            return String(localized: "Web search needs an internet connection.", bundle: .appLocalized, locale: locale)
+        }
+        if selectedImage != nil {
+            return String(localized: "Web search isn't available while an image is attached.", bundle: .appLocalized, locale: locale)
+        }
+        if viewModel.searchService == nil {
+            return String(localized: "Add a Tavily API key in Settings to search the web.", bundle: .appLocalized, locale: locale)
+        }
+        return nil
+    }
+
     private var toolCallsLockedDisabled: Bool {
         !modelBackendBridge.toolCallsAvailableForCurrentBackend
     }
@@ -435,6 +451,7 @@ struct ChatView: View {
             imageInputAvailable: imageInputAvailable,
             forceSearch: $forceSearch,
             searchAvailable: webSearchToggleAvailable,
+            searchUnavailableReason: webSearchUnavailableReason,
             disableToolCalls: disableToolCallsBinding,
             toolCallsLockedDisabled: toolCallsLockedDisabled,
             isReasoningEnabled: Binding(

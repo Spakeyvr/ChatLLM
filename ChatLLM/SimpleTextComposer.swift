@@ -48,6 +48,7 @@ struct SimpleTextComposer: View {
     var imageInputAvailable: Bool = true
     @Binding var forceSearch: Bool
     var searchAvailable: Bool = true
+    var searchUnavailableReason: String?
     @Binding var disableToolCalls: Bool
     var toolCallsLockedDisabled: Bool = false
     @Binding var isReasoningEnabled: Bool
@@ -118,6 +119,7 @@ struct SimpleTextComposer: View {
                             imageInputAvailable: imageInputAvailable,
                             forceSearch: $forceSearch,
                             searchAvailable: searchAvailable,
+                            searchUnavailableReason: searchUnavailableReason,
                             disableToolCalls: $disableToolCalls,
                             toolCallsLockedDisabled: toolCallsLockedDisabled,
                             isReasoningEnabled: $isReasoningEnabled,
@@ -232,6 +234,7 @@ private struct AddOptionsSheet: View {
     var imageInputAvailable: Bool
     @Binding var forceSearch: Bool
     var searchAvailable: Bool
+    var searchUnavailableReason: String?
     @Binding var disableToolCalls: Bool
     var toolCallsLockedDisabled: Bool
     @Binding var isReasoningEnabled: Bool
@@ -302,6 +305,16 @@ private struct AddOptionsSheet: View {
                     .tint(.blue)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
+
+                    if let searchUnavailableReason {
+                        Text(searchUnavailableReason)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 8)
+                            .accessibilityIdentifier("composer.webSearchUnavailableReason")
+                    }
 
                     Divider()
                         .padding(.horizontal, 20)
