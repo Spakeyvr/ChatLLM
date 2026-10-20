@@ -127,7 +127,7 @@ struct SimpleTextComposer: View {
                             reasoningAvailable: reasoningAvailable,
                             reasoningRequired: reasoningRequired
                         )
-                        .presentationDetents([.medium])
+                        .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                     }
 
@@ -244,131 +244,135 @@ private struct AddOptionsSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                // Every attach option imports an image, so all of them depend
-                // on the model reading images itself. Unavailable options stay
-                // visible but grayed out, so the row keeps the same layout.
-                HStack(spacing: 12) {
-                    AttachTile(icon: "camera", label: "Camera", action: onCamera)
-                        .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                    AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
-                    AttachTile(icon: "doc.badge.arrow.up", label: "Files", action: onFile)
-                }
-                .disabled(!imageInputAvailable)
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, imageInputAvailable ? 24 : 8)
-
-                if !imageInputAvailable {
-                    Text("This model can't read images.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
-                }
-
-                Divider()
-                    .padding(.horizontal, 20)
-
-                VStack(spacing: 0) {
-                    Toggle(isOn: $disableToolCalls) {
-                        Label {
-                            Text("Disable Tool Calls")
-                                .font(.body)
-                        } icon: {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .font(.body)
-                                .frame(width: 28)
-                        }
+            // Scrolls once large text sizes outgrow the medium detent.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Every attach option imports an image, so all of them depend
+                    // on the model reading images itself. Unavailable options stay
+                    // visible but grayed out, so the row keeps the same layout.
+                    HStack(spacing: 12) {
+                        AttachTile(icon: "camera", label: "Camera", action: onCamera)
+                            .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                        AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
+                        AttachTile(icon: "doc.badge.arrow.up", label: "Files", action: onFile)
                     }
-                    .tint(.orange)
-                    .disabled(toolCallsLockedDisabled)
+                    .disabled(!imageInputAvailable)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .onChange(of: disableToolCalls) { _, isDisabled in
-                        if isDisabled {
-                            forceSearch = false
-                        }
-                    }
+                    .padding(.top, 8)
+                    .padding(.bottom, imageInputAvailable ? 24 : 8)
 
-                    Toggle(isOn: $forceSearch) {
-                        Label {
-                            Text("Web Search")
-                                .font(.body)
-                        } icon: {
-                            Image(systemName: "globe")
-                                .font(.body)
-                                .frame(width: 28)
-                        }
-                    }
-                    .disabled(!searchAvailable || disableToolCalls)
-                    .tint(.blue)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-
-                    if let searchUnavailableReason {
-                        Text(searchUnavailableReason)
+                    if !imageInputAvailable {
+                        Text("This model can't read images.")
                             .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 20)
-                            .padding(.bottom, 8)
-                            .accessibilityIdentifier("composer.webSearchUnavailableReason")
+                            .padding(.bottom, 16)
                     }
 
                     Divider()
                         .padding(.horizontal, 20)
 
-                    Toggle(isOn: Binding(
-                        get: { reasoningRequired || isReasoningEnabled },
-                        set: { newValue in
-                            if newValue { isSmartReasoningEnabled = false }
-                            isReasoningEnabled = newValue
+                    VStack(spacing: 0) {
+                        Toggle(isOn: $disableToolCalls) {
+                            Label {
+                                Text("Disable Tool Calls")
+                                    .font(.body)
+                            } icon: {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.body)
+                                    .frame(width: 28)
+                            }
                         }
-                    )) {
-                        Label {
-                            Text("Always Reason")
-                                .font(.body)
-                        } icon: {
-                            Image(systemName: "brain.head.profile")
-                                .font(.body)
-                                .frame(width: 28)
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    .disabled(reasoningRequired || !reasoningAvailable || isSmartReasoningEnabled)
-                    .tint(.blue)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-
-                    Toggle(isOn: Binding(
-                        get: { !reasoningRequired && isSmartReasoningEnabled },
-                        set: { newValue in
-                            if newValue { isReasoningEnabled = false }
-                            isSmartReasoningEnabled = newValue
-                        }
-                    )) {
-                        Label {
-                            Text("Smart Reasoning")
-                                .font(.body)
-                        } icon: {
-                            Image(systemName: "sparkles")
-                                .font(.body)
-                                .frame(width: 28)
-                                .foregroundStyle(.purple)
-                        }
-                    }
-                    .disabled(reasoningRequired || !reasoningAvailable || isReasoningEnabled)
-                    .tint(.purple)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-
-                    Divider()
+                        .tint(.orange)
+                        .disabled(toolCallsLockedDisabled)
                         .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .onChange(of: disableToolCalls) { _, isDisabled in
+                            if isDisabled {
+                                forceSearch = false
+                            }
+                        }
+
+                        Toggle(isOn: $forceSearch) {
+                            Label {
+                                Text("Web Search")
+                                    .font(.body)
+                            } icon: {
+                                Image(systemName: "globe")
+                                    .font(.body)
+                                    .frame(width: 28)
+                            }
+                        }
+                        .disabled(!searchAvailable || disableToolCalls)
+                        .tint(.blue)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+
+                        if let searchUnavailableReason {
+                            Text(searchUnavailableReason)
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 8)
+                                .accessibilityIdentifier("composer.webSearchUnavailableReason")
+                        }
+
+                        Divider()
+                            .padding(.horizontal, 20)
+
+                        Toggle(isOn: Binding(
+                            get: { reasoningRequired || isReasoningEnabled },
+                            set: { newValue in
+                                if newValue { isSmartReasoningEnabled = false }
+                                isReasoningEnabled = newValue
+                            }
+                        )) {
+                            Label {
+                                Text("Always Reason")
+                                    .font(.body)
+                            } icon: {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.body)
+                                    .frame(width: 28)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        .disabled(reasoningRequired || !reasoningAvailable || isSmartReasoningEnabled)
+                        .tint(.blue)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+
+                        Toggle(isOn: Binding(
+                            get: { !reasoningRequired && isSmartReasoningEnabled },
+                            set: { newValue in
+                                if newValue { isReasoningEnabled = false }
+                                isSmartReasoningEnabled = newValue
+                            }
+                        )) {
+                            Label {
+                                Text("Smart Reasoning")
+                                    .font(.body)
+                            } icon: {
+                                Image(systemName: "sparkles")
+                                    .font(.body)
+                                    .frame(width: 28)
+                                    .foregroundStyle(.purple)
+                            }
+                        }
+                        .disabled(reasoningRequired || !reasoningAvailable || isReasoningEnabled)
+                        .tint(.purple)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+
+                        Divider()
+                            .padding(.horizontal, 20)
+                    }
                 }
-
-                Spacer()
             }
+            .scrollBounceBehavior(.basedOnSize)
             .navigationTitle("Add to Chat")
             .navigationBarTitleDisplayMode(.inline)
         }
