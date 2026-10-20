@@ -142,8 +142,9 @@ final class ChatViewModel: ObservableObject {
     internal let generator: LLMGenerator
     internal let context: ModelContext
 
-    // Tavily search service (user-configurable)
-    var searchService: TavilySearchService?
+    // Tavily search service (user-configurable). Published so the composer's
+    // Web Search toggle updates when a key is added or removed mid-chat.
+    @Published var searchService: TavilySearchService?
     private var keyChangeCancellable: AnyCancellable?
     private var modelPipelineResetCancellable: AnyCancellable?
 
