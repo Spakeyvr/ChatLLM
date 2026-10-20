@@ -177,8 +177,15 @@ struct ConversationSidebar: View {
         List(selection: $selection) {
             ForEach(sections) { section in
                 Section {
-                    ForEach(section.conversations, id: \.id) { convo in
+                    ForEach(Array(section.conversations.enumerated()), id: \.element.id) { index, convo in
+                        let next = section.conversations.indices.contains(index + 1)
+                            ? section.conversations[index + 1] : nil
                         row(for: convo)
+                            // Separators would cut through the open chat's highlight.
+                            .listRowSeparator(
+                                isSelected(convo) || next.map(isSelected) == true ? .hidden : .automatic,
+                                edges: .bottom
+                            )
                     }
                 } header: {
                     Text(section.title)
@@ -243,7 +250,13 @@ struct ConversationSidebar: View {
                 selection = convo
                 onSelect()
             }
-            .listRowBackground(Color.clear)
+            // A clear row background hides List's own selection highlight, so mark
+            // the open chat explicitly.
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
+                    .fill(isSelected(convo) ? Color(uiColor: .tertiarySystemFill) : .clear)
+                    .padding(.horizontal, 8)
+            )
             .contextMenu {
                 Button {
                     onRename(convo)
@@ -264,6 +277,10 @@ struct ConversationSidebar: View {
                     Label("Delete", systemImage: "trash")
                 }
             }
+    }
+
+    private func isSelected(_ convo: Conversation) -> Bool {
+        selection?.id == convo.id
     }
 
     @ViewBuilder
