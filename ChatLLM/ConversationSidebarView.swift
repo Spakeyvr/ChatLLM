@@ -37,9 +37,15 @@ struct ConversationRow: View {
     /// sidebar render adds up. A reply that failed before writing anything has no text,
     /// so the preview falls back to the message before it.
     static func previewText(for conversation: Conversation) -> String? {
-        conversation.messages
-            .filter { $0.role != .system }
+        let visible = conversation.messages.filter { $0.role != .system }
+        // Common case: the latest message has text, so skip sorting the whole chat.
+        if let latest = visible.max(by: { $0.order < $1.order }) {
+            let text = stripForPreview(latest.displayText)
+            if !text.isEmpty { return text }
+        }
+        return visible
             .sorted { $0.order > $1.order }
+            .dropFirst()
             .lazy
             .map { stripForPreview($0.displayText) }
             .first { !$0.isEmpty }
