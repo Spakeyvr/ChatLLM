@@ -23,15 +23,8 @@ struct ConversationRow: View {
     let conversation: Conversation
 
     private var messagePreview: MessagePreview {
-        // Find the latest message first: displayText hashes the whole message,
-        // so computing it for every message on each sidebar render adds up.
-        let last = conversation.messages.lazy
-            .filter { $0.role != .system }
-            .max(by: { $0.order < $1.order })
-
-        if let last {
-            // Strip <sources>…</sources> blocks and <thinking>…</thinking> from the preview
-            return .message(stripForPreview(last.displayText))
+        if let latestText = Self.previewText(for: conversation) {
+            return .message(latestText)
         } else if conversation.messages.isEmpty {
             return .empty
         } else {
@@ -39,8 +32,21 @@ struct ConversationRow: View {
         }
     }
 
+    /// The newest visible message text. Walks back from the latest message because
+    /// displayText hashes the whole message, so computing it for every message on each
+    /// sidebar render adds up. A reply that failed before writing anything has no text,
+    /// so the preview falls back to the message before it.
+    static func previewText(for conversation: Conversation) -> String? {
+        conversation.messages
+            .filter { $0.role != .system }
+            .sorted { $0.order > $1.order }
+            .lazy
+            .map { stripForPreview($0.displayText) }
+            .first { !$0.isEmpty }
+    }
+
     // Removes <sources>…</sources>, stray <sources> tags, and <thinking>…</thinking> from preview text.
-    private func stripForPreview(_ text: String) -> String {
+    private static func stripForPreview(_ text: String) -> String {
         var output = text
 
         func applying(_ regex: NSRegularExpression) {

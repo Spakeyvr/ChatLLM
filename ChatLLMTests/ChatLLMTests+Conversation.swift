@@ -28,6 +28,16 @@ extension ChatLLMTests {
         #expect(!viewModel.conversation.reasoningMode)
     }
 
+    @Test func sidebarPreviewSkipsAReplyThatFailedBeforeWritingText() {
+        let conversation = Conversation(title: "Failed reply")
+        let user = ChatLLM.Message(role: .user, text: "Hello there", order: 0, conversation: conversation, isFinal: true)
+        let failed = ChatLLM.Message(role: .assistant, text: "", order: 1, conversation: conversation, isFinal: true)
+        failed.generationError = "The model isn't ready."
+        conversation.messages = [user, failed]
+
+        #expect(ConversationRow.previewText(for: conversation) == "Hello there")
+    }
+
     @Test func conversationSearchableVisibleTextUsesDisplayedContent() {
         let conversation = Conversation(title: "Vision")
         let user = ChatLLM.Message(
