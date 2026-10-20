@@ -337,6 +337,34 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testRenamingAChatKeepsItsPlaceInTheSidebar() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
+        app.launch()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+
+        openSidebar(in: app)
+        let olderRow = app.staticTexts["Web Search Preview"]
+        XCTAssertTrue(olderRow.waitForExistence(timeout: 5))
+        olderRow.press(forDuration: 1.0)
+        let rename = app.buttons["Rename"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+        rename.tap()
+
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        let existing = field.value as? String ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count) + "Swift Notes")
+        app.alerts.buttons["Save"].tap()
+
+        let renamedRow = app.staticTexts["Swift Notes"]
+        XCTAssertTrue(renamedRow.waitForExistence(timeout: 3))
+        let newerRow = app.staticTexts["Second Chat"]
+        XCTAssertLessThan(newerRow.frame.minY, renamedRow.frame.minY)
+    }
+
+    @MainActor
     func testDeletingTheOpenChatOpensABlankChat() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
