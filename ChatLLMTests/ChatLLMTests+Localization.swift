@@ -37,6 +37,12 @@ extension ChatLLMTests {
             == "Die Dateien von Qwen 3.5 2B (4-bit) fehlen. Lade es unter „Modelle verwalten“ erneut herunter.")
     }
 
+    @Test func tokenCountsGroupDigitsForTheAppLanguage() {
+        let tokens = 6_144
+        #expect(String(localized: "\(tokens) tokens", bundle: AppLanguage.english.bundle, locale: AppLanguage.english.locale) == "6,144 tokens")
+        #expect(String(localized: "\(tokens) tokens", bundle: AppLanguage.german.bundle, locale: AppLanguage.german.locale) == "6.144 Tokens")
+    }
+
     @Test func sourceCountsUseLocalizedSingularAndPlural() {
         for (language, singular, plural) in [
             (AppLanguage.english, "1 source", "2 sources"),

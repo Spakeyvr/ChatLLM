@@ -42,6 +42,7 @@ struct AdvancedSettingsView: View {
 
 private struct MLXSettingsView: View {
     @Binding var settings: AppSettingsDraft
+    @Environment(\.locale) private var locale
 
     private var deviceMaximum: Int { MLXDeviceSupportProfile.current.maxContextWindowTokens }
     private var contextTokens: Binding<Double> {
@@ -59,7 +60,7 @@ private struct MLXSettingsView: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Context Window", value: String(localized: "\(Int(contextTokens.wrappedValue)) tokens", bundle: .appLocalized))
+                LabeledContent("Context Window", value: String(localized: "\(Int(contextTokens.wrappedValue)) tokens", bundle: .appLocalized, locale: locale))
                 Slider(value: contextTokens, in: 512...Double(deviceMaximum), step: 512) {
                     Text("Context Window")
                 }
@@ -75,7 +76,7 @@ private struct MLXSettingsView: View {
                 ))
                 .accessibilityIdentifier("settings.unlimitedOutput")
                 if settings.mlxMaxOutputTokens != 0 {
-                    LabeledContent("Maximum Output", value: String(localized: "\(settings.mlxMaxOutputTokens) tokens", bundle: .appLocalized))
+                    LabeledContent("Maximum Output", value: String(localized: "\(settings.mlxMaxOutputTokens) tokens", bundle: .appLocalized, locale: locale))
                     Slider(value: outputTokens, in: 512...1024, step: 32) {
                         Text("Maximum Output")
                     }

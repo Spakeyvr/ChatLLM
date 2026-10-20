@@ -267,6 +267,7 @@ struct ModelInfoSheet: View {
     let model: MLXModelManager.MLXModelInfo
     var isSupportedOnDevice = true
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
 
     private var statusText: String {
         Self.statusText(isAvailable: model.isAvailable, isSupportedOnDevice: isSupportedOnDevice)
@@ -288,7 +289,7 @@ struct ModelInfoSheet: View {
                 Section("Overview") {
                     InfoRow(label: "Name", value: model.name)
                     InfoRow(label: "Parameters", value: model.parameters)
-                    InfoRow(label: "Context Length", value: String(localized: "\(model.contextLength) tokens", bundle: .appLocalized))
+                    InfoRow(label: "Context Length", value: String(localized: "\(model.contextLength) tokens", bundle: .appLocalized, locale: locale))
                     InfoRow(label: "Status", value: statusText)
                     InfoRow(label: "Reasoning", value: model.supportsReasoning ? String(localized: "Supported", bundle: .appLocalized) : String(localized: "Not supported", bundle: .appLocalized))
                     InfoRow(label: "Package", value: model.loadPolicy.packageDescription)

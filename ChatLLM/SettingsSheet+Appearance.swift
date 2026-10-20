@@ -41,7 +41,7 @@ struct AppearanceSettingsView: View {
                 .listRowBackground(Self.chatColor(.systemBackground))
             }
             Section {
-                LabeledContent("Message Text Size", value: String(localized: "\(Int(settings.messageFontSize)) pt", bundle: .appLocalized))
+                LabeledContent("Message Text Size", value: String(localized: "\(Int(settings.messageFontSize)) pt", bundle: .appLocalized, locale: locale))
                 Slider(value: $settings.messageFontSize, in: 12...22, step: 1) {
                     Text("Message Text Size")
                 } minimumValueLabel: {
