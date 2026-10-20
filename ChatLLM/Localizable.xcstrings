@@ -6821,24 +6821,24 @@
         }
       }
     },
-    "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings." : {
+    "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or start a new chat and choose Apple Intelligence from the model menu." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das gewählte MLX-Modell ist noch nicht bereit. %@\n\nWarte, bis es geladen ist, oder wechsle in den Einstellungen zu Apple Intelligence."
+            "value" : "Das gewählte MLX-Modell ist noch nicht bereit. %@\n\nWarte, bis es geladen ist, oder starte einen neuen Chat und wähle im Modellmenü Apple Intelligence."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings."
+            "value" : "The selected MLX model isn't ready. %@\n\nTry waiting for it to load, or start a new chat and choose Apple Intelligence from the model menu."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El modelo MLX seleccionado aún no está listo. %@\n\nEspera a que se cargue o cambia a Apple Intelligence en los ajustes."
+            "value" : "El modelo MLX seleccionado aún no está listo. %@\n\nEspera a que se cargue o inicia un chat nuevo y elige Apple Intelligence en el menú de modelos."
           }
         }
       }

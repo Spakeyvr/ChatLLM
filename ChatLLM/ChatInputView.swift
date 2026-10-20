@@ -79,7 +79,7 @@ struct NavigationTitleView: View {
 
     private var displayName: String {
         if modelBackendBridge.selectedBackend == .foundationModels {
-            return "Apple Foundation"
+            return ModelBackendBridge.Backend.foundationModels.displayName
         } else if let current = modelBackendBridge.currentModelDisplayName {
             return current
         } else {
@@ -94,13 +94,13 @@ struct NavigationTitleView: View {
         } else {
             // No messages yet: allow model selection
             Menu {
-                // Apple Foundation
+                // Apple Intelligence
                 if modelBackendBridge.foundationModelsAvailable {
                     Button {
                         modelBackendBridge.selectBackend(.foundationModels, source: "chat-input.foundation")
                     } label: {
                         HStack {
-                            Text("Apple Foundation")
+                            Text(ModelBackendBridge.Backend.foundationModels.displayName)
                             if modelBackendBridge.selectedBackend == .foundationModels {
                                 Image(systemName: "checkmark")
                             }

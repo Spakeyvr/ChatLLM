@@ -1374,7 +1374,7 @@ final class ChatViewModel: ObservableObject {
             guard manager.currentModel != nil else {
                 let reason = manager.loadError ?? String(localized: "The model hasn't finished loading.", bundle: .appLocalized)
                 throw NSError(domain: "MLXGeneration", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: String(localized: "The selected MLX model isn't ready. \(reason)\n\nTry waiting for it to load, or switch to Apple Intelligence in Settings.", bundle: .appLocalized)
+                    NSLocalizedDescriptionKey: String(localized: "The selected MLX model isn't ready. \(reason)\n\nTry waiting for it to load, or start a new chat and choose Apple Intelligence from the model menu.", bundle: .appLocalized)
                 ])
             }
 
