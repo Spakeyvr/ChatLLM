@@ -84,11 +84,12 @@ struct SimpleTextComposer: View {
                     )
                     .frame(height: max(24, composerHeight))
 
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // Same font as the text view, so typing doesn't shrink the text. Hide it
+                    // as soon as anything is typed, or it would overlap a leading newline.
+                    if text.isEmpty {
                         Text(placeholder)
-                            .font(.title3)
+                            .font(.body)
                             .foregroundStyle(.secondary)
-                            .padding(.top, 2)
                             .allowsHitTesting(false)
                     }
                 }
@@ -154,9 +155,10 @@ struct SimpleTextComposer: View {
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundStyle(.red)
                             } else {
+                                // An explicit style overrides the disabled dimming.
                                 Image(systemName: "arrow.up")
                                     .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(.primary)
+                                    .foregroundStyle(canSend ? .primary : .tertiary)
                             }
                         }
                         .frame(width: circleSize, height: circleSize)
@@ -404,6 +406,7 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.delegate = context.coordinator
         textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
         textView.textColor = .label
         textView.tintColor = .systemBlue
         textView.isScrollEnabled = false
