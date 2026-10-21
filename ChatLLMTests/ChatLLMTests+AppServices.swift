@@ -91,6 +91,44 @@ extension ChatLLMTests {
         #expect(probe.writes == 1)
     }
 
+    @Test func commandReturnSendsFromAHardwareKeyboard() throws {
+        let textView = KeyboardSendingTextView()
+        var presses = 0
+        textView.onCommandReturn = { presses += 1 }
+
+        let command = try #require(textView.keyCommands?.first {
+            $0.input == "\r" && $0.modifierFlags == .command
+        })
+        // Without priority, the text view's own Return handling takes the key first.
+        #expect(command.wantsPriorityOverSystemBehavior)
+        let action = try #require(command.action)
+        textView.perform(action)
+        #expect(presses == 1)
+    }
+
+    @Test func commandReturnSendsOnlyWhenSendingIsPossible() {
+        var sends = 0
+        func coordinator(canSend: Bool, isGenerating: Bool) -> ComposerTextView.Coordinator {
+            ComposerTextView(
+                text: .constant("Hello"),
+                isFocused: .constant(true),
+                measuredHeight: .constant(24),
+                sendOnReturn: false,
+                canSend: canSend,
+                isGenerating: isGenerating,
+                maxHeight: 120,
+                onSend: { sends += 1 }
+            ).makeCoordinator()
+        }
+
+        coordinator(canSend: true, isGenerating: false).sendFromKeyboard()
+        #expect(sends == 1)
+        // It never stops a reply, so a second press can't cancel what the first sent.
+        coordinator(canSend: true, isGenerating: true).sendFromKeyboard()
+        coordinator(canSend: false, isGenerating: false).sendFromKeyboard()
+        #expect(sends == 1)
+    }
+
     @Test func disabledHapticsSuppressFeedbackDispatch() throws {
         let suiteName = "haptics-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

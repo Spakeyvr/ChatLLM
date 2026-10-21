@@ -6022,6 +6022,28 @@
         }
       }
     },
+    "Send Message" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachricht senden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send Message"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar mensaje"
+          }
+        }
+      }
+    },
     "Send on Return" : {
       "localizations" : {
         "de" : {

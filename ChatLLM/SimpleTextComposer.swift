@@ -460,7 +460,9 @@ struct ComposerTextView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = KeyboardSendingTextView()
+        let coordinator = context.coordinator
+        textView.onCommandReturn = { [weak coordinator] in coordinator?.sendFromKeyboard() }
         textView.backgroundColor = .clear
         textView.delegate = context.coordinator
         textView.font = UIFont.preferredFont(forTextStyle: .body)
@@ -546,6 +548,12 @@ struct ComposerTextView: UIViewRepresentable {
             }
         }
 
+        /// Command-Return sends whatever Return is set to do, and never stops a reply.
+        func sendFromKeyboard() {
+            guard parent.canSend, !parent.isGenerating else { return }
+            parent.onSend()
+        }
+
         func updateHeight(for textView: UITextView) {
             let fittingSize = CGSize(
                 width: max(textView.bounds.width, 1),
@@ -566,5 +574,27 @@ struct ComposerTextView: UIViewRepresentable {
                 self.parent.measuredHeight = clampedHeight
             }
         }
+    }
+}
+
+/// Sends on Command-Return from a hardware keyboard. The key command asks for priority
+/// over the text view's own Return handling, which would otherwise insert a line break
+/// before a menu shortcut or a button's shortcut could see the key.
+final class KeyboardSendingTextView: UITextView {
+    var onCommandReturn: (() -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        let send = UIKeyCommand(
+            title: String(localized: "Send Message", bundle: .appLocalized),
+            action: #selector(sendFromKeyboard),
+            input: "\r",
+            modifierFlags: .command
+        )
+        send.wantsPriorityOverSystemBehavior = true
+        return (super.keyCommands ?? []) + [send]
+    }
+
+    @objc private func sendFromKeyboard() {
+        onCommandReturn?()
     }
 }
