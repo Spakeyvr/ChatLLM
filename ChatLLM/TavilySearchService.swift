@@ -327,11 +327,16 @@ actor TavilySearchService: WebSearchProviding {
         return [normalized, String(maxResults), searchDepth ?? "auto"].joined(separator: "|")
     }
 
-    nonisolated private static func isLiveQuery(_ query: String) -> Bool {
+    /// Models often search in the user's language, so this covers every interface language.
+    nonisolated static func isLiveQuery(_ query: String) -> Bool {
         let normalized = query.lowercased()
         return [
             "today", "tonight", "current", "currently", "latest", "live", "breaking",
-            "price", "score", "weather", "news", "this week", "right now"
+            "price", "score", "weather", "news", "this week", "right now",
+            "heute", "aktuell", "neueste", "preis", "kurs", "spielstand", "ergebnis",
+            "wetter", "nachrichten", "jetzt",
+            "hoy", "actual", "último", "última", "precio", "marcador", "resultado",
+            "clima", "noticias", "ahora"
         ].contains { normalized.contains($0) }
     }
 

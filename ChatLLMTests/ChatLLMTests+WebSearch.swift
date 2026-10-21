@@ -62,6 +62,16 @@ extension ChatLLMTests {
         #expect(TavilySearchService.retryDelay(for: response, attempt: 1) == .seconds(5))
     }
 
+    @Test func liveSearchesAreRecognizedInEveryInterfaceLanguage() {
+        #expect(TavilySearchService.isLiveQuery("bitcoin price today"))
+        #expect(TavilySearchService.isLiveQuery("Bitcoin Kurs heute"))
+        #expect(TavilySearchService.isLiveQuery("Wetter Wien"))
+        #expect(TavilySearchService.isLiveQuery("precio del bitcoin hoy"))
+        #expect(TavilySearchService.isLiveQuery("noticias Madrid"))
+        #expect(!TavilySearchService.isLiveQuery("Geschichte der Brücken"))
+        #expect(!TavilySearchService.isLiveQuery("historia de los puentes"))
+    }
+
     @Test func tavilyKeyValidationIgnoresCancelledRequestCompletion() async {
         let gate = TavilyValidationGate()
         let model = TavilyKeyValidationModel { key in
