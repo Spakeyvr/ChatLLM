@@ -169,6 +169,7 @@ struct MessageCellView: View {
             // CRITICAL FIX (Bug 8): Use animation and transition to prevent flicker during regeneration
             if message.role == .assistant && hasContent && message.isFinal && !isCurrentlyStreaming {
                 AssistantActionsBar(
+                    copyText: message.userVisibleText,
                     canAct: canAct,
                     sourceInvocations: sourceInvocations,
                     onTryAgain: {
@@ -1007,6 +1008,7 @@ struct MessageContextMenuView: View {
 
 struct AssistantActionsBar: View {
     @Environment(\.locale) private var locale
+    var copyText: String
     var canAct: Bool
     var sourceInvocations: [SearchInvocation]
     var onTryAgain: () -> Void
@@ -1022,6 +1024,8 @@ struct AssistantActionsBar: View {
     var body: some View {
         HStack(spacing: 22) {
             // Stop button removed from here; lives in the composer now.
+
+            MessageCopyButton(text: copyText)
 
             Group {
                 Menu {
@@ -1082,6 +1086,40 @@ struct AssistantActionsBar: View {
                 try? await Task.sleep(for: .milliseconds(50))
                 isVisible = true
             }
+        }
+    }
+}
+
+// MARK: - Copy button for the actions bar
+
+/// Copies the whole reply in one tap, without opening the long-press menu.
+private struct MessageCopyButton: View {
+    let text: String
+    @State private var copyFeedback: Task<Void, Never>?
+
+    var body: some View {
+        Button(action: copy) {
+            Image(systemName: copyFeedback == nil ? "doc.on.doc" : "checkmark")
+                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        // A 44-point target around the small icon, without moving it.
+        .padding(-12)
+        .buttonStyle(.plain)
+        .accessibilityLabel(copyFeedback == nil ? "Copy" : "Copied")
+        .accessibilityIdentifier("message.copy")
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = text
+        AppHaptics.impact(.light)
+        copyFeedback?.cancel()
+        copyFeedback = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            copyFeedback = nil
         }
     }
 }

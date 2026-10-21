@@ -79,6 +79,31 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testFinishedReplyOffersCopyFirstInItsActionsRow() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-web-search-without-reasoning"
+        ]
+        app.launch()
+
+        let sources = app.buttons["message.sources"]
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        let copy = app.buttons["message.copy"]
+        XCTAssertTrue(copy.exists)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+        XCTAssertLessThan(copy.frame.minX, app.buttons["Regenerate"].frame.minX)
+        XCTAssertLessThan(copy.frame.minX, sources.frame.minX)
+
+        XCTAssertEqual(copy.label, "Copy")
+        copy.tap()
+        XCTAssertEqual(copy.label, "Copied")
+        let restored = expectation(for: NSPredicate(format: "label == %@", "Copy"), evaluatedWith: copy)
+        wait(for: [restored], timeout: 4)
+    }
+
+    @MainActor
     func testTableCellsFillTheirColumn() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown"]
