@@ -99,7 +99,6 @@ extension ChatViewModel {
             return
         }
 
-        targetMessage.isReasoningMode = shouldUseReasoning
         targetMessage.promptSnapshot = nil
         conversation.lastUpdated = Date()
         immediateSave()
@@ -110,7 +109,8 @@ extension ChatViewModel {
         await streamAssistant(
             into: targetMessage,
             basedOnHistoryUpTo: targetMessage.order,
-            disableWebSearch: answersImageMessage(targetMessage)
+            disableWebSearch: answersImageMessage(targetMessage),
+            reasoningMode: shouldUseReasoning
         )
         logger.debug("Regeneration completed for message order \(messageOrder, privacy: .public)")
     }
@@ -169,7 +169,6 @@ extension ChatViewModel {
             logger.error("Target message disappeared after reasoning evaluation")
             return
         }
-        targetMessage.isReasoningMode = shouldUseReasoning
         targetMessage.promptSnapshot = nil
         conversation.lastUpdated = Date()
         immediateSave()
@@ -180,7 +179,8 @@ extension ChatViewModel {
             into: targetMessage,
             basedOnHistoryUpTo: targetMessage.order,
             additionalUserInstruction: trimmed,
-            disableWebSearch: answersImageMessage(targetMessage)
+            disableWebSearch: answersImageMessage(targetMessage),
+            reasoningMode: shouldUseReasoning
         )
     }
 

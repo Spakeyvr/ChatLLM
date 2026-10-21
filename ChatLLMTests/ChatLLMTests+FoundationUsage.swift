@@ -124,6 +124,27 @@ extension ChatLLMTests {
         #expect(reply.generationBackend == backend)
     }
 
+    @Test func regenerationThatWritesNothingKeepsTheReplysReasoningMode() async throws {
+        let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
+            AsyncThrowingStream { continuation in
+                continuation.yield("First answer.")
+                continuation.finish()
+            },
+            AsyncThrowingStream { continuation in continuation.finish() }
+        ]))
+        await viewModel.send(userText: "Hi")
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        // A reply written in reasoning mode, retried after reasoning was turned off.
+        reply.isReasoningMode = true
+        reply.reasoning = "Thinking it through."
+        reply.finalAnswer = "First answer."
+
+        await viewModel.regenerateAfterAssistant(messageID: reply.id)
+
+        #expect(reply.finalAnswer == "First answer.")
+        #expect(reply.isReasoningMode)
+    }
+
     @Test func regenerationThatFailsBeforeWritingKeepsThePreviousAnswer() async throws {
         let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
             AsyncThrowingStream { continuation in

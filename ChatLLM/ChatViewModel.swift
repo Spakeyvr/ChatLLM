@@ -879,6 +879,7 @@ final class ChatViewModel: ObservableObject {
         additionalUserInstruction: String? = nil,
         disableWebSearch: Bool = false,
         allowNativeImages: Bool = true,
+        reasoningMode: Bool? = nil,
         generationID: UUID? = nil
     ) async -> StreamOutcome {
         logger.debug("streamAssistant starting: order=\(order, privacy: .public) message_id=\(assistantMessage.id.uuidString, privacy: .public)")
@@ -910,7 +911,8 @@ final class ChatViewModel: ObservableObject {
 
         guard let resetState = prepareStreamResetState(
             from: assistantMessage,
-            basedOnHistoryUpTo: order
+            basedOnHistoryUpTo: order,
+            reasoningMode: reasoningMode
         ) else {
             streamingMessageID = nil
             return .failedBeforeOutput
@@ -988,9 +990,12 @@ final class ChatViewModel: ObservableObject {
         immediateSave()
     }
 
+    /// `reasoningMode` replaces the message's mode for this run only; a run that
+    /// is stopped or fails puts the previous reply back with its own mode.
     private func prepareStreamResetState(
         from assistantMessage: Message,
-        basedOnHistoryUpTo order: Int
+        basedOnHistoryUpTo order: Int,
+        reasoningMode: Bool?
     ) -> StreamResetState? {
         let targetID = assistantMessage.id
         let targetRole = assistantMessage.role
@@ -1019,6 +1024,9 @@ final class ChatViewModel: ObservableObject {
         }
 
         target.resetForRegeneration()
+        if let reasoningMode {
+            target.isReasoningMode = reasoningMode
+        }
         target.requiresWebSearch = forcedSearchRequirement
         target.searchQuery = forcedSearchQuery
 
