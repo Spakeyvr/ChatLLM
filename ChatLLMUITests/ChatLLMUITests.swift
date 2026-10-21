@@ -567,6 +567,23 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testKeyboardShortcutsStartAChatAndOpenSettings() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        let message = app.staticTexts["What changed in SwiftUI web views this year?"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(message.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.textViews.firstMatch.exists)
+
+        // Settings opens from the keyboard even while the sidebar is closed.
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["settings.appearance"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testUnavailableWebSearchExplainsWhy() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
