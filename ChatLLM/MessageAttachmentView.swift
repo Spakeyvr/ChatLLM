@@ -50,61 +50,68 @@ struct FullscreenImageView: View {
     let image: UIImage
     @Binding var isPresented: Bool
     
-    @State private var isDraggingToDismiss = false
     @State private var dragOffset: CGSize = .zero
     
     var body: some View {
-        ZStack {
-            // Fixed: Explicit type casting for the opacity calculation
-            Color.black
-                .opacity(calculateBackdropOpacity())
-                .ignoresSafeArea()
-            
-            // The Zoomable View
-            ZoomableScrollView {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            }
-            .offset(y: dragOffset.height)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
+        // Read the safe area here, outside the sliding page: SwiftUI shrinks the safe
+        // area of an offset view, so the page's black background stopped covering
+        // the status bar as soon as a drag began.
+        GeometryReader { proxy in
+            let insets = proxy.safeAreaInsets
+            ZStack(alignment: .top) {
+                Color.black
+                
+                // The Zoomable View
+                // The dismiss drag runs on the scroll view itself. A SwiftUI DragGesture
+                // here had to wait for the scroll view's double-tap recognizer to fail,
+                // so the image stuck for a moment and then jumped to the finger.
+                ZoomableScrollView(
+                    onDismissDragChanged: { translation in
                         // Only allow dragging down
-                        if value.translation.height > 0 {
-                            isDraggingToDismiss = true
-                            dragOffset = value.translation
+                        if translation.height > 0 {
+                            dragOffset = translation
                         }
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 150 {
-                            isPresented = false
+                    },
+                    onDismissDragEnded: { translation in
+                        if translation.height > 150 {
+                            slideAway(distance: proxy.size.height + insets.top + insets.bottom)
                         } else {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                isDraggingToDismiss = false
                                 dragOffset = .zero
                             }
                         }
                     }
-            )
-            
-            // Custom toolbar overlay
-            VStack {
-                FullscreenToolbar(image: image, isPresented: $isPresented)
-                    .opacity(isDraggingToDismiss ? 0 : 1)
+                ) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                }
+                .padding(insets)
                 
-                Spacer()
+                // Custom toolbar overlay
+                FullscreenToolbar(image: image, isPresented: $isPresented)
+                    .padding(.top, insets.top)
+                    .padding(.leading, insets.leading)
+                    .padding(.trailing, insets.trailing)
             }
+            .ignoresSafeArea()
+            // The background, image and buttons slide down together as one page.
+            .offset(y: dragOffset.height)
         }
     }
-    
-    // Helper to keep the view body clean and typesafe
-    private func calculateBackdropOpacity() -> Double {
-        guard isDraggingToDismiss else { return 1.0 }
-        // Cast to Double to avoid "Ambiguous use of operator '/'"
-        let dragHeight = Double(abs(dragOffset.height))
-        let threshold = 300.0
-        return max(0.4, 1.0 - (dragHeight / threshold))
+
+    /// Finishes the swipe from where the finger let go, then removes the cover
+    /// without its own slide, which would start the motion over from rest.
+    private func slideAway(distance: CGFloat) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            dragOffset.height = distance
+        } completion: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                isPresented = false
+            }
+        }
     }
 }
 
@@ -114,10 +121,16 @@ private struct FullscreenToolbar: View {
 
     var body: some View {
         HStack {
-            Button("Done") { isPresented = false }
-                .buttonStyle(.glass)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white)
+            Button {
+                isPresented = false
+            } label: {
+                Text("Done")
+                    .fontWeight(.semibold)
+                    .frame(height: 30)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            .foregroundStyle(.white)
 
             Spacer()
 
@@ -138,8 +151,10 @@ private struct FullscreenToolbar: View {
         ) {
             Image(systemName: "square.and.arrow.up")
                 .fontWeight(.semibold)
+                .frame(width: 30, height: 30)
         }
         .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
         .foregroundStyle(.white)
         .accessibilityLabel("Share")
         .accessibilityIdentifier("imageViewer.share")
@@ -150,8 +165,16 @@ private struct FullscreenToolbar: View {
 
 struct ZoomableScrollView<Content: View>: UIViewRepresentable {
     let content: Content
+    var onDismissDragChanged: (CGSize) -> Void
+    var onDismissDragEnded: (CGSize) -> Void
     
-    init(@ViewBuilder content: () -> Content) {
+    init(
+        onDismissDragChanged: @escaping (CGSize) -> Void,
+        onDismissDragEnded: @escaping (CGSize) -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.onDismissDragChanged = onDismissDragChanged
+        self.onDismissDragEnded = onDismissDragEnded
         self.content = content()
     }
     
@@ -178,20 +201,31 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
         )
         doubleTap.numberOfTapsRequired = 2
         scrollView.addGestureRecognizer(doubleTap)
+
+        let dismissPan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDismissPan(_:))
+        )
+        dismissPan.delegate = context.coordinator
+        scrollView.addGestureRecognizer(dismissPan)
         context.coordinator.updateAccessibilityValue(for: scrollView)
         return scrollView
     }
     
     func updateUIView(_ uiView: UIScrollView, context: Context) {
         context.coordinator.hostingController.rootView = content
+        context.coordinator.onDismissDragChanged = onDismissDragChanged
+        context.coordinator.onDismissDragEnded = onDismissDragEnded
     }
     
     func makeCoordinator() -> Coordinator {
         Coordinator(hostingController: UIHostingController(rootView: content))
     }
     
-    class Coordinator: NSObject, UIScrollViewDelegate {
+    class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var hostingController: UIHostingController<Content>
+        var onDismissDragChanged: (CGSize) -> Void = { _ in }
+        var onDismissDragEnded: (CGSize) -> Void = { _ in }
         
         init(hostingController: UIHostingController<Content>) {
             self.hostingController = hostingController
@@ -222,6 +256,29 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
                 height: size.height
             )
             scrollView.zoom(to: rect, animated: true)
+        }
+
+        /// Drags the image down to dismiss it, starting with the finger's first movement.
+        @objc func handleDismissPan(_ recognizer: UIPanGestureRecognizer) {
+            // Measured in the window, because the scroll view moves with the drag.
+            let translation = recognizer.translation(in: recognizer.view?.window)
+            let size = CGSize(width: translation.x, height: translation.y)
+            switch recognizer.state {
+            case .changed:
+                onDismissDragChanged(size)
+            case .ended, .cancelled, .failed:
+                onDismissDragEnded(size)
+            default:
+                break
+            }
+        }
+
+        /// A zoomed image pans instead, and only a downward drag dismisses.
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
+                  let scrollView = pan.view as? UIScrollView else { return true }
+            let velocity = pan.velocity(in: scrollView)
+            return scrollView.zoomScale <= scrollView.minimumZoomScale && velocity.y > abs(velocity.x)
         }
 
         /// Tells VoiceOver (and UI tests) how far the image is zoomed.
