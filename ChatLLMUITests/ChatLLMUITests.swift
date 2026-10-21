@@ -585,6 +585,29 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testPickedImageCanBeRemovedBeforeSending() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+
+        app.buttons["Add attachment or web search"].tap()
+        let photos = app.buttons["Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        // The simulator's sample library.
+        let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 10))
+        photo.tap()
+
+        let remove = app.buttons["Remove Image"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Image attached"].exists)
+        remove.tap()
+        XCTAssertTrue(app.staticTexts["Image attached"].waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

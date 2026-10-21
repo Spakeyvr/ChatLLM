@@ -309,6 +309,7 @@ struct ChatView: View {
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
                         }
+                        .accessibilityLabel("Remove Image")
                     }
                     .padding(10)
                     .background(Color(uiColor: .secondarySystemBackground))
