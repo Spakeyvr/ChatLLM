@@ -13,8 +13,21 @@ struct WebSearchSettingsView: View {
                 Button {
                     showingKeyEditor = true
                 } label: {
-                    LabeledContent("API Key", value: settings.tavilyApiKey.isEmpty
-                                   ? String(localized: "Set Up", bundle: .appLocalized) : String(localized: "Edit", bundle: .appLocalized))
+                    LabeledContent {
+                        HStack(spacing: 6) {
+                            Text(settings.tavilyApiKey.isEmpty
+                                 ? String(localized: "Set Up", bundle: .appLocalized) : String(localized: "Edit", bundle: .appLocalized))
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.forward")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                        }
+                    } label: {
+                        // A Form button tints even `.primary`; match the Provider row.
+                        Text("API Key")
+                            .foregroundStyle(Color(uiColor: .label))
+                    }
                 }
                 .accessibilityIdentifier("settings.editAPIKey")
                 if !settings.tavilyApiKey.isEmpty {
