@@ -109,6 +109,9 @@ struct OnboardingView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+        .accessibilityIdentifier("onboarding.progress")
     }
 
     @ViewBuilder
@@ -160,6 +163,8 @@ struct OnboardingView: View {
                 .textContentType(.password)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.continue)
+                .onSubmit(advance)
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityIdentifier("onboarding.tavily.key")
@@ -412,6 +417,11 @@ struct OnboardingView: View {
     }
 
     private func finishOnboarding() {
+        // Skip is always visible, so a key typed on the web search step is kept
+        // rather than dropped just because Continue wasn't tapped first.
+        if step == .tavily {
+            TavilyAPIKeyStore.save(tavilyKey)
+        }
         onFinish()
     }
 }

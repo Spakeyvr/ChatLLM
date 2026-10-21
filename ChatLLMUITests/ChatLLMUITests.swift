@@ -199,6 +199,25 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testSkippingAfterTypingATavilyKeyKeepsTheKey() throws {
+        let app = launchApp()
+        XCTAssertEqual(element(in: app, identifier: "onboarding.progress").label, "Step 1 of 3")
+
+        app.buttons["onboarding.intro.continue"].tap()
+        let keyField = app.secureTextFields["onboarding.tavily.key"]
+        XCTAssertTrue(keyField.waitForExistence(timeout: 5))
+        XCTAssertEqual(element(in: app, identifier: "onboarding.progress").label, "Step 2 of 3")
+        keyField.tap()
+        keyField.typeText("tvly-test-key")
+
+        app.buttons["onboarding.skip"].tap()
+        XCTAssertTrue(app.otherElements["content.root"].waitForExistence(timeout: 5))
+        app.buttons["Add attachment or web search"].tap()
+        XCTAssertTrue(app.switches.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["composer.webSearchUnavailableReason"].exists)
+    }
+
+    @MainActor
     func testStartingMLXDownloadAllowsFinishingOnboarding() throws {
         let app = launchApp(fakeMLXDownloads: true)
 
