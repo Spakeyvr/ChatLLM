@@ -620,7 +620,7 @@ final class ChatLLMUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
         app.launch()
-        let thumbnail = app.images.firstMatch
+        let thumbnail = app.buttons["Attached image"]
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
 
         thumbnail.tap()
@@ -636,7 +636,7 @@ final class ChatLLMUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
         app.launch()
-        let thumbnail = app.images.firstMatch
+        let thumbnail = app.buttons["Attached image"]
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
         thumbnail.tap()
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3))
