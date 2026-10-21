@@ -70,6 +70,7 @@ final class ChatLLMUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["swift"].exists)
         let copy = app.buttons["markdown.copyCode"]
         XCTAssertTrue(copy.exists)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
         XCTAssertEqual(copy.label, "Copy Code")
         copy.tap()
         XCTAssertEqual(copy.label, "Copied")

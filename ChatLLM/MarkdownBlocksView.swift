@@ -145,6 +145,8 @@ private struct MarkdownCodeBlockView: View {
             Button(action: copy) {
                 Label(copyTitle, systemImage: copyFeedback == nil ? "doc.on.doc" : "checkmark")
                 .contentTransition(.symbolEffect(.replace))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(copyAccessibilityLabel)
@@ -152,8 +154,8 @@ private struct MarkdownCodeBlockView: View {
         }
         .font(.system(size: fontSize * 0.75, weight: .medium))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, fontSize * 0.9)
-        .padding(.vertical, fontSize * 0.5)
+        .padding(.leading, fontSize * 0.9)
+        .padding(.trailing, fontSize * 0.4)
     }
 
     private var copyTitle: LocalizedStringKey {
