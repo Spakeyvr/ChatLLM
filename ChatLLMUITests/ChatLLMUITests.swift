@@ -608,6 +608,25 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testAttachOptionsStackAtAccessibilityTextSizes() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-test-reset-app-state", "-ui-test-web-search-demo",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 8))
+
+        app.buttons["Add attachment or web search"].tap()
+        let photos = app.buttons["Photos"]
+        let files = app.buttons["Files"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        // Side by side, each label would be cut to a few letters.
+        XCTAssertGreaterThanOrEqual(files.frame.minY, photos.frame.maxY)
+        XCTAssertGreaterThan(photos.frame.width, app.frame.width * 0.6)
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

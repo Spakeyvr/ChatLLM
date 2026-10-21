@@ -241,8 +241,13 @@ private struct AddOptionsSheet: View {
     @Binding var isSmartReasoningEnabled: Bool
     var reasoningAvailable: Bool
     var reasoningRequired: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        // Three tiles side by side truncate their labels at accessibility sizes.
+        let tileLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 12))
         NavigationStack {
             // Scrolls once large text sizes outgrow the medium detent.
             ScrollView {
@@ -250,7 +255,7 @@ private struct AddOptionsSheet: View {
                     // Every attach option imports an image, so all of them depend
                     // on the model reading images itself. Unavailable options stay
                     // visible but grayed out, so the row keeps the same layout.
-                    HStack(spacing: 12) {
+                    tileLayout {
                         AttachTile(icon: "camera", label: "Camera", action: onCamera)
                             .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                         AttachTile(icon: "photo.on.rectangle", label: "Photos", action: onPhotoLibrary)
@@ -381,21 +386,27 @@ private struct AddOptionsSheet: View {
 
 private struct AttachTile: View {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let icon: String
     let label: LocalizedStringKey
     let action: () -> Void
 
     var body: some View {
+        let isAccessibilitySize = dynamicTypeSize.isAccessibilitySize
+        let contentLayout = isAccessibilitySize
+            ? AnyLayout(HStackLayout(spacing: 16))
+            : AnyLayout(VStackLayout(spacing: 10))
         Button(action: action) {
-            VStack(spacing: 10) {
+            contentLayout {
                 Image(systemName: icon)
                     .font(.system(size: 26, weight: .regular))
                 Text(label)
                     .font(.subheadline)
                     .fontWeight(.medium)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 100)
+            .frame(maxWidth: .infinity, alignment: isAccessibilitySize ? .leading : .center)
+            .padding(.horizontal, isAccessibilitySize ? 20 : 0)
+            .frame(minHeight: isAccessibilitySize ? 72 : 100)
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
