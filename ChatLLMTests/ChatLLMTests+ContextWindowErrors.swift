@@ -70,3 +70,21 @@ extension ChatLLMTests {
         #expect(!OnDeviceLLMGenerator.isSafetyModerationError(overflow))
     }
 }
+
+extension ChatLLMTests {
+    @Test func overflowMessageGroupsDigitsForTheAppLanguage() throws {
+        let defaults = UserDefaults.standard
+        let previousLanguage = defaults.object(forKey: AppSettingsKeys.appLanguage)
+        defer { defaults.set(previousLanguage, forKey: AppSettingsKeys.appLanguage) }
+
+        defaults.set("en", forKey: AppSettingsKeys.appLanguage)
+        let english = try #require(ChatViewModel.ContextWindowError(tokenLimit: 8_192, backend: .appleIntelligence).errorDescription)
+        #expect(english.contains("about 8,192 tokens"))
+        #expect(english.contains("response preferences"))
+
+        defaults.set("de", forKey: AppSettingsKeys.appLanguage)
+        let german = try #require(ChatViewModel.ContextWindowError(tokenLimit: 8_192, backend: .mlx).errorDescription)
+        #expect(german.contains("etwa 8.192 Tokens"))
+        #expect(german.contains("Antwortvorgaben"))
+    }
+}

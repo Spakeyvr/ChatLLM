@@ -738,8 +738,8 @@ final class ChatViewModel: ObservableObject {
                 Try one of these solutions:
                 • Start a new chat or trim earlier messages
                 • Lower the Context Window setting
-                • Shorten your system prompt or the latest message
-                """, bundle: .appLocalized)
+                • Shorten your response preferences or the latest message
+                """, bundle: .appLocalized, locale: AppLanguage.current.locale)
             case .appleIntelligence:
                 return String(localized: """
                 Context window limit reached. Apple Intelligence can hold about \(tokenLimit) tokens per request on this device.
@@ -747,8 +747,8 @@ final class ChatViewModel: ObservableObject {
                 Try one of these solutions:
                 • Start a new chat or trim earlier messages
                 • Attach fewer images
-                • Shorten your system prompt or the latest message
-                """, bundle: .appLocalized)
+                • Shorten your response preferences or the latest message
+                """, bundle: .appLocalized, locale: AppLanguage.current.locale)
             }
         }
     }

@@ -1578,46 +1578,46 @@
         }
       }
     },
-    "Context window limit reached. Apple Intelligence can hold about %lld tokens per request on this device.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Attach fewer images\n• Shorten your system prompt or the latest message" : {
+    "Context window limit reached. Apple Intelligence can hold about %lld tokens per request on this device.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Attach fewer images\n• Shorten your response preferences or the latest message" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kontextlimit erreicht. Apple Intelligence kann auf diesem Gerät etwa %lld Tokens pro Anfrage verarbeiten.\n\nVersuche Folgendes:\n• Starte einen neuen Chat oder kürze frühere Nachrichten\n• Hänge weniger Bilder an\n• Kürze deine Systemanweisung oder die letzte Nachricht"
+            "value" : "Kontextlimit erreicht. Apple Intelligence kann auf diesem Gerät etwa %lld Tokens pro Anfrage verarbeiten.\n\nVersuche Folgendes:\n• Starte einen neuen Chat oder kürze frühere Nachrichten\n• Hänge weniger Bilder an\n• Kürze deine Antwortvorgaben oder die letzte Nachricht"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Context window limit reached. Apple Intelligence can hold about %lld tokens per request on this device.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Attach fewer images\n• Shorten your system prompt or the latest message"
+            "value" : "Context window limit reached. Apple Intelligence can hold about %lld tokens per request on this device.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Attach fewer images\n• Shorten your response preferences or the latest message"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Se ha alcanzado el límite de contexto. Apple Intelligence puede procesar unos %lld tokens por solicitud en este dispositivo.\n\nPrueba una de estas opciones:\n• Inicia un chat nuevo o recorta los mensajes anteriores\n• Adjunta menos imágenes\n• Acorta las instrucciones del sistema o el último mensaje"
+            "value" : "Se ha alcanzado el límite de contexto. Apple Intelligence puede procesar unos %lld tokens por solicitud en este dispositivo.\n\nPrueba una de estas opciones:\n• Inicia un chat nuevo o recorta los mensajes anteriores\n• Adjunta menos imágenes\n• Acorta tus preferencias de respuesta o el último mensaje"
           }
         }
       }
     },
-    "Context window limit reached. This device is currently capped at about %lld tokens for on-device MLX chats.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Lower the Context Window setting\n• Shorten your system prompt or the latest message" : {
+    "Context window limit reached. This device is currently capped at about %lld tokens for on-device MLX chats.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Lower the Context Window setting\n• Shorten your response preferences or the latest message" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kontextlimit erreicht. MLX-Chats auf diesem Gerät sind derzeit auf etwa %lld Tokens begrenzt.\n\nVersuche Folgendes:\n• Starte einen neuen Chat oder kürze frühere Nachrichten\n• Verkleinere das Kontextfenster in den Einstellungen\n• Kürze deine Systemanweisung oder die letzte Nachricht"
+            "value" : "Kontextlimit erreicht. MLX-Chats auf diesem Gerät sind derzeit auf etwa %lld Tokens begrenzt.\n\nVersuche Folgendes:\n• Starte einen neuen Chat oder kürze frühere Nachrichten\n• Verkleinere das Kontextfenster in den Einstellungen\n• Kürze deine Antwortvorgaben oder die letzte Nachricht"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Context window limit reached. This device is currently capped at about %lld tokens for on-device MLX chats.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Lower the Context Window setting\n• Shorten your system prompt or the latest message"
+            "value" : "Context window limit reached. This device is currently capped at about %lld tokens for on-device MLX chats.\n\nTry one of these solutions:\n• Start a new chat or trim earlier messages\n• Lower the Context Window setting\n• Shorten your response preferences or the latest message"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Se ha alcanzado el límite de contexto. Los chats MLX en este dispositivo están limitados a unos %lld tokens.\n\nPrueba una de estas opciones:\n• Inicia un chat nuevo o recorta los mensajes anteriores\n• Reduce la ventana de contexto en los ajustes\n• Acorta las instrucciones del sistema o el último mensaje"
+            "value" : "Se ha alcanzado el límite de contexto. Los chats MLX en este dispositivo están limitados a unos %lld tokens.\n\nPrueba una de estas opciones:\n• Inicia un chat nuevo o recorta los mensajes anteriores\n• Reduce la ventana de contexto en los ajustes\n• Acorta tus preferencias de respuesta o el último mensaje"
           }
         }
       }
