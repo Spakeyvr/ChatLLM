@@ -242,6 +242,7 @@ private struct AddOptionsSheet: View {
     var reasoningAvailable: Bool
     var reasoningRequired: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.dismiss) private var dismiss
 
     private var reasoningUnavailableReason: LocalizedStringKey? {
         if reasoningRequired { return "This model always reasons before answering." }
@@ -400,6 +401,13 @@ private struct AddOptionsSheet: View {
             .scrollBounceBehavior(.basedOnSize)
             .navigationTitle("Add to Chat")
             .navigationBarTitleDisplayMode(.inline)
+            // The switches apply right away; this only closes the sheet.
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityIdentifier("sheet.close")
+                }
+            }
         }
     }
 }

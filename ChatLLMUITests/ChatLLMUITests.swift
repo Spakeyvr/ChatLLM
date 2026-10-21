@@ -604,7 +604,7 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
-    func testSourcesAndReasoningSheetsHaveACloseButton() throws {
+    func testSheetsHaveACloseButton() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
         app.launch()
@@ -619,6 +619,11 @@ final class ChatLLMUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Reasoning"].waitForExistence(timeout: 3))
         app.buttons["sheet.close"].tap()
         XCTAssertTrue(app.navigationBars["Reasoning"].waitForNonExistence(timeout: 3))
+
+        app.buttons["Add attachment or web search"].tap()
+        XCTAssertTrue(app.navigationBars["Add to Chat"].waitForExistence(timeout: 3))
+        app.buttons["sheet.close"].tap()
+        XCTAssertTrue(app.navigationBars["Add to Chat"].waitForNonExistence(timeout: 3))
     }
 
     @MainActor
