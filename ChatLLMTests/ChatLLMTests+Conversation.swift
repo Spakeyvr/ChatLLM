@@ -28,6 +28,25 @@ extension ChatLLMTests {
         #expect(!viewModel.conversation.reasoningMode)
     }
 
+    @Test func autoDeleteSkipsRecentChatsAndTheOpenChat() {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-30 * 86_400)
+        let recent = Conversation(title: "Recent")
+        recent.lastUpdated = now
+        let old = Conversation(title: "Old")
+        old.lastUpdated = cutoff.addingTimeInterval(-60)
+        let oldButOpen = Conversation(title: "Old but open")
+        oldButOpen.lastUpdated = cutoff.addingTimeInterval(-60)
+
+        let deleted = ContentView.conversationsToAutoDelete(
+            [recent, old, oldButOpen],
+            olderThan: cutoff,
+            keeping: oldButOpen.id
+        )
+
+        #expect(deleted.map(\.id) == [old.id])
+    }
+
     @Test func attachmentCleanupKeepsFilesOfSavedChatsOnly() throws {
         let container = try ModelContainer(
             for: Schema([Conversation.self, ChatLLM.Message.self, MessageAttachment.self]),

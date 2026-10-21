@@ -867,6 +867,36 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testAutoDeleteRemovesOldChatsWhenTheAppReturns() throws {
+        let fixture = XCUIApplication()
+        fixture.launchArguments = [
+            "-ui-test-reset-app-state", "-ui-test-web-search-demo",
+            "-ui-test-second-chat", "-ui-test-stale-second-chat"
+        ]
+        fixture.launch()
+        XCTAssertTrue(fixture.buttons["message.sources"].waitForExistence(timeout: 5))
+        fixture.terminate()
+
+        let app = launchApp(resetAppState: false)
+        openSidebar(in: app)
+        XCTAssertTrue(app.staticTexts["Second Chat"].waitForExistence(timeout: 5))
+        openSettings(in: app)
+        app.buttons["settings.privacy"].tap()
+        toggle(app.switches["settings.autoDelete"])
+        XCTAssertTrue(app.buttons["settings.retention"].waitForExistence(timeout: 3))
+        settingsBackButton(in: app).tap()
+        app.buttons["settings.done"].tap()
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        if !app.buttons["sidebar.dismiss"].exists { openSidebar(in: app) }
+        XCTAssertTrue(app.staticTexts["Web Search Preview"].waitForExistence(timeout: 5))
+        let staleRow = app.staticTexts["Second Chat"]
+        XCTAssertTrue(staleRow.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
     func testSettingsDeletionCancelsThenDeletesWithoutASecondPrompt() throws {
         let fixture = XCUIApplication()
         fixture.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

@@ -43,6 +43,8 @@ struct ContentView: View {
     @State private var exportURL: URL?
     @State private var isSearchPresented: Bool = false
     @State private var attachmentCleanupTask: Task<Void, Never>?
+    @State private var isPerformingAutoDelete = false
+    @Environment(\.scenePhase) private var scenePhase
 
     // App-wide preferences
     @AppStorage(AppSettingsKeys.chatPreferences) private var chatPreferences: String = ""
@@ -105,6 +107,10 @@ struct ContentView: View {
             .onChange(of: selection, handleSelectionChange)
             .onChange(of: conversations, handleConversationsChange)
             .onChange(of: errorMessage, handleErrorMessageChange)
+            .onChange(of: scenePhase) { _, phase in
+                // The app can stay suspended for days, so retention can't wait for a cold launch.
+                if phase == .active { performAutoDeleteIfNeeded() }
+            }
             .onChange(of: preferredCompactColumn) { _, newColumn in
                 // When user presses Back on iPhone from a draft chat, discard the stale draft so
                 // the next "New Chat" tap is not blocked by the guard in startDraftChat().
@@ -376,6 +382,9 @@ struct ContentView: View {
                 generationModelName: "UI Fixture"
             )
         ]
+        if ProcessInfo.processInfo.arguments.contains("-ui-test-stale-second-chat") {
+            conversation.lastUpdated = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? Date()
+        }
         modelContext.insert(conversation)
     }
     
@@ -971,30 +980,34 @@ struct ContentView: View {
         }
     }
 
+    /// Chats past the retention period. The open chat is kept until the user leaves it,
+    /// so coming back to the app never pulls a conversation out from under them.
+    static func conversationsToAutoDelete(
+        _ conversations: [Conversation],
+        olderThan cutoffDate: Date,
+        keeping openConversationID: UUID?
+    ) -> [Conversation] {
+        conversations.filter { $0.lastUpdated < cutoffDate && $0.id != openConversationID }
+    }
+
     private func performAutoDeleteAfterStoppingGenerationIfNeeded() async {
-        guard autoDeleteOldChats else { return }
-        
+        guard autoDeleteOldChats, !isPerformingAutoDelete else { return }
+        isPerformingAutoDelete = true
+        defer { isPerformingAutoDelete = false }
+
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -autoDeleteDays, to: Date()) ?? Date()
-        
-        let conversationsToDelete = conversations.filter { convo in
-            convo.lastUpdated < cutoffDate
-        }
-        
+        let conversationsToDelete = Self.conversationsToAutoDelete(
+            conversations,
+            olderThan: cutoffDate,
+            keeping: selection?.id
+        )
+
         guard !conversationsToDelete.isEmpty else { return }
         let excludedConversationIDs = Set(conversationsToDelete.map(\.id))
         let attachmentURLsToDelete = attachmentURLs(in: conversationsToDelete)
 
         guard await stopGenerationBeforeDeleting(conversationIDs: excludedConversationIDs) else {
             return
-        }
-        
-        // Update selection if current selection is being deleted
-        if let selectedConvo = selection,
-           conversationsToDelete.contains(where: { $0.id == selectedConvo.id }) {
-            let remainingConversations = conversations.filter { convo in
-                !conversationsToDelete.contains(where: { $0.id == convo.id })
-            }
-            selection = (horizontalSizeClass == .regular) ? remainingConversations.first : nil
         }
         
         // Delete old conversations
