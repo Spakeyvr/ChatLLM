@@ -573,6 +573,18 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testImageInAMessageIsNamedForVoiceOver() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
+        app.launch()
+
+        let image = app.buttons["Attached image"]
+        XCTAssertTrue(image.waitForExistence(timeout: 5))
+        image.tap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

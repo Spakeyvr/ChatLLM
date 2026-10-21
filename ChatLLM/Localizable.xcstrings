@@ -977,6 +977,28 @@
         }
       }
     },
+    "Attached image" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angehängtes Bild"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attached image"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imagen adjunta"
+          }
+        }
+      }
+    },
     "Auto-Delete Chats" : {
       "localizations" : {
         "de" : {
@@ -4522,6 +4544,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modelos en el dispositivo"
+          }
+        }
+      }
+    },
+    "Opens the image full screen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffnet das Bild im Vollbild."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the image full screen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abre la imagen a pantalla completa."
           }
         }
       }

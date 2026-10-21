@@ -1088,6 +1088,8 @@ struct MessageImageAttachmentView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Attached image")
+                .accessibilityHint("Opens the image full screen.")
             } else if isLoading {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.secondary.opacity(0.1))
