@@ -912,50 +912,8 @@ struct ContentView: View {
         guard !conversations.isEmpty else { return }
         cleanupExportFile()
         
-        // Create a readable text export.
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .short
-        
-        var exportText = "# Chat Export\n"
-        exportText += "Exported: \(dateFormatter.string(from: Date()))\n"
-        exportText += "Total Conversations: \(conversations.count)\n\n"
-        exportText += String(repeating: "=", count: 60) + "\n\n"
-        
-        for convo in conversations.sorted(by: { $0.lastUpdated > $1.lastUpdated }) {
-            exportText += "## \(convo.title)\n"
-            exportText += "Last Updated: \(dateFormatter.string(from: convo.lastUpdated))\n"
-            if convo.reasoningMode {
-                exportText += "Mode: Reasoning\n"
-            }
-            exportText += "\n"
-            
-            let sortedMessages = convo.messages.sorted(by: { $0.order < $1.order })
-            for message in sortedMessages where message.role != .system {
-                let roleLabel = message.role == .user ? "User" : "Assistant"
-                exportText += "**\(roleLabel):**\n"
-                let visibleText = message.userVisibleText
-                if !visibleText.isEmpty {
-                    exportText += visibleText + "\n"
-                }
-                if let generationError = message.generationError {
-                    exportText += "[Error: \(generationError)]\n"
-                }
-                for attachment in message.attachments where attachment.type == .image {
-                    exportText += "[Image attachment: \(attachment.fileName)]\n"
-                }
-                exportText += "\n"
-            }
-            
-            exportText += String(repeating: "-", count: 60) + "\n\n"
-        }
-        
-        // Write to temporary file
-        // A readable, sortable name for Files and AirDrop instead of a raw timestamp.
-        let fileNameFormatter = DateFormatter()
-        fileNameFormatter.locale = Locale(identifier: "en_US_POSIX")
-        fileNameFormatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        let fileName = "ChatLLM-Export-\(fileNameFormatter.string(from: Date())).txt"
+        let exportText = ChatExportFormatter.text(for: conversations)
+        let fileName = ChatExportFormatter.fileName()
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         
         do {

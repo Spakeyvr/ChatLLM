@@ -77,6 +77,28 @@ extension ChatLLMTests {
         #expect(defaults.string(forKey: AppSettingsKeys.chatPreferences) == preferences)
     }
 
+    @Test func chatExportIsWrittenInTheAppLanguage() {
+        let conversation = Conversation(title: "Reise")
+        conversation.lastUpdated = Date(timeIntervalSince1970: 1_790_000_000)
+        conversation.messages = [
+            ChatLLM.Message(role: .user, text: "Hallo", order: 0, conversation: conversation, isFinal: true),
+            ChatLLM.Message(role: .assistant, text: "Hi!", order: 1, conversation: conversation, isFinal: true)
+        ]
+
+        let text = ChatExportFormatter.text(
+            for: [conversation],
+            language: .german,
+            exportedAt: conversation.lastUpdated
+        )
+
+        #expect(text.hasPrefix("# Chat-Export\n"))
+        #expect(text.contains("Unterhaltungen: 1\n"))
+        #expect(text.contains("Zuletzt aktualisiert: 21. Sept. 2026"))
+        #expect(text.contains("**Nutzer:**\nHallo\n"))
+        #expect(text.contains("**Assistent:**\nHi!\n"))
+        #expect(!text.contains("Last Updated"))
+    }
+
     @Test func defaultChatTitlesRemainRecognizableAcrossLanguages() {
         for title in ["New Chat", "Neuer Chat", "Nuevo chat"] {
             #expect(AppLanguage.isDefaultConversationTitle(title))

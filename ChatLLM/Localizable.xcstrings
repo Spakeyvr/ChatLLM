@@ -1014,6 +1014,28 @@
         }
       }
     },
+    "Assistant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistent"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente"
+          }
+        }
+      }
+    },
     "Auto-Delete Chats" : {
       "localizations" : {
         "de" : {
@@ -1298,6 +1320,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat"
+          }
+        }
+      }
+    },
+    "Chat Export" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat-Export"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat Export"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportación de chats"
           }
         }
       }
@@ -1701,6 +1745,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Título del chat"
+          }
+        }
+      }
+    },
+    "Conversations: %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltungen: %lld"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversations: %lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversaciones: %lld"
           }
         }
       }
@@ -2651,6 +2717,28 @@
         }
       }
     },
+    "Error: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fehler: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error: %@"
+          }
+        }
+      }
+    },
     "Est. output tokens" : {
       "localizations" : {
         "de" : {
@@ -2757,6 +2845,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Exportar todos los chats"
+          }
+        }
+      }
+    },
+    "Exported: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportiert: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exported: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportado: %@"
           }
         }
       }
@@ -3446,6 +3556,28 @@
         }
       }
     },
+    "Image: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bild: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Image: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imagen: %@"
+          }
+        }
+      }
+    },
     "Installed model '%@' is incompatible with native image support (processor '%@'). Re-download %@ to get the correct multimodal files." : {
       "localizations" : {
         "de" : {
@@ -3706,6 +3838,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Últimos 30 días"
+          }
+        }
+      }
+    },
+    "Last updated: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zuletzt aktualisiert: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last updated: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Última actualización: %@"
           }
         }
       }
@@ -7482,6 +7636,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat sin título"
+          }
+        }
+      }
+    },
+    "User" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzer"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usuario"
           }
         }
       }
