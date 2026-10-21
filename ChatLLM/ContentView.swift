@@ -711,6 +711,7 @@ struct ContentView: View {
             textField.placeholder = String(localized: "Conversation Title", bundle: .appLocalized)
             textField.autocapitalizationType = .words
             textField.returnKeyType = .done
+            textField.clearButtonMode = .whileEditing
         }
         
         alert.addAction(UIAlertAction(title: String(localized: "Cancel", bundle: .appLocalized), style: .cancel))

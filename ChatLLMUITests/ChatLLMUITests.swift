@@ -412,6 +412,29 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testRenameFieldCanBeClearedInOneTap() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+
+        openSidebar(in: app)
+        let row = app.staticTexts["Web Search Preview"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.press(forDuration: 1.0)
+        app.buttons["Rename"].tap()
+
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        app.alerts.buttons["Clear text"].tap()
+        field.typeText("Web Notes\n")
+
+        XCTAssertTrue(app.staticTexts["Web Notes"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
     func testDeletingTheOpenChatOpensABlankChat() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-second-chat"]
