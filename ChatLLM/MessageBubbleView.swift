@@ -748,8 +748,11 @@ private struct SourceListView: View {
 private struct SourceListRow: View {
     let source: WebSearchSource
     let onOpen: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        // Two lines hold only a word or two at accessibility sizes.
+        let isAccessibilitySize = dynamicTypeSize.isAccessibilitySize
         Button(action: onOpen) {
             HStack(spacing: 12) {
                 SourceIcon(source: source, size: 30)
@@ -759,13 +762,13 @@ private struct SourceListRow: View {
                     Text(source.title)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                        .lineLimit(2)
+                        .lineLimit(isAccessibilitySize ? 6 : 2)
                         .multilineTextAlignment(.leading)
 
                     Text(source.domainName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(isAccessibilitySize ? 3 : 1)
                 }
 
                 Spacer(minLength: 8)
