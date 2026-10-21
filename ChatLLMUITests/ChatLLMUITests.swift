@@ -278,6 +278,31 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testReturningToTheAppKeepsTheReadersScrollPosition() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-long-chat"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+        let firstMessage = app.staticTexts["Earlier message 1"]
+        for _ in 0..<6 where !firstMessage.isHittable {
+            app.scrollViews.firstMatch.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(firstMessage.isHittable)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        XCTAssertTrue(app.staticTexts["Earlier message 1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(firstMessage.isHittable)
+        XCTAssertFalse(app.buttons["message.sources"].isHittable)
+    }
+
+    @MainActor
     func testReasoningSheetRendersContentExposedByExpansion() throws {
         let app = XCUIApplication()
         app.launchArguments += [

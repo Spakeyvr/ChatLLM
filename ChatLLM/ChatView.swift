@@ -53,6 +53,7 @@ struct ChatView: View {
 
     // Performance optimization states
     @State private var isViewAppearing = false
+    @State private var isReaderNearBottom = true
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
     // In-app browser state
@@ -223,6 +224,9 @@ struct ChatView: View {
                         - geometry.visibleRect.maxY
                 )
             } action: { old, new in
+                if isReaderNearBottom != new.isNearBottom {
+                    isReaderNearBottom = new.isNearBottom
+                }
                 if new.shouldFollow(from: old) {
                     scrollPosition.scrollTo(edge: .bottom)
                 }
@@ -382,7 +386,8 @@ struct ChatView: View {
             case .background:
                 break
             case .active:
-                if isViewAppearing {
+                // Someone who scrolled up to read keeps their place when they come back.
+                if isViewAppearing, isReaderNearBottom {
                     scrollToBottom(animated: false)
                 }
             default:
