@@ -1089,7 +1089,7 @@ final class ChatViewModel: ObservableObject {
                 failureMessage = String(localized: "Web search was explicitly required for this response, but no search tool is configured. Add a Tavily API key.", bundle: .appLocalized)
             }
             failStreamPreparation(
-                target: resetState.target,
+                resetState,
                 message: failureMessage,
                 clearVisibleContent: true
             )
@@ -1128,7 +1128,7 @@ final class ChatViewModel: ObservableObject {
                 )
             } catch {
                 failStreamPreparation(
-                    target: resetState.target,
+                    resetState,
                     message: String(localized: "Failed to prepare image for native inference: \(error.localizedDescription)", bundle: .appLocalized)
                 )
                 return nil
@@ -1167,12 +1167,19 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func failStreamPreparation(
-        target: Message,
+        _ resetState: StreamResetState,
         message: String,
         clearVisibleContent: Bool = false
     ) {
+        let target = resetState.target
         target.generationError = message
-        if clearVisibleContent {
+        if Self.hasNonBlankContent(
+            text: resetState.previousText,
+            finalAnswer: resetState.previousFinal,
+            reasoning: resetState.previousReasoning
+        ) {
+            keepPreviousReply(resetState.previousReply, in: target, after: message)
+        } else if clearVisibleContent {
             // The error callout renders `generationError`; keep `text` empty.
             target.text = ""
             target.finalAnswer = nil
@@ -1181,6 +1188,17 @@ final class ChatViewModel: ObservableObject {
         target.markAsComplete()
         conversation.lastUpdated = Date()
         immediateSave()
+    }
+
+    /// A retry that failed before writing anything keeps the answer it was
+    /// replacing, with the failure noted below it.
+    private func keepPreviousReply(
+        _ previousReply: Message.RegenerationSnapshot,
+        in target: Message,
+        after failure: String
+    ) {
+        target.restore(previousReply)
+        target.generationError = String(localized: "Couldn't regenerate: \(failure)", bundle: .appLocalized)
     }
 
     private func performStreaming(preparation: StreamPreparation) async -> StreamConsumptionResult {
@@ -1593,7 +1611,9 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        if target.generationError != nil, !hasAnyVisibleContent {
+        if outcome != .cancelled, let failure = target.generationError, !hasAnyVisibleContent, hasPreviousContent {
+            keepPreviousReply(preparation.previousReply, in: target, after: failure)
+        } else if target.generationError != nil, !hasAnyVisibleContent {
             // The error callout renders `generationError`; drop whitespace-only text.
             target.text = ""
         }

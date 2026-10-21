@@ -124,6 +124,51 @@ extension ChatLLMTests {
         #expect(reply.generationBackend == backend)
     }
 
+    @Test func regenerationThatFailsBeforeWritingKeepsThePreviousAnswer() async throws {
+        let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
+            AsyncThrowingStream { continuation in
+                continuation.yield("First answer.")
+                continuation.finish()
+            },
+            AsyncThrowingStream { continuation in
+                continuation.finish(throwing: NSError(
+                    domain: "Test",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "The model stopped."]
+                ))
+            }
+        ]))
+        await viewModel.send(userText: "Hi")
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+
+        await viewModel.regenerateAfterAssistant(messageID: reply.id)
+
+        #expect(reply.text == "First answer.")
+        #expect(reply.isFinal)
+        let error = try #require(reply.generationError)
+        #expect(error.hasSuffix("The model stopped."))
+        #expect(error != "The model stopped.")
+    }
+
+    @Test func regenerationThatCannotStartKeepsThePreviousAnswer() async throws {
+        let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
+            AsyncThrowingStream { continuation in
+                continuation.yield("First answer.")
+                continuation.finish()
+            }
+        ]))
+        await viewModel.send(userText: "Hi")
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        // A forced search with no search tool fails before the model is asked.
+        reply.requiresWebSearch = true
+        reply.searchQuery = "Hi"
+
+        await viewModel.regenerateAfterAssistant(messageID: reply.id)
+
+        #expect(reply.text == "First answer.")
+        #expect(reply.generationError != nil)
+    }
+
     @Test func unavailableAppleIntelligenceExplainsWhatToDo() {
         #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.deviceNotEligible)).contains("Manage Models"))
         #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.appleIntelligenceNotEnabled)).contains("turned off"))

@@ -475,6 +475,7 @@ extension Message {
         fileprivate let searchInvocationsJSON: String?
         fileprivate let searchQuery: String?
         fileprivate let requiresWebSearch: Bool?
+        fileprivate let generationError: String?
     }
 
     func regenerationSnapshot() -> RegenerationSnapshot {
@@ -497,7 +498,8 @@ extension Message {
             generationTimeToFirstToken: generationTimeToFirstToken,
             searchInvocationsJSON: searchInvocationsJSON,
             searchQuery: searchQuery,
-            requiresWebSearch: requiresWebSearch
+            requiresWebSearch: requiresWebSearch,
+            generationError: generationError
         )
     }
 
@@ -522,6 +524,7 @@ extension Message {
         searchInvocationsJSON = snapshot.searchInvocationsJSON
         searchQuery = snapshot.searchQuery
         requiresWebSearch = snapshot.requiresWebSearch
+        generationError = snapshot.generationError
     }
 
     /// Reset message state before regeneration so the next run starts clean.

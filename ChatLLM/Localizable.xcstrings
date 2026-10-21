@@ -1795,6 +1795,28 @@
         }
       }
     },
+    "Couldn't regenerate: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu generieren fehlgeschlagen: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't regenerate: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo regenerar: %@"
+          }
+        }
+      }
+    },
     "Couldn't stop the active response. Please try deleting again." : {
       "localizations" : {
         "de" : {
