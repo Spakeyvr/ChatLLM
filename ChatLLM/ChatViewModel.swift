@@ -850,6 +850,12 @@ final class ChatViewModel: ObservableObject {
 
     /// Detects if an error is related to context window/length limits
     func isContextWindowError(_ error: Error) -> Bool {
+        // The typed error is checked first: the system's description is localized,
+        // so the English keyword match below misses it on other device languages.
+        if let error = error as? LanguageModelError {
+            if case .contextSizeExceeded = error { return true }
+            return false
+        }
         let errorString = error.localizedDescription.lowercased()
         let hasContext = errorString.contains("context")
         let hasLimitWord = errorString.contains("length") || errorString.contains("limit") || errorString.contains("window")

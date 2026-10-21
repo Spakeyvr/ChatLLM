@@ -95,7 +95,13 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         }
     }
 
-    nonisolated private func isSafetyModerationError(_ error: Error) -> Bool {
+    nonisolated static func isSafetyModerationError(_ error: Error) -> Bool {
+        // The typed error first: its description is localized, so keywords only
+        // catch untyped errors on English devices.
+        if let error = error as? LanguageModelError {
+            if case .guardrailViolation = error { return true }
+            return false
+        }
         let message = (error as NSError).localizedDescription.lowercased()
         return Self.safetyKeywords.contains(where: message.contains)
     }
@@ -198,7 +204,7 @@ final class OnDeviceLLMGenerator: LLMGenerator {
                 } catch is CancellationError {
                     continuation.finish()
                 } catch {
-                    if self.isSafetyModerationError(error) {
+                    if Self.isSafetyModerationError(error) {
                         continuation.finish(throwing: makeSafetyBlockedError())
                         return
                     }

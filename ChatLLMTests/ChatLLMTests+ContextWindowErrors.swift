@@ -55,3 +55,18 @@ extension ChatLLMTests {
         #expect(!error.contains("MLX"))
     }
 }
+
+extension ChatLLMTests {
+    @Test func typedFoundationModelErrorsAreRecognizedWhateverTheirDescription() throws {
+        let viewModel = try makeViewModel()
+        let overflow = LanguageModelError.contextSizeExceeded(
+            .init(contextSize: 4_096, tokenCount: 5_000, debugDescription: "Kontextfenster überschritten")
+        )
+        let guardrail = LanguageModelError.guardrailViolation(.init(debugDescription: "Inhalt blockiert"))
+
+        #expect(viewModel.isContextWindowError(overflow))
+        #expect(!viewModel.isContextWindowError(guardrail))
+        #expect(OnDeviceLLMGenerator.isSafetyModerationError(guardrail))
+        #expect(!OnDeviceLLMGenerator.isSafetyModerationError(overflow))
+    }
+}
