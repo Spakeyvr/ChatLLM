@@ -297,12 +297,6 @@ extension ChatLLMTests {
         #expect(bridge.allInvocations.first?.succeeded == false)
         #expect(bridge.allInvocations.first?.errorDescription?.contains("Upstream search unavailable") == true)
     }
-    @Test func requiresWebSearchDoesNotTriggerOnEmbeddedKeywordSubstrings() throws {
-        let viewModel = try makeViewModel()
-
-        #expect(!viewModel.requiresWebSearch(for: "Explain how snow forms in clouds."))
-    }
-
     @Test func webSearchSystemPromptUsesCurrentCalendarYear() {
         let year = Calendar.current.component(.year, from: Date())
         let sentinelYear = year == 2026 ? 2025 : 2026

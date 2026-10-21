@@ -97,6 +97,18 @@ extension ChatLLMTests {
         #expect(!shouldInject)
     }
 
+    @Test func mlxTimeContextGateIgnoresKeywordsInsideOtherWords() {
+        // "now" inside "snow" and "live" inside "deliver" aren't time-sensitive.
+        let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Explain how snow forms and how clouds deliver it.",
+            forceWebSearch: false,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        )
+
+        #expect(!shouldInject)
+    }
+
     @Test func mlxTimeContextGateIncludesTimeSensitiveTurns() {
         let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
             latestUserText: "What is the latest Swift release today?",

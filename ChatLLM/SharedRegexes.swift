@@ -36,7 +36,7 @@ enum SharedRegexes {
         pattern: #"^[ \t]{0,3}\[[^\]]+\]:[ \t]*\S+[ \t]*$"#, options: [])
 
     /// Phrase patterns are drawn from fixed keyword lists and reused constantly
-    /// (`requiresWebSearch` alone probes ~60 phrases per message), so the compiled
+    /// (the web search check probes dozens of phrases per message), so the compiled
     /// regexes are cached instead of rebuilt on every call.
     private static let wholePhraseCacheLock = NSLock()
     nonisolated(unsafe) private static var wholePhraseCache: [String: NSRegularExpression] = [:]
