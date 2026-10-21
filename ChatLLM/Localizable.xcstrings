@@ -203,65 +203,6 @@
         }
       }
     },
-    "%lld objects detected" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Objekt erkannt"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Objekte erkannt"
-                }
-              }
-            }
-          }
-        },
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld object detected"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld objects detected"
-                }
-              }
-            }
-          }
-        },
-        "es" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld objeto detectado"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld objetos detectados"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "%lld points" : {
       "localizations" : {
         "de" : {
@@ -1459,29 +1400,6 @@
         }
       }
     },
-    "Clear search" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Suche löschen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clear search"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Borrar búsqueda"
-          }
-        }
-      }
-    },
     "Close sidebar" : {
       "localizations" : {
         "de" : {
@@ -1544,29 +1462,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Comprime la caché de conversación de MLX para reducir el uso de memoria. Es una beta inicial; la velocidad y la estabilidad pueden variar."
-          }
-        }
-      }
-    },
-    "Confidence Threshold" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Konfidenzschwelle"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Confidence Threshold"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Umbral de confianza"
           }
         }
       }
@@ -2959,29 +2854,6 @@
         }
       }
     },
-    "Failed to extract text from the image." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Text konnte nicht aus dem Bild gelesen werden."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Failed to extract text from the image."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se ha podido extraer el texto de la imagen."
-          }
-        }
-      }
-    },
     "Failed to load model: %@" : {
       "localizations" : {
         "de" : {
@@ -3334,29 +3206,6 @@
         }
       }
     },
-    "Higher confidence reduces false detections but may miss objects. Used only by the Apple Vision fallback when the selected model cannot analyze images directly." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eine höhere Konfidenz verringert Fehlerkennungen, kann aber Objekte übersehen. Gilt nur für Apple Vision als Ersatz, wenn das gewählte Modell Bilder nicht direkt analysieren kann."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Higher confidence reduces false detections but may miss objects. Used only by the Apple Vision fallback when the selected model cannot analyze images directly."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Un valor de confianza mayor reduce las detecciones erróneas, pero puede omitir objetos. Solo se usa con Apple Vision cuando el modelo seleccionado no puede analizar imágenes directamente."
-          }
-        }
-      }
-    },
     "How can I make my day a little simpler?" : {
       "localizations" : {
         "de" : {
@@ -3441,29 +3290,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "¿Cómo debe responder el asistente?"
-          }
-        }
-      }
-    },
-    "Image Analysis" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bildanalyse"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Image Analysis"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Análisis de imágenes"
           }
         }
       }
@@ -4370,29 +4196,6 @@
         }
       }
     },
-    "No analysis results were generated." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Es wurden keine Analyseergebnisse erstellt."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No analysis results were generated."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se han generado resultados del análisis."
-          }
-        }
-      }
-    },
     "No Chats Yet" : {
       "localizations" : {
         "de" : {
@@ -4433,29 +4236,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No se han encontrado archivos para este modelo en HuggingFace."
-          }
-        }
-      }
-    },
-    "No matching chats" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keine passenden Chats"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No matching chats"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No hay chats que coincidan"
           }
         }
       }
@@ -4676,29 +4456,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No compatible con este dispositivo"
-          }
-        }
-      }
-    },
-    "Object detection failed: %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Objekterkennung fehlgeschlagen: %@"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Object detection failed: %@"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Error en la detección de objetos: %@"
           }
         }
       }
@@ -7062,29 +6819,6 @@
         }
       }
     },
-    "The provided image is invalid or cannot be processed." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Bild ist ungültig oder kann nicht verarbeitet werden."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The provided image is invalid or cannot be processed."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La imagen proporcionada no es válida o no se puede procesar."
-          }
-        }
-      }
-    },
     "The selected file is not a valid image." : {
       "localizations" : {
         "de" : {
@@ -7441,29 +7175,6 @@
         }
       }
     },
-    "Try adjusting your search terms" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Versuche andere Suchbegriffe"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Try adjusting your search terms"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prueba con otros términos de búsqueda"
-          }
-        }
-      }
-    },
     "Try again" : {
       "localizations" : {
         "de" : {
@@ -7702,29 +7413,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Caracteres visibles"
-          }
-        }
-      }
-    },
-    "Vision analysis failed to complete." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Bildanalyse konnte nicht abgeschlossen werden."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vision analysis failed to complete."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se ha podido completar el análisis de la imagen."
           }
         }
       }
