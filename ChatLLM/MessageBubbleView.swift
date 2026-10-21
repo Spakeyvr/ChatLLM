@@ -975,7 +975,7 @@ struct MessageContextMenuView: View {
             Button {
                 deferMenuSafe { onEdit(message) }
             } label: {
-                Label("Edit", systemImage: "pencil.circle")
+                Label("Edit", systemImage: "pencil")
             }
         }
     }
