@@ -629,6 +629,24 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testSendOnReturnLabelsTheKeyboardKeySend() throws {
+        let app = launchApp()
+        openSettings(in: app)
+        app.buttons["settings.chat"].tap()
+        toggle(app.switches["settings.sendOnReturn"])
+        settingsBackButton(in: app).tap()
+        app.buttons["settings.done"].tap()
+        let dismissSidebar = app.buttons["sidebar.dismiss"]
+        if dismissSidebar.waitForExistence(timeout: 2) { dismissSidebar.tap() }
+
+        let composer = app.textViews.firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        let sendKey = app.keyboards.buttons.matching(NSPredicate(format: "label ==[c] %@", "send")).firstMatch
+        XCTAssertTrue(sendKey.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testInterfaceLanguageSwitchesImmediatelyAndPersists() throws {
         let app = launchApp()
         openSettings(in: app)

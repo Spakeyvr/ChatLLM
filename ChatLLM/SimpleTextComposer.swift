@@ -414,6 +414,8 @@ private struct ComposerTextView: UIViewRepresentable {
     let maxHeight: CGFloat
     let onSend: () -> Void
 
+    private var returnKeyType: UIReturnKeyType { sendOnReturn ? .send : .default }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
@@ -432,7 +434,7 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.autocapitalizationType = .sentences
         textView.autocorrectionType = .default
         textView.keyboardDismissMode = .interactive
-        textView.returnKeyType = .default
+        textView.returnKeyType = returnKeyType
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.text = text
@@ -445,6 +447,12 @@ private struct ComposerTextView: UIViewRepresentable {
 
         if uiView.text != text {
             uiView.text = text
+        }
+
+        // The key's label should say what pressing it does.
+        if uiView.returnKeyType != returnKeyType {
+            uiView.returnKeyType = returnKeyType
+            if uiView.isFirstResponder { uiView.reloadInputViews() }
         }
 
         if isFocused, !uiView.isFirstResponder {
