@@ -150,16 +150,19 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
         hostedView.backgroundColor = .clear
         
         scrollView.addSubview(hostedView)
+
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+        context.coordinator.updateAccessibilityValue(for: scrollView)
         return scrollView
     }
     
     func updateUIView(_ uiView: UIScrollView, context: Context) {
         context.coordinator.hostingController.rootView = content
-        
-        if uiView.subviews.first != nil {
-             // Ensure the content size fits the scroll view initially
-             // This is sometimes needed if the content changes dynamically
-        }
     }
     
     func makeCoordinator() -> Coordinator {
@@ -177,7 +180,37 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
             return scrollView.subviews.first
         }
         
+        /// Like Photos: double-tap zooms in on the tapped spot, or back out when zoomed.
+        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView = recognizer.view as? UIScrollView else { return }
+            if scrollView.zoomScale > scrollView.minimumZoomScale {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+            guard let content = viewForZooming(in: scrollView) else { return }
+            let scale = min(scrollView.maximumZoomScale, 2.5)
+            let point = recognizer.location(in: content)
+            let size = CGSize(
+                width: scrollView.bounds.width / scale,
+                height: scrollView.bounds.height / scale
+            )
+            let rect = CGRect(
+                x: point.x - size.width / 2,
+                y: point.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            scrollView.zoom(to: rect, animated: true)
+        }
+
+        /// Tells VoiceOver (and UI tests) how far the image is zoomed.
+        func updateAccessibilityValue(for scrollView: UIScrollView) {
+            scrollView.accessibilityValue = Double(scrollView.zoomScale)
+                .formatted(.percent.precision(.fractionLength(0)).locale(AppLanguage.current.locale))
+        }
+
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            updateAccessibilityValue(for: scrollView)
             guard let view = scrollView.subviews.first else { return }
             
             let offsetX = max((scrollView.bounds.width - view.frame.width) * 0.5, 0)

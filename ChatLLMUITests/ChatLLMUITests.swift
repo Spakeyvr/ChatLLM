@@ -511,6 +511,32 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testDoubleTappingAFullScreenImageZoomsInAndOut() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
+        app.launch()
+        let thumbnail = app.images.firstMatch
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+        thumbnail.tap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3))
+
+        let viewer = app.scrollViews.firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 3))
+        XCTAssertEqual(viewer.value as? String, "100%")
+        viewer.doubleTap()
+        expectation(for: NSPredicate(format: "value == %@", "250%"), evaluatedWith: viewer)
+        waitForExpectations(timeout: 3)
+        viewer.doubleTap()
+        expectation(for: NSPredicate(format: "value == %@", "100%"), evaluatedWith: viewer)
+        waitForExpectations(timeout: 3)
+
+        // At normal size a downward swipe still dismisses the viewer.
+        let start = viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 300)))
+        XCTAssertTrue(app.buttons["Done"].waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
