@@ -22,6 +22,19 @@ struct ConversationRow: View {
     @Environment(\.locale) private var locale
     let conversation: Conversation
 
+    /// Marks chats that reason. Apple Intelligence and MLX models without a thinking
+    /// mode never do, even when the chat was started with reasoning turned on.
+    static func showsReasoningBadge(for conversation: Conversation) -> Bool {
+        let backend = conversation.preferredBackendRawValue.flatMap(ModelBackendBridge.Backend.init(rawValue:))
+        if backend == .foundationModels { return false }
+        if backend == .mlx,
+           let modelID = conversation.preferredModelID,
+           let model = MLXModelManager.modelDefinitions.first(where: { $0.id == modelID }) {
+            return model.requiresReasoning || (conversation.reasoningMode && model.supportsReasoning)
+        }
+        return conversation.reasoningMode
+    }
+
     private var messagePreview: MessagePreview {
         if let latestText = Self.previewText(for: conversation) {
             return .message(latestText)
@@ -93,7 +106,7 @@ struct ConversationRow: View {
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
 
-                if conversation.reasoningMode {
+                if Self.showsReasoningBadge(for: conversation) {
                     Image(systemName: "brain.head.profile")
                         .font(.caption2)
                         .foregroundStyle(.blue)

@@ -71,3 +71,23 @@ extension ChatLLMTests {
         #expect(draft.text.isEmpty)
     }
 }
+
+extension ChatLLMTests {
+    @Test func reasoningBadgeMarksOnlyChatsWhoseModelReasons() {
+        func chat(reasoning: Bool, backend: ModelBackendBridge.Backend?, model: String? = nil) -> Conversation {
+            Conversation(
+                title: "Chat",
+                reasoningMode: reasoning,
+                preferredBackendRawValue: backend?.rawValue,
+                preferredModelID: model
+            )
+        }
+
+        #expect(!ConversationRow.showsReasoningBadge(for: chat(reasoning: true, backend: .foundationModels)))
+        #expect(ConversationRow.showsReasoningBadge(for: chat(reasoning: true, backend: .mlx, model: "qwen3.5-2b-4bit")))
+        #expect(!ConversationRow.showsReasoningBadge(for: chat(reasoning: false, backend: .mlx, model: "qwen3.5-2b-4bit")))
+        #expect(ConversationRow.showsReasoningBadge(for: chat(reasoning: false, backend: .mlx, model: "lfm2.5-2.6b-4bit")))
+        // Older chats that never recorded a backend keep their saved setting.
+        #expect(ConversationRow.showsReasoningBadge(for: chat(reasoning: true, backend: nil)))
+    }
+}
