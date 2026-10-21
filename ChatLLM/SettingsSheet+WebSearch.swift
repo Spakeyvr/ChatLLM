@@ -91,7 +91,12 @@ struct WebSearchSettingsView: View {
 private struct APIKeySettingsEditor: View {
     @Binding var apiKey: String
     @State private var text: String
+    @FocusState private var isFieldFocused: Bool
     @Environment(\.dismiss) private var dismiss
+
+    private var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     init(apiKey: Binding<String>) {
         _apiKey = apiKey
@@ -106,6 +111,9 @@ private struct APIKeySettingsEditor: View {
                         .textContentType(.password)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($isFieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit(save)
                         .accessibilityLabel("Tavily API Key")
                         .accessibilityIdentifier("settings.apiKeyEditor")
                 } footer: {
@@ -119,15 +127,20 @@ private struct APIKeySettingsEditor: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        apiKey = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        dismiss()
-                    }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("settings.saveAPIKey")
+                    Button("Save", action: save)
+                        .disabled(trimmedText.isEmpty)
+                        .accessibilityIdentifier("settings.saveAPIKey")
                 }
             }
+            // The sheet exists only to enter a key, so the keyboard comes up with it.
+            .onAppear { isFieldFocused = true }
         }
         .interactiveDismissDisabled(text != apiKey)
+    }
+
+    private func save() {
+        guard !trimmedText.isEmpty else { return }
+        apiKey = trimmedText
+        dismiss()
     }
 }

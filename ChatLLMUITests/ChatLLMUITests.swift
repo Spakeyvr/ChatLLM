@@ -1087,10 +1087,11 @@ final class ChatLLMUITests: XCTestCase {
         app.buttons["Cancel"].tap()
         XCTAssertFalse(app.buttons["settings.testAPIKey"].exists)
 
+        // The field is focused when the editor opens, and Return saves.
         app.buttons["settings.editAPIKey"].tap()
-        key.tap()
-        key.typeText("tvly-settings-test-key")
-        app.buttons["settings.saveAPIKey"].tap()
+        XCTAssertTrue(key.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        app.typeText("tvly-settings-test-key\n")
         XCTAssertTrue(app.buttons["settings.testAPIKey"].waitForExistence(timeout: 3))
         app.terminate()
         let relaunched = launchApp(resetAppState: false)
