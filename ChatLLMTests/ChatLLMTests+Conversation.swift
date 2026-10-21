@@ -100,6 +100,32 @@ extension ChatLLMTests {
         #expect(ConversationRow.previewText(for: conversation) == "Hello there")
     }
 
+    @Test func sidebarPreviewDropsBlockMarkdownSymbols() {
+        let conversation = Conversation(title: "Markdown reply")
+        let reply = ChatLLM.Message(
+            role: .assistant,
+            text: """
+            ## Overview
+
+            > Quick summary first.
+
+            - **Bold** point
+            1. Numbered step
+            ---
+            ```swift
+            let x = 1
+            ```
+            """,
+            order: 0,
+            conversation: conversation,
+            isFinal: true
+        )
+        conversation.messages = [reply]
+
+        #expect(ConversationRow.previewText(for: conversation) ==
+            "Overview\nQuick summary first.\n**Bold** point\nNumbered step\nlet x = 1")
+    }
+
     @Test func conversationSearchableVisibleTextUsesDisplayedContent() {
         let conversation = Conversation(title: "Vision")
         let user = ChatLLM.Message(

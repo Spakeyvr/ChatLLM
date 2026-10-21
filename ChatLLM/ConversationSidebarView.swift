@@ -14,6 +14,9 @@ import UIKit
 private let _previewThinkingBlockRegex = try! NSRegularExpression(pattern: #"<(?:think|thinking)>.*?</(?:think|thinking)>"#, options: [.dotMatchesLineSeparators, .caseInsensitive])
 private let _previewSourcesTagRegex   = try! NSRegularExpression(pattern: #"</?sources>"#,              options: [.caseInsensitive])
 private let _previewThinkingTagRegex  = try! NSRegularExpression(pattern: #"</?(?:think|thinking)>"#,   options: [.caseInsensitive])
+// Line-start Markdown (headings, quotes, list markers, code fences, rules) that would
+// show as literal symbols on a one-line preview, which renders inline Markdown only.
+private let _previewBlockMarkerRegex  = try! NSRegularExpression(pattern: #"^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+|```.*$|(?:[-*_][ \t]*){3,}$)"#, options: [.anchorsMatchLines])
 // swiftlint:enable force_try
 
 // MARK: - Conversation Row
@@ -80,6 +83,7 @@ struct ConversationRow: View {
         // Remove any stray opening/closing tags that may remain
         applying(_previewSourcesTagRegex)
         applying(_previewThinkingTagRegex)
+        applying(_previewBlockMarkerRegex)
         // Collapse excessive whitespace/newlines
         var ns = output as NSString
         output = SharedRegexes.multipleBlankLines.stringByReplacingMatches(
@@ -118,8 +122,9 @@ struct ConversationRow: View {
 
             switch messagePreview {
             case .message(let text):
-                // Use markdown Text initializer to render formatting like **bold** and *italic*
-                Text(.init(text))
+                // Renders inline formatting like **bold**. Not a LocalizedStringKey: the
+                // message is shown as written, never looked up in the string catalog.
+                Text(NativeMarkdownParser.attributedString(from: text) ?? AttributedString(text))
                     .font(.subheadline)
                     .lineLimit(1)
                     .foregroundStyle(.secondary)
