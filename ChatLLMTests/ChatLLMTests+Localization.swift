@@ -99,6 +99,12 @@ extension ChatLLMTests {
         #expect(!text.contains("Last Updated"))
     }
 
+    @Test func messageTextSizeFollowsDynamicType() {
+        #expect(RichMarkdownView.scaledFontSize(16, bodyPointSize: 17) == 16)
+        #expect(RichMarkdownView.scaledFontSize(16, bodyPointSize: 34) == 32)
+        #expect(RichMarkdownView.scaledFontSize(20, bodyPointSize: 15) < 20)
+    }
+
     @Test func defaultChatTitlesRemainRecognizableAcrossLanguages() {
         for title in ["New Chat", "Neuer Chat", "Nuevo chat"] {
             #expect(AppLanguage.isDefaultConversationTitle(title))

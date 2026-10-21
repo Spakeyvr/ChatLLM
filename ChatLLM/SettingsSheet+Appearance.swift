@@ -3,6 +3,7 @@ import SwiftUI
 struct AppearanceSettingsView: View {
     @Binding var settings: AppSettingsDraft
     @Environment(\.locale) private var locale
+    @ScaledMetric(relativeTo: .body) private var bodyPointSize: CGFloat = 17
 
     var body: some View {
         Form {
@@ -34,7 +35,7 @@ struct AppearanceSettingsView: View {
                     Text("Start with one thing that matters. Break it into small steps, and take them one at a time.")
                         .modifier(ChatBubbleStyle(role: .assistant))
                 }
-                .font(.system(size: settings.messageFontSize))
+                .font(.system(size: RichMarkdownView.scaledFontSize(settings.messageFontSize, bodyPointSize: bodyPointSize)))
                 .padding(.vertical, 8)
                 .accessibilityIdentifier("settings.messagePreview")
                 // Use the chat background so the bubble contrasts the same way it does in a conversation.

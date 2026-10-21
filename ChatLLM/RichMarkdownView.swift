@@ -45,13 +45,22 @@ struct RichMarkdownView: View {
     var textTone: TextTone = .primary
 
     @Environment(\.colorScheme) private var colorScheme
+    /// Body text size under the current Dynamic Type setting (17 at the default size).
+    @ScaledMetric(relativeTo: .body) private var bodyPointSize: CGFloat = 17
 
     enum TextTone {
         case primary
         case secondary
     }
 
+    /// The message size setting applies at the default text size; Dynamic Type scales
+    /// it from there, so larger accessibility sizes enlarge messages like the rest of the app.
+    static func scaledFontSize(_ fontSize: Double, bodyPointSize: CGFloat) -> Double {
+        fontSize * Double(bodyPointSize) / 17
+    }
+
     var body: some View {
+        let fontSize = Self.scaledFontSize(fontSize, bodyPointSize: bodyPointSize)
         if RichTextFeatureDetector.requiresAdvancedRendering(text) {
             RichMarkdownWebView(
                 text: text,

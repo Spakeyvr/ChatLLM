@@ -499,6 +499,7 @@ struct SourcesButton: View {
     let invocations: [SearchInvocation]
 
     @ScaledMetric(relativeTo: .subheadline) private var faviconSize: CGFloat = 20
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var previewSources: [WebSearchSource] {
         var seenDomains: Set<String> = []
@@ -522,7 +523,9 @@ struct SourcesButton: View {
             showSources = true
         } label: {
             HStack(spacing: 10) {
-                if !previewSources.isEmpty {
+                // The favicons are decoration; at accessibility sizes the row needs
+                // their room so the label doesn't break mid-word.
+                if !previewSources.isEmpty, !dynamicTypeSize.isAccessibilitySize {
                     faviconStack
                         .offset(x: -6)
                         .padding(.trailing, 2)
@@ -530,6 +533,8 @@ struct SourcesButton: View {
 
                 Text("Sources")
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .foregroundStyle(.primary)
             .padding(.vertical, 6)
