@@ -57,4 +57,14 @@ final class Conversation {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
     }
+
+    /// Every term must appear in the title or the messages, ignoring case and accents,
+    /// so "cafe" finds "Café" and terms can be split between title and messages.
+    func matchesSearch(_ terms: [String]) -> Bool {
+        let unmatched = terms.filter { !title.localizedStandardContains($0) }
+        guard !unmatched.isEmpty else { return true }
+        // Only fault in the messages when the title alone doesn't match.
+        let text = searchableVisibleText
+        return unmatched.allSatisfy { text.localizedStandardContains($0) }
+    }
 }

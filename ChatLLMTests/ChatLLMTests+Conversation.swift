@@ -28,6 +28,19 @@ extension ChatLLMTests {
         #expect(!viewModel.conversation.reasoningMode)
     }
 
+    @Test func chatSearchIgnoresAccentsAndSplitsTermsAcrossTitleAndMessages() {
+        let conversation = Conversation(title: "Café Pläne")
+        conversation.messages = [
+            ChatLLM.Message(role: .user, text: "Wann öffnet das Museum?", order: 0, conversation: conversation, isFinal: true)
+        ]
+
+        #expect(conversation.matchesSearch(["cafe"]))
+        #expect(conversation.matchesSearch(["PLANE"]))
+        #expect(conversation.matchesSearch(["cafe", "museum"]))
+        #expect(conversation.matchesSearch(["offnet"]))
+        #expect(!conversation.matchesSearch(["cafe", "zoo"]))
+    }
+
     @Test func autoDeleteSkipsRecentChatsAndTheOpenChat() {
         let now = Date()
         let cutoff = now.addingTimeInterval(-30 * 86_400)

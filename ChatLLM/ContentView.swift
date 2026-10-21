@@ -570,21 +570,10 @@ struct ContentView: View {
         let trimmed = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return conversations }
 
-        let searchTerms = trimmed.lowercased().components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let searchTerms = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
         guard !searchTerms.isEmpty else { return conversations }
 
-        return conversations.filter { convo in
-            let titleLowercased = convo.title.lowercased()
-            let titleMatches = searchTerms.allSatisfy { term in
-                titleLowercased.range(of: term) != nil
-            }
-            if titleMatches { return true }
-
-            let searchableText = convo.searchableVisibleText.lowercased()
-            return searchTerms.allSatisfy { term in
-                searchableText.range(of: term) != nil
-            }
-        }
+        return conversations.filter { $0.matchesSearch(searchTerms) }
     }
 
     @ViewBuilder
