@@ -120,6 +120,30 @@ extension ChatLLMTests {
         #expect(shouldInject)
     }
 
+    @Test func mlxTimeContextGateRecognizesGermanAndSpanish() {
+        for text in ["Welcher Wochentag ist heute?", "Was ist die neueste iOS-Version?",
+                     "¿Qué día es hoy?", "¿Cuál es la versión más reciente de Swift?"] {
+            #expect(ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+                latestUserText: text,
+                forceWebSearch: false,
+                webSearchEnabled: false,
+                referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+            ), "\(text)")
+        }
+        #expect(!ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Erkläre, wie Schnee entsteht.",
+            forceWebSearch: false,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        ))
+        #expect(ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
+            latestUserText: "Busca recetas de paella",
+            forceWebSearch: false,
+            webSearchEnabled: true,
+            referenceDate: Date(timeIntervalSince1970: 1_772_884_800)
+        ))
+    }
+
     @Test func mlxTimeContextGateIncludesForcedWebSearchTurns() {
         let shouldInject = ChatViewModel.shouldInjectMLXCurrentDateTimeContext(
             latestUserText: "Compare the newest Xcode beta to stable.",

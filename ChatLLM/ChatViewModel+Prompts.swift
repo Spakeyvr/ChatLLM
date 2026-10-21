@@ -18,13 +18,24 @@ private let _legacyImageAnalysisRegex = try! NSRegularExpression(
 extension ChatViewModel {
 
     private static let imageAnalysisMarker = "--- Image Analysis Data ---"
+    // Every interface language, since people usually write in theirs.
     private static let mlxTimeSensitiveKeywords = [
         "today", "yesterday", "tomorrow", "this week", "this month", "this year", "this quarter",
         "latest", "newest", "most recent", "currently", "current", "now", "breaking", "live",
-        "just released", "as of"
+        "just released", "as of",
+        // German
+        "heute", "gestern", "morgen", "übermorgen", "diese woche", "diesen monat", "dieses jahr",
+        "aktuell", "aktuelle", "aktuellen", "aktueller", "neueste", "neuesten", "neuester",
+        "jetzt", "derzeit", "zurzeit", "gerade erschienen",
+        // Spanish
+        "hoy", "ayer", "mañana", "esta semana", "este mes", "este año", "actual", "actuales",
+        "actualmente", "último", "última", "últimos", "últimas", "más reciente", "ahora",
+        "en vivo", "en directo"
     ]
     private static let mlxExplicitSearchIntentKeywords = [
-        "please search", "search for", "look up"
+        "please search", "search for", "look up",
+        "suche nach", "such nach", "recherchiere",
+        "busca", "buscar", "investiga"
     ]
 
     internal static func currentDateTimeContext(
