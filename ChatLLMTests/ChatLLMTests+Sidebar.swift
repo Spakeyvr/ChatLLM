@@ -50,6 +50,33 @@ extension ChatLLMTests {
         #expect(ConversationRecencySection.grouping([], now: now, calendar: calendar).isEmpty)
     }
 
+    @Test func sidebarRendersAgainOnlyWhenItsListChanges() {
+        let now = Date()
+        let first = Conversation(title: "First", lastUpdated: now)
+        let second = Conversation(title: "Second", lastUpdated: now.addingTimeInterval(-60))
+        func sidebar(_ conversations: [Conversation]) -> ConversationSidebar {
+            ConversationSidebar(
+                sections: ConversationRecencySection.grouping(conversations, now: now),
+                hasConversations: !conversations.isEmpty,
+                selection: .constant(nil),
+                searchText: .constant(""),
+                isSearchPresented: .constant(false),
+                onSubmitSearch: {}, onSelect: {}, onNewChat: {}, onShowSettings: {},
+                onRename: { _ in }, onDelete: { _ in }
+            )
+        }
+
+        // A streaming reply changes the chats, not the list, so the sidebar is skipped.
+        let before = sidebar([first, second])
+        first.title = "Renamed"
+        #expect(before == sidebar([first, second]))
+
+        #expect(before != sidebar([second, first]))
+        #expect(before != sidebar([first]))
+        second.lastUpdated = now.addingTimeInterval(-60 * 60 * 24 * 3)
+        #expect(before != sidebar([first, second]))
+    }
+
     @Test func sidebarDrawerLeavesChatVisibleBesideSidebar() {
         let phoneWidth: CGFloat = 402
         let sidebarWidth = SidebarDrawer<EmptyView, EmptyView>.sidebarWidth(for: phoneWidth)

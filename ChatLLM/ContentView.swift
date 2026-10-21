@@ -612,6 +612,7 @@ struct ContentView: View {
                 }
             }
         )
+        .equatable()
         .onChange(of: searchText) { _, newValue in
             // Debounce search input to avoid excessive filtering
             searchDebounceTask?.cancel()

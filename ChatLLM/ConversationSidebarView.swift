@@ -141,6 +141,21 @@ struct ConversationRow: View {
     }
 }
 
+// MARK: - Skipping Unchanged Renders
+
+extension ConversationSidebar: Equatable {
+    /// The parent re-renders whenever SwiftData processes a change, several times a second
+    /// while a reply streams. Rows observe their own chats and the bindings refresh the
+    /// list on their own, so only the list's shape decides whether the body runs again.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.hasConversations == rhs.hasConversations && lhs.shape == rhs.shape
+    }
+
+    private var shape: [[String]] {
+        sections.map { [$0.id] + $0.conversations.map(\.id.uuidString) }
+    }
+}
+
 // MARK: - Recency Sections
 
 struct ConversationRecencySection: Identifiable {
