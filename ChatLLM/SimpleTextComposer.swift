@@ -434,7 +434,7 @@ private struct AttachTile: View {
     }
 }
 
-private struct ComposerTextView: UIViewRepresentable {
+struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
     @Binding var measuredHeight: CGFloat
@@ -503,12 +503,15 @@ private struct ComposerTextView: UIViewRepresentable {
             self.parent = parent
         }
 
+        // updateUIView changes the first responder to match isFocused, and UIKit
+        // reports that back synchronously; writing the same value again would
+        // modify state during the view update.
         func textViewDidBeginEditing(_ textView: UITextView) {
-            parent.isFocused = true
+            if !parent.isFocused { parent.isFocused = true }
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            parent.isFocused = false
+            if parent.isFocused { parent.isFocused = false }
         }
 
         func textViewDidChange(_ textView: UITextView) {

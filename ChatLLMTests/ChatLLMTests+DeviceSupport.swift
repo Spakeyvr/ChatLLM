@@ -335,15 +335,16 @@ extension ChatLLMTests {
         bridge.selectedBackend = .mlx
         bridge.selectedModelID = model.id
 
-        var resets = 0
+        // Posted synchronously on the main thread by the bridge.
+        let resets = ResetCounter()
         let observer = NotificationCenter.default.addObserver(
             forName: .modelPipelineWillReset, object: bridge, queue: nil
-        ) { _ in resets += 1 }
+        ) { _ in MainActor.assumeIsolated { resets.count += 1 } }
         defer { NotificationCenter.default.removeObserver(observer) }
 
         // Reopening the chat retries the failed load; a send waiting on it must survive.
         bridge.switchToMLXModel(model.id, source: "test.retry")
-        #expect(resets == 0)
+        #expect(resets.count == 0)
 
         // Replacing a loaded model still resets, so in-flight generation stops first.
         manager.currentModel = MLXModelManager.MLXModelInfo(
@@ -359,7 +360,7 @@ extension ChatLLMTests {
             supportsReasoning: false
         )
         bridge.switchToMLXModel(model.id, source: "test.switch")
-        #expect(resets == 1)
+        #expect(resets.count == 1)
     }
 
     @Test func modelInfoStatusSeparatesUndownloadedFromUnsupported() {
@@ -367,4 +368,9 @@ extension ChatLLMTests {
         #expect(ModelInfoSheet.statusText(isAvailable: false, isSupportedOnDevice: true) == "Not downloaded")
         #expect(ModelInfoSheet.statusText(isAvailable: false, isSupportedOnDevice: false) == "Not supported on this device")
     }
+}
+
+@MainActor
+private final class ResetCounter {
+    var count = 0
 }

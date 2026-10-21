@@ -64,6 +64,33 @@ extension ChatLLMTests {
         )
     }
 
+    @Test func composerOnlyWritesFocusWhenUIKitChangesIt() {
+        let probe = FocusBindingProbe(isFocused: true)
+        let composer = ComposerTextView(
+            text: .constant(""),
+            isFocused: probe.binding,
+            measuredHeight: .constant(24),
+            sendOnReturn: false,
+            canSend: false,
+            isGenerating: false,
+            maxHeight: 120,
+            onSend: {}
+        )
+        let coordinator = composer.makeCoordinator()
+        let textView = UITextView()
+
+        // Focusing from updateUIView reports straight back; re-writing the same
+        // value modified state during the view update.
+        coordinator.textViewDidBeginEditing(textView)
+        #expect(probe.writes == 0)
+
+        coordinator.textViewDidEndEditing(textView)
+        #expect(probe.writes == 1)
+        #expect(!probe.isFocused)
+        coordinator.textViewDidEndEditing(textView)
+        #expect(probe.writes == 1)
+    }
+
     @Test func disabledHapticsSuppressFeedbackDispatch() throws {
         let suiteName = "haptics-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -79,5 +106,22 @@ extension ChatLLMTests {
 
         #expect(!didPerform)
         #expect(!invoked)
+    }
+}
+
+@MainActor
+private final class FocusBindingProbe {
+    var isFocused: Bool
+    var writes = 0
+
+    init(isFocused: Bool) {
+        self.isFocused = isFocused
+    }
+
+    var binding: Binding<Bool> {
+        Binding(
+            get: { MainActor.assumeIsolated { self.isFocused } },
+            set: { value in MainActor.assumeIsolated { self.isFocused = value; self.writes += 1 } }
+        )
     }
 }
