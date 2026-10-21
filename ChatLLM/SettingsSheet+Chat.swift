@@ -19,11 +19,19 @@ struct ChatSettingsView: View {
                     showingPreferencesEditor = true
                 } label: {
                     LabeledContent {
-                        Text(settings.chatPreferences.isEmpty
-                             ? String(localized: "Not Set", bundle: .appLocalized) : String(localized: "Custom", bundle: .appLocalized))
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            Text(settings.chatPreferences.isEmpty
+                                 ? String(localized: "Not Set", bundle: .appLocalized) : String(localized: "Custom", bundle: .appLocalized))
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.forward")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                        }
                     } label: {
+                        // A Form button tints even `.primary`; match the toggles above.
                         Text("Response Preferences")
+                            .foregroundStyle(Color(uiColor: .label))
                     }
                 }
                 .accessibilityIdentifier("settings.responsePreferences")
