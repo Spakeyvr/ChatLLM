@@ -177,7 +177,7 @@ struct ModelRow: View {
                             .frame(maxWidth: 180)
                             .accessibilityIdentifier("modelSelection.progress.\(model.id)")
                         HStack(spacing: 8) {
-                            Text("\(Int((modelManager.downloadProgress * 100).rounded()))%")
+                            Text(modelManager.downloadProgress, format: .percent.precision(.fractionLength(0)))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             Button("Cancel") {

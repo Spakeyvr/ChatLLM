@@ -399,9 +399,6 @@
         }
       }
     },
-    "%lld%%" : {
-      "shouldTranslate" : false
-    },
     "A quick look at what the app can do." : {
       "localizations" : {
         "de" : {
@@ -2454,28 +2451,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Descargando %@"
-          }
-        }
-      }
-    },
-    "Downloading %lld%%" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Download: %lld%%"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Downloading %lld%%"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Descargando: %lld%%"
           }
         }
       }

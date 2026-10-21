@@ -927,6 +927,13 @@ final class ChatLLMUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts[localModels].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["onboarding.finish"].isHittable)
             captureSettingsScreenshot("models-\(language)", in: app)
+
+            // Both languages put a space before the percent sign.
+            app.buttons["onboarding.mlx.download"].tap()
+            let percent = app.staticTexts
+                .matching(NSPredicate(format: "label MATCHES %@", "^[0-9]+[\u{00A0}\u{202F} ]%$"))
+                .firstMatch
+            XCTAssertTrue(percent.waitForExistence(timeout: 5))
             app.terminate()
         }
     }
