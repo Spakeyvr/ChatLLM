@@ -43,6 +43,12 @@ extension ChatLLMTests {
         #expect(String(localized: "\(tokens) tokens", bundle: AppLanguage.german.bundle, locale: AppLanguage.german.locale) == "6.144 Tokens")
     }
 
+    @Test func modelDownloadSizesUseTheAppLanguagesDecimalSeparator() throws {
+        let model = try #require(MLXModelManager.modelDefinitions.first { $0.id == "qwen3.5-4b-4bit-hybrid" })
+        #expect(model.downloadSize(locale: AppLanguage.english.locale) == "2.66 GB")
+        #expect(model.downloadSize(locale: AppLanguage.german.locale) == "2,66\u{00A0}GB")
+    }
+
     @Test func sourceCountsUseLocalizedSingularAndPlural() {
         for (language, singular, plural) in [
             (AppLanguage.english, "1 source", "2 sources"),

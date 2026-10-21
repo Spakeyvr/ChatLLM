@@ -29,6 +29,7 @@ struct OnboardingView: View {
 
     @ObservedObject private var modelBackendBridge = ModelBackendBridge.shared
 
+    @Environment(\.locale) private var locale
     @State private var step: Step = .intro
     @State private var tavilyKey: String = TavilyAPIKeyStore.currentKey() ?? ""
     @State private var selectedModelID: String?
@@ -238,7 +239,7 @@ struct OnboardingView: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                 Spacer()
-                Text(model.downloadSizeLabel)
+                Text(model.downloadSize(locale: locale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -294,7 +295,7 @@ struct OnboardingView: View {
             Button {
                 modelManager.startDownload(for: model)
             } label: {
-                Label("Download \(model.downloadSizeLabel)", systemImage: "arrow.down.circle.fill")
+                Label("Download \(model.downloadSize(locale: locale))", systemImage: "arrow.down.circle.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

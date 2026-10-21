@@ -104,6 +104,7 @@ struct ModelRow: View {
     let onDelete: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.locale) private var locale
     @State private var showDeleteConfirmation = false
 
     private var availabilityIssue: String? {
@@ -193,7 +194,7 @@ struct ModelRow: View {
                         .lineLimit(3)
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Button("Download (\(model.downloadSizeLabel))") {
+                        Button("Download (\(model.downloadSize(locale: locale)))") {
                             modelManager.startDownload(for: model)
                         }
                         .font(.caption2)
