@@ -606,6 +606,7 @@ struct SourcesSheetView: View {
     let invocations: [SearchInvocation]
     let title: String
 
+    @Environment(\.dismiss) private var dismiss
     @State private var selectedInvocationID: UUID?
     @State private var activeURL: URL?
     @State private var selectedDetent: PresentationDetent = .large
@@ -643,6 +644,13 @@ struct SourcesSheetView: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            // Swiping down isn't available to every input method.
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityIdentifier("sheet.close")
+                }
+            }
         }
         .foregroundStyle(.primary)
         .presentationDetents([.medium, .large], selection: $selectedDetent)

@@ -100,6 +100,7 @@ struct InlineThinkingView: View {
 
 struct StepByStepReasoningSheet: View {
     @Environment(\.locale) private var locale
+    @Environment(\.dismiss) private var dismiss
     let reasoning: String
     let searchInvocations: [SearchInvocation]?
     @State private var selectedInvocation: SearchInvocation?
@@ -217,6 +218,12 @@ struct StepByStepReasoningSheet: View {
             }
             .navigationTitle("Reasoning")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityIdentifier("sheet.close")
+                }
+            }
         }
         .presentationDetents([.medium, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
