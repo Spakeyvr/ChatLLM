@@ -154,10 +154,11 @@ struct ModelRow: View {
             Text("\(model.name) \(model.parameterCount)")
                 .font(.headline)
 
+            // Short, but translations run longer than English; don't cut them off.
             Text(model.description)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if model.isAvailable {
                 // A Label in a List row snaps its icon to the list's icon column.
