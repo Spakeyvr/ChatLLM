@@ -241,7 +241,6 @@ struct ConversationSidebar: View {
                 Button(action: onShowSettings) {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
-                .keyboardShortcut(",", modifiers: .command)
             }
 
             DefaultToolbarItem(kind: .search, placement: .bottomBar)

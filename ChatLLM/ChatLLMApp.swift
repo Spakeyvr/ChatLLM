@@ -64,6 +64,7 @@ struct ChatLLMApp: App {
             #endif
         }
         .modelContainer(sharedModelContainer)
+        .commands { ChatLLMCommands() }
     }
 
     private static func configureUITestStateIfNeeded() {

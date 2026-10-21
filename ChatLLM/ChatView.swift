@@ -278,7 +278,6 @@ struct ChatView: View {
                         .foregroundStyle(canStartNewChat ? .primary : .secondary)
                 }
                 .disabled(!canStartNewChat)
-                .keyboardShortcut("n", modifiers: .command)
                 .accessibilityLabel("New Chat")
             }
         }

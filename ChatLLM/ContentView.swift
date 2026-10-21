@@ -103,6 +103,10 @@ struct ContentView: View {
 
     private var mainExperience: some View {
         navigationRoot
+            .focusedSceneValue(\.windowCommandActions, WindowCommandActions(
+                newChat: { startDraftChat() },
+                showSettings: { showSettings = true }
+            ))
             .onAppear(perform: handleOnAppear)
             .onChange(of: selection, handleSelectionChange)
             .onChange(of: conversations, handleConversationsChange)

@@ -573,14 +573,17 @@ final class ChatLLMUITests: XCTestCase {
         app.launch()
         let message = app.staticTexts["What changed in SwiftUI web views this year?"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
+        // The simulator hands the first key press after launch to the system.
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
 
         app.typeKey("n", modifierFlags: .command)
         XCTAssertTrue(message.waitForNonExistence(timeout: 3))
         XCTAssertTrue(app.textViews.firstMatch.exists)
 
-        // Settings opens from the keyboard even while the sidebar is closed.
+        // The menu command opens ChatLLM's settings, not the app's page in the Settings app.
         app.typeKey(",", modifierFlags: .command)
         XCTAssertTrue(app.buttons["settings.appearance"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.state, .runningForeground)
     }
 
     @MainActor
