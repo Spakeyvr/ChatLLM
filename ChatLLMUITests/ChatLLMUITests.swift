@@ -587,6 +587,22 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testReplyActionsHaveFullSizeTapTargets() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        let regenerate = app.buttons["Regenerate"].firstMatch
+        XCTAssertTrue(regenerate.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(app.buttons["message.sources"].frame.height, 44)
+
+        // The icon is about 20 points; a tap just below it should still open the menu.
+        regenerate.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .withOffset(CGVector(dx: 0, dy: 16))
+            .tap()
+        XCTAssertTrue(app.buttons["Try again"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testUnavailableWebSearchExplainsWhy() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

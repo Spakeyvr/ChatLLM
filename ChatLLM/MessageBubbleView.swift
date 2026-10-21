@@ -537,9 +537,12 @@ struct SourcesButton: View {
                     .fixedSize()
             }
             .foregroundStyle(.primary)
-            .padding(.vertical, 6)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // A 44-point target without making the actions row taller.
+        .padding(.vertical, -12)
         .accessibilityLabel("Sources")
         .accessibilityValue("\(totalSourceCount) sources")
         .accessibilityHint("Shows the sources used for this response")
@@ -1026,7 +1029,11 @@ struct AssistantActionsBar: View {
                 } label: {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .foregroundStyle(.primary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                // A 44-point target around the small icon, without moving it.
+                .padding(-12)
                 // Removed .menuStyle(.borderlessButton) – flaky in scrollable cells
                 .disabled(!canAct)
                 .accessibilityLabel("Regenerate")
