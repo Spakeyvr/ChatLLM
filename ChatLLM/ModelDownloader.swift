@@ -475,7 +475,7 @@ actor ModelDownloader {
             case .invalidRemotePath(let file):
                 return String(localized: "The server returned an unexpected file path for: \(file)", bundle: .appLocalized)
             case .incorrectFileSize(let file, let expected, let actual):
-                return String(localized: "Downloaded file '\(file)' has the wrong size (expected \(expected) bytes, received \(actual) bytes).", bundle: .appLocalized)
+                return String(localized: "Downloaded file '\(file)' has the wrong size (expected \(expected) bytes, received \(actual) bytes).", bundle: .appLocalized, locale: AppLanguage.current.locale)
             case .checksumMismatch(let file):
                 return String(localized: "Downloaded file '\(file)' failed its integrity check. Try downloading the model again.", bundle: .appLocalized)
             }

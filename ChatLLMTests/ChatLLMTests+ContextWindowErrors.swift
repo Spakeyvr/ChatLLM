@@ -88,3 +88,20 @@ extension ChatLLMTests {
         #expect(german.contains("Antwortvorgaben"))
     }
 }
+
+extension ChatLLMTests {
+    @Test func downloadSizeMismatchGroupsByteCountsForTheAppLanguage() throws {
+        let defaults = UserDefaults.standard
+        let previousLanguage = defaults.object(forKey: AppSettingsKeys.appLanguage)
+        defer { defaults.set(previousLanguage, forKey: AppSettingsKeys.appLanguage) }
+        defaults.set("en", forKey: AppSettingsKeys.appLanguage)
+
+        let message = try #require(ModelDownloader.DownloadError.incorrectFileSize(
+            file: "model.safetensors",
+            expected: 2_660_000_000,
+            actual: 1_200_000
+        ).errorDescription)
+
+        #expect(message.contains("expected 2,660,000,000 bytes, received 1,200,000 bytes"))
+    }
+}
