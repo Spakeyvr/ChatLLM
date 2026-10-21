@@ -192,7 +192,7 @@ struct ModelRow: View {
                     Text(availabilityIssue)
                         .font(.caption2)
                         .foregroundStyle(.orange)
-                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         Button("Download (\(model.downloadSize(locale: locale)))") {
@@ -211,7 +211,7 @@ struct ModelRow: View {
                             Text(error)
                                 .font(.caption2)
                                 .foregroundStyle(.red)
-                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
