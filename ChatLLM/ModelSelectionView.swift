@@ -87,7 +87,7 @@ struct ModelSelectionView: View {
         guard let modelManager else { return }
         Task {
             do {
-                try modelManager.deleteModel(model)
+                try modelBackendBridge.deleteModel(model)
             } catch {
                 modelManager.loadError = String(localized: "Delete failed: \(error.localizedDescription)", bundle: .appLocalized)
             }

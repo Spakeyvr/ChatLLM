@@ -233,6 +233,23 @@ class ModelBackendBridge: ObservableObject {
         manager.startLoading(modelID: modelID, source: source)
     }
 
+    /// Deletes a downloaded model. If it was selected, the chat moves to Apple
+    /// Intelligence when that's available, or back to choosing a model, rather than
+    /// keeping a selection that can no longer reply.
+    func deleteModel(_ model: MLXModelManager.MLXModelInfo) throws {
+        guard let manager = modelManager else { return }
+        let wasSelected = selectedBackend == .mlx && selectedModelID == model.id
+        try manager.deleteModel(model)
+        guard wasSelected else { return }
+        if foundationModelsAvailable {
+            selectBackend(.foundationModels, source: "model.deleted")
+        } else {
+            selectedModelID = nil
+            defaults.removeObject(forKey: AppSettingsKeys.selectedCustomModelID)
+            persistSelectionToActiveConversation()
+        }
+    }
+
     /// Loads a model that just finished downloading only when the chat is waiting
     /// for it. Loading it otherwise would replace the chat's model, or sit beside
     /// Apple Intelligence in memory.

@@ -316,6 +316,36 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testDeletingTheSelectedModelLeavesItUnselected() throws {
+        let app = launchApp(fakeMLXDownloads: true)
+        XCTAssertTrue(app.buttons["onboarding.skip"].waitForExistence(timeout: 5))
+        app.buttons["onboarding.skip"].tap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+
+        app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
+        app.buttons["Manage Models"].tap()
+        app.buttons["modelSelection.download.qwen3.5-0.8b-4bit"].tap()
+        XCTAssertTrue(element(in: app, identifier: "modelSelection.downloaded.qwen3.5-0.8b-4bit").waitForExistence(timeout: 20))
+        app.buttons["Done"].tap()
+
+        app.navigationBars.staticTexts["Apple Intelligence"].firstMatch.tap()
+        app.buttons["Qwen 3.5 0.8B (4-bit)"].tap()
+        // The fake download has no files, so loading it reports an error.
+        let loadError = app.alerts.firstMatch
+        if loadError.waitForExistence(timeout: 3) { loadError.buttons.firstMatch.tap() }
+        let qwenTitle = app.navigationBars.staticTexts["Qwen 3.5 0.8B (4-bit)"].firstMatch
+        XCTAssertTrue(qwenTitle.waitForExistence(timeout: 3))
+
+        qwenTitle.tap()
+        app.buttons["Manage Models"].tap()
+        app.buttons["Delete"].firstMatch.tap()
+        app.alerts.buttons["Delete"].tap()
+        app.buttons["Done"].tap()
+
+        XCTAssertTrue(qwenTitle.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
     func testShortChatStaysBelowTheTopEdgeAfterPresentingASheet() throws {
         let app = XCUIApplication()
         app.launchArguments += [

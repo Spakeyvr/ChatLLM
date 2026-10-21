@@ -345,6 +345,28 @@ extension ChatLLMTests {
         #expect(manager.loadError != nil)
     }
 
+    @Test func deletingTheSelectedModelLeavesNoSelectionThatCannotReply() throws {
+        let bridge = makeBackendBridge()
+        let manager = try #require(bridge.modelManager)
+        let models = Array(manager.availableModels.prefix(2))
+        try #require(models.count == 2)
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = models[0].id
+
+        // Deleting another model keeps the selection.
+        try bridge.deleteModel(models[1])
+        #expect(bridge.selectedBackend == .mlx)
+        #expect(bridge.selectedModelID == models[0].id)
+
+        try bridge.deleteModel(models[0])
+        if bridge.foundationModelsAvailable {
+            #expect(bridge.selectedBackend == .foundationModels)
+        } else {
+            #expect(bridge.selectedModelID == nil)
+            #expect(bridge.currentModelDisplayName == nil)
+        }
+    }
+
     @Test func retryingTheSelectedModelsLoadDoesNotResetThePipeline() {
         let manager = makeModelManager(deviceSupportProfile: makeDeviceProfile(isPhone: false))
         let model = MLXModelManager.MLXModelInfo(
