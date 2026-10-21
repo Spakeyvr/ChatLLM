@@ -452,6 +452,78 @@ extension Message {
         invalidateCache()
     }
     
+    /// A finished reply as it was before regenerating it. A regeneration that is
+    /// stopped before writing anything puts the whole reply back, so it keeps its
+    /// sources and timings rather than only its text.
+    struct RegenerationSnapshot {
+        fileprivate let text: String
+        fileprivate let reasoning: String?
+        fileprivate let finalAnswer: String?
+        fileprivate let rawText: String?
+        fileprivate let generationBackend: String?
+        fileprivate let generationModelName: String?
+        fileprivate let generationStartedAt: Date?
+        fileprivate let generationCompletedAt: Date?
+        fileprivate let reasoningStartedAt: Date?
+        fileprivate let reasoningCompletedAt: Date?
+        fileprivate let generationPromptTokenCount: Int?
+        fileprivate let generationCachedPromptTokenCount: Int?
+        fileprivate let generationPromptTime: Double?
+        fileprivate let generationOutputTokenCount: Int?
+        fileprivate let generationDecodeTime: Double?
+        fileprivate let generationTimeToFirstToken: Double?
+        fileprivate let searchInvocationsJSON: String?
+        fileprivate let searchQuery: String?
+        fileprivate let requiresWebSearch: Bool?
+    }
+
+    func regenerationSnapshot() -> RegenerationSnapshot {
+        RegenerationSnapshot(
+            text: text,
+            reasoning: reasoning,
+            finalAnswer: finalAnswer,
+            rawText: rawText,
+            generationBackend: generationBackend,
+            generationModelName: generationModelName,
+            generationStartedAt: generationStartedAt,
+            generationCompletedAt: generationCompletedAt,
+            reasoningStartedAt: reasoningStartedAt,
+            reasoningCompletedAt: reasoningCompletedAt,
+            generationPromptTokenCount: generationPromptTokenCount,
+            generationCachedPromptTokenCount: generationCachedPromptTokenCount,
+            generationPromptTime: generationPromptTime,
+            generationOutputTokenCount: generationOutputTokenCount,
+            generationDecodeTime: generationDecodeTime,
+            generationTimeToFirstToken: generationTimeToFirstToken,
+            searchInvocationsJSON: searchInvocationsJSON,
+            searchQuery: searchQuery,
+            requiresWebSearch: requiresWebSearch
+        )
+    }
+
+    func restore(_ snapshot: RegenerationSnapshot) {
+        invalidateCache()
+        text = snapshot.text
+        reasoning = snapshot.reasoning
+        finalAnswer = snapshot.finalAnswer
+        rawText = snapshot.rawText
+        generationBackend = snapshot.generationBackend
+        generationModelName = snapshot.generationModelName
+        generationStartedAt = snapshot.generationStartedAt
+        generationCompletedAt = snapshot.generationCompletedAt
+        reasoningStartedAt = snapshot.reasoningStartedAt
+        reasoningCompletedAt = snapshot.reasoningCompletedAt
+        generationPromptTokenCount = snapshot.generationPromptTokenCount
+        generationCachedPromptTokenCount = snapshot.generationCachedPromptTokenCount
+        generationPromptTime = snapshot.generationPromptTime
+        generationOutputTokenCount = snapshot.generationOutputTokenCount
+        generationDecodeTime = snapshot.generationDecodeTime
+        generationTimeToFirstToken = snapshot.generationTimeToFirstToken
+        searchInvocationsJSON = snapshot.searchInvocationsJSON
+        searchQuery = snapshot.searchQuery
+        requiresWebSearch = snapshot.requiresWebSearch
+    }
+
     /// Reset message state before regeneration so the next run starts clean.
     func resetForRegeneration() {
         let preservedRequiresWebSearch = requiresWebSearch

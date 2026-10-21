@@ -100,6 +100,30 @@ extension ChatLLMTests {
         #expect(reply.generationPromptTokenCount == nil)
     }
 
+    @Test func regenerationThatWritesNothingKeepsTheWholePreviousReply() async throws {
+        let viewModel = try makeViewModel(generator: SequencedTestGenerator(streams: [
+            AsyncThrowingStream { continuation in
+                continuation.yield("First answer.")
+                continuation.finish()
+            },
+            AsyncThrowingStream { continuation in continuation.finish() }
+        ]))
+        await viewModel.send(userText: "Hi")
+        let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
+        reply.searchInvocations = [SearchInvocation(query: "earlier search", results: "[1] Source\nhttps://example.com\nSnippet.")]
+        let startedAt = try #require(reply.generationStartedAt)
+        let backend = reply.generationBackend
+
+        await viewModel.regenerateAfterAssistant(messageID: reply.id)
+
+        // The empty retry put back the old reply, its sources and timings included.
+        #expect(reply.text == "First answer.")
+        #expect(reply.generationError == nil)
+        #expect(reply.searchInvocations?.first?.query == "earlier search")
+        #expect(reply.generationStartedAt == startedAt)
+        #expect(reply.generationBackend == backend)
+    }
+
     @Test func unavailableAppleIntelligenceExplainsWhatToDo() {
         #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.deviceNotEligible)).contains("Manage Models"))
         #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.appleIntelligenceNotEnabled)).contains("turned off"))

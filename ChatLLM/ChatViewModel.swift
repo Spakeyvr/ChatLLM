@@ -779,6 +779,7 @@ final class ChatViewModel: ObservableObject {
         let previousText: String
         let previousReasoning: String?
         let previousFinal: String?
+        let previousReply: Message.RegenerationSnapshot
         let forceSearchRequired: Bool
         let latestUserQuestion: String
         let questionLogPreview: String
@@ -806,6 +807,7 @@ final class ChatViewModel: ObservableObject {
         let previousText: String
         let previousReasoning: String?
         let previousFinal: String?
+        let previousReply: Message.RegenerationSnapshot
         let questionLogPreview: String
         let webSearchBridge: AppWebSearchToolBridge?
         let backendRequest: StreamBackendRequest
@@ -976,9 +978,7 @@ final class ChatViewModel: ObservableObject {
         )
 
         if hasPreviousContent {
-            target.text = resetState.previousText
-            target.reasoning = resetState.previousReasoning
-            target.finalAnswer = resetState.previousFinal
+            target.restore(resetState.previousReply)
             target.markAsComplete()
         } else {
             conversation.messages.removeAll { $0.id == target.id }
@@ -997,6 +997,7 @@ final class ChatViewModel: ObservableObject {
         let previousText = assistantMessage.text
         let previousReasoning = assistantMessage.reasoning
         let previousFinal = assistantMessage.finalAnswer
+        let previousReply = assistantMessage.regenerationSnapshot()
         let forcedSearchQuery = assistantMessage.requiresWebSearch == true ? assistantMessage.searchQuery : nil
         let forcedSearchRequirement = assistantMessage.requiresWebSearch
         let forceSearchRequired = assistantMessage.requiresWebSearch == true ||
@@ -1030,6 +1031,7 @@ final class ChatViewModel: ObservableObject {
             previousText: previousText,
             previousReasoning: previousReasoning,
             previousFinal: previousFinal,
+            previousReply: previousReply,
             forceSearchRequired: forceSearchRequired,
             latestUserQuestion: latestUserQuestion,
             questionLogPreview: questionLogPreview
@@ -1157,6 +1159,7 @@ final class ChatViewModel: ObservableObject {
             previousText: resetState.previousText,
             previousReasoning: resetState.previousReasoning,
             previousFinal: resetState.previousFinal,
+            previousReply: resetState.previousReply,
             questionLogPreview: resetState.questionLogPreview,
             webSearchBridge: webSearchBridge,
             backendRequest: backendRequest
@@ -1563,9 +1566,7 @@ final class ChatViewModel: ObservableObject {
 
         if outcome == .cancelled && !hasAnyVisibleContent && target.generationError == nil {
             if hasPreviousContent {
-                target.text = preparation.previousText
-                target.reasoning = preparation.previousReasoning
-                target.finalAnswer = preparation.previousFinal
+                target.restore(preparation.previousReply)
             } else {
                 conversation.messages.removeAll { $0.id == target.id }
                 context.delete(target)
@@ -1585,9 +1586,7 @@ final class ChatViewModel: ObservableObject {
             )
 
             if hasPreviousContent {
-                target.text = preparation.previousText
-                target.reasoning = preparation.previousReasoning
-                target.finalAnswer = preparation.previousFinal
+                target.restore(preparation.previousReply)
             } else {
                 target.generationError = String(localized: "The model returned an empty response. Try regenerating or rephrasing.", bundle: .appLocalized)
                 outcome = .failedBeforeOutput
