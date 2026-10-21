@@ -243,6 +243,12 @@ private struct AddOptionsSheet: View {
     var reasoningRequired: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    private var reasoningUnavailableReason: LocalizedStringKey? {
+        if reasoningRequired { return "This model always reasons before answering." }
+        if !reasoningAvailable { return "Reasoning needs a downloaded model that supports it." }
+        return nil
+    }
+
     var body: some View {
         // Three tiles side by side truncate their labels at accessibility sizes.
         let tileLayout = dynamicTypeSize.isAccessibilitySize
@@ -328,8 +334,10 @@ private struct AddOptionsSheet: View {
                         Divider()
                             .padding(.horizontal, 20)
 
+                        // Off while unavailable, since the reply won't reason; the stored
+                        // choice returns once a model that can reason is selected.
                         Toggle(isOn: Binding(
-                            get: { reasoningRequired || isReasoningEnabled },
+                            get: { reasoningRequired || (reasoningAvailable && isReasoningEnabled) },
                             set: { newValue in
                                 if newValue { isSmartReasoningEnabled = false }
                                 isReasoningEnabled = newValue
@@ -351,7 +359,7 @@ private struct AddOptionsSheet: View {
                         .padding(.vertical, 8)
 
                         Toggle(isOn: Binding(
-                            get: { !reasoningRequired && isSmartReasoningEnabled },
+                            get: { !reasoningRequired && reasoningAvailable && isSmartReasoningEnabled },
                             set: { newValue in
                                 if newValue { isReasoningEnabled = false }
                                 isSmartReasoningEnabled = newValue
@@ -371,6 +379,18 @@ private struct AddOptionsSheet: View {
                         .tint(.purple)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
+
+                        // Like Web Search, say why the switches above can't be changed.
+                        if let reasoningUnavailableReason {
+                            Text(reasoningUnavailableReason)
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 8)
+                                .accessibilityIdentifier("composer.reasoningUnavailableReason")
+                        }
 
                         Divider()
                             .padding(.horizontal, 20)

@@ -5120,6 +5120,28 @@
         }
       }
     },
+    "Reasoning needs a downloaded model that supports it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zum Nachdenken brauchst du ein heruntergeladenes Modell, das es unterstützt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reasoning needs a downloaded model that supports it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para razonar necesitas un modelo descargado que lo admita."
+          }
+        }
+      }
+    },
     "Reduce Repetition" : {
       "localizations" : {
         "de" : {
@@ -7059,6 +7081,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Este dispositivo no es compatible con Apple Intelligence. Descarga un modelo local en «Gestionar modelos» para chatear en este dispositivo."
+          }
+        }
+      }
+    },
+    "This model always reasons before answering." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell denkt vor jeder Antwort nach."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This model always reasons before answering."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo siempre razona antes de responder."
           }
         }
       }

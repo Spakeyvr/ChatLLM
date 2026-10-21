@@ -627,6 +627,23 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testUnavailableReasoningSwitchesExplainWhy() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+
+        // The demo chat uses Apple Intelligence, which has no reasoning mode.
+        app.buttons["Add attachment or web search"].tap()
+        let reason = app.staticTexts["composer.reasoningUnavailableReason"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertEqual(reason.label, "Reasoning needs a downloaded model that supports it.")
+        // The demo chat was saved with reasoning on, but it can't apply here.
+        let alwaysReason = app.switches.matching(NSPredicate(format: "label CONTAINS 'Always Reason'")).firstMatch
+        XCTAssertEqual(alwaysReason.value as? String, "0")
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
