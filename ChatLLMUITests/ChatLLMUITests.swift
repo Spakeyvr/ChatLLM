@@ -7,6 +7,7 @@
 
 import XCTest
 import CoreGraphics
+import UIKit
 
 final class ChatLLMUITests: XCTestCase {
     private let firstMLXModelID = "qwen3.5-4b-4bit-hybrid"
@@ -54,6 +55,67 @@ final class ChatLLMUITests: XCTestCase {
             captureSettingsScreenshot("markdown-\(reasoning ? "reasoning" : "standard")-finished", in: app)
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testCodeBlockOffersItsOwnCopyButton() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown"]
+        app.launch()
+        XCTAssertTrue(app.buttons["markdown.advance"].waitForExistence(timeout: 5))
+        app.buttons["markdown.advance"].tap()
+        XCTAssertTrue(app.staticTexts["let first_name = 1"].waitForExistence(timeout: 5))
+
+        // Long-pressing opens the whole message's menu, so code gets a button of its own.
+        XCTAssertTrue(app.staticTexts["swift"].exists)
+        let copy = app.buttons["markdown.copyCode"]
+        XCTAssertTrue(copy.exists)
+        XCTAssertEqual(copy.label, "Copy Code")
+        copy.tap()
+        XCTAssertEqual(copy.label, "Copied")
+        let restored = expectation(for: NSPredicate(format: "label == %@", "Copy Code"), evaluatedWith: copy)
+        wait(for: [restored], timeout: 4)
+    }
+
+    @MainActor
+    func testTableCellsFillTheirColumn() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-markdown"]
+        app.launch()
+        XCTAssertTrue(app.buttons["markdown.advance"].waitForExistence(timeout: 5))
+        app.buttons["markdown.advance"].tap()
+
+        let header = app.staticTexts["Fruit"]
+        let shortCell = app.staticTexts["Fig"]
+        let longCell = app.staticTexts["Strawberry"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        XCTAssertTrue(shortCell.exists)
+        XCTAssertTrue(longCell.exists)
+        // Short cells used to hug their text, so the header shading stopped short of
+        // the column edge. Past "Fruit", under the end of "Strawberry", it must match
+        // the shading at the start of the header cell.
+        let screenshot = app.screenshot().image
+        let insideHeader = CGPoint(x: header.frame.minX - 4, y: header.frame.midY)
+        let pastShortHeader = CGPoint(x: longCell.frame.maxX - 2, y: header.frame.midY)
+        let insideFirstRow = CGPoint(x: longCell.frame.maxX - 2, y: shortCell.frame.midY)
+        XCTAssertGreaterThan(longCell.frame.maxX - 2, header.frame.maxX + 20)
+        XCTAssertEqual(brightness(of: screenshot, at: pastShortHeader), brightness(of: screenshot, at: insideHeader), accuracy: 0.01)
+        XCTAssertNotEqual(brightness(of: screenshot, at: pastShortHeader), brightness(of: screenshot, at: insideFirstRow), accuracy: 0.01)
+    }
+
+    private func brightness(of image: UIImage, at point: CGPoint) -> CGFloat {
+        guard let cgImage = image.cgImage else { return -1 }
+        let scale = CGFloat(cgImage.width) / image.size.width
+        var pixel: [UInt8] = [0, 0, 0, 0]
+        let context = CGContext(
+            data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        context?.draw(cgImage, in: CGRect(
+            x: -point.x * scale, y: -(CGFloat(cgImage.height) - point.y * scale),
+            width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)
+        ))
+        return (CGFloat(pixel[0]) + CGFloat(pixel[1]) + CGFloat(pixel[2])) / (3 * 255)
     }
 
     @MainActor

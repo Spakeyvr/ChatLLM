@@ -68,8 +68,8 @@ private struct MarkdownBlockView: View {
             MarkdownInlineText(markdown: text, fontSize: fontSize, tone: tone)
                 .fixedSize(horizontal: false, vertical: true)
 
-        case let .codeBlock(_, code):
-            MarkdownCodeBlockView(code: code, fontSize: fontSize)
+        case let .codeBlock(language, code):
+            MarkdownCodeBlockView(language: language, code: code, fontSize: fontSize)
 
         case let .blockQuote(inner):
             MarkdownBlockQuoteView(blocks: inner, fontSize: fontSize, tone: tone, depth: depth)
@@ -102,19 +102,24 @@ private struct MarkdownBlockView: View {
 // MARK: - Code
 
 private struct MarkdownCodeBlockView: View {
+    let language: String?
     let code: String
     let fontSize: Double
+    @State private var copyFeedback: Task<Void, Never>?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Text(code)
-                .font(.system(size: fontSize * 0.9, design: .monospaced))
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .padding(.horizontal, fontSize * 0.9)
-                .padding(.vertical, fontSize * 0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.system(size: fontSize * 0.9, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, fontSize * 0.9)
+                    .padding(.bottom, fontSize * 0.8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
@@ -126,6 +131,48 @@ private struct MarkdownCodeBlockView: View {
                 .strokeBorder(MarkdownPalette.codeBorder, lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Long-pressing a reply opens the message menu, so this is the only way to
+    /// copy just the code rather than the whole reply.
+    private var header: some View {
+        HStack(spacing: 8) {
+            if let language, !language.isEmpty {
+                Text(verbatim: language)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button(action: copy) {
+                Label(copyTitle, systemImage: copyFeedback == nil ? "doc.on.doc" : "checkmark")
+                .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(copyAccessibilityLabel)
+            .accessibilityIdentifier("markdown.copyCode")
+        }
+        .font(.system(size: fontSize * 0.75, weight: .medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, fontSize * 0.9)
+        .padding(.vertical, fontSize * 0.5)
+    }
+
+    private var copyTitle: LocalizedStringKey {
+        copyFeedback == nil ? "Copy" : "Copied"
+    }
+
+    private var copyAccessibilityLabel: LocalizedStringKey {
+        copyFeedback == nil ? "Copy Code" : "Copied"
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = code
+        AppHaptics.impact(.light)
+        copyFeedback?.cancel()
+        copyFeedback = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            copyFeedback = nil
+        }
     }
 }
 
@@ -261,7 +308,8 @@ private struct MarkdownTableView: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, cellFontSize * 0.7)
             .padding(.vertical, cellFontSize * 0.55)
-            .frame(minWidth: cellFontSize * 3, alignment: frameAlignment(alignment))
+            // Fill the column, so backgrounds and borders line up with the widest cell.
+            .frame(minWidth: cellFontSize * 3, maxWidth: .infinity, alignment: frameAlignment(alignment))
             .overlay(alignment: .trailing) {
                 Rectangle().fill(MarkdownPalette.separator).frame(width: 1)
             }

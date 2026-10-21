@@ -9,7 +9,7 @@ struct MarkdownRenderingPreview: View {
     @State private var stage = 0
 
     private static let paragraphs = "First **bold** word.\nNext line.\n\nSecond paragraph with _italic_ text and `first_name`."
-    private static let blocks = "## Live heading\n\nFirst **bold** word.\n\n- First item\n- Second item\n\n```swift\nlet first_name = 1\n```"
+    private static let blocks = "## Live heading\n\nFirst **bold** word.\n\n- First item\n- Second item\n\n```swift\nlet first_name = 1\n```\n\n| Fruit | Color |\n|---|---|\n| Fig | Purple |\n| Strawberry | Red |"
     /// Math is the one construct still rendered by the bundled KaTeX document.
     private static let math = "Pythagoras:\n\n$$a^2 + b^2 = c^2$$"
 
