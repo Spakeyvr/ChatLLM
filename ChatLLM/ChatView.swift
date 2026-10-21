@@ -207,6 +207,8 @@ struct ChatView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($scrollPosition)
+            .overlay(alignment: .bottom) { jumpToLatestButton }
+            .animation(.easeInOut(duration: 0.2), value: isReaderNearBottom)
             // Short chats sit at the top edge; longer ones open at the latest message.
             // Edge-based scrolling (unlike scrolling a message to the bottom anchor) never
             // pushes short content past the top.
@@ -475,6 +477,27 @@ struct ChatView: View {
             reasoningAvailable: modelBackendBridge.reasoningAvailable,
             reasoningRequired: modelBackendBridge.reasoningRequired
         )
+    }
+
+    /// Shown once the reader scrolls away from the latest message, so a long chat
+    /// or a reply that keeps growing below them is one tap from the bottom.
+    @ViewBuilder
+    private var jumpToLatestButton: some View {
+        if !isReaderNearBottom && !sortedMessages.isEmpty {
+            Button {
+                scrollToBottom(animated: true)
+            } label: {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Scroll to Latest Message")
+            .accessibilityIdentifier("chat.scrollToLatest")
+            .padding(.bottom, 8)
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        }
     }
 
     // MARK: - Computed State

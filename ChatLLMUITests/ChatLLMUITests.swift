@@ -390,6 +390,30 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testScrollingUpOffersAWayBackToTheLatestMessage() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ui-test-reset-app-state",
+            "-ui-test-web-search-demo",
+            "-ui-test-long-chat"
+        ]
+        app.launch()
+
+        let sources = app.buttons["message.sources"]
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        let jump = app.buttons["chat.scrollToLatest"]
+        XCTAssertFalse(jump.exists)
+
+        app.scrollViews.firstMatch.swipeDown()
+        XCTAssertTrue(jump.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(jump.frame.height, 44)
+
+        jump.tap()
+        XCTAssertTrue(jump.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(sources.isHittable)
+    }
+
+    @MainActor
     func testReturningToTheAppKeepsTheReadersScrollPosition() throws {
         let app = XCUIApplication()
         app.launchArguments += [

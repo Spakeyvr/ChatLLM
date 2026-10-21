@@ -5692,6 +5692,28 @@
         }
       }
     },
+    "Scroll to Latest Message" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zur neuesten Nachricht scrollen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scroll to Latest Message"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ir al mensaje más reciente"
+          }
+        }
+      }
+    },
     "Search chats" : {
       "localizations" : {
         "de" : {
