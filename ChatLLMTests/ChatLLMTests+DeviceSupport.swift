@@ -6,6 +6,7 @@
 //
 
 import Testing
+import Combine
 import Foundation
 import SwiftUI
 import SwiftData
@@ -312,6 +313,35 @@ extension ChatLLMTests {
         let error = try #require(reply.generationError)
         #expect(error.contains("Missing Files 1B"))
         #expect(!error.contains("Documents/"))
+        #expect(manager.loadError != nil)
+    }
+
+    @Test func finishedDownloadLoadsOnlyTheModelTheChatIsWaitingFor() async throws {
+        let bridge = makeBackendBridge()
+        let manager = try #require(bridge.modelManager)
+        let modelID = try #require(manager.availableModels.first?.id)
+
+        // A chat on Apple Intelligence keeps it; the new model isn't loaded beside it.
+        bridge.selectedBackend = .foundationModels
+        manager.loadError = nil
+        manager.downloadCompleted.send(modelID)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(bridge.selectedBackend == .foundationModels)
+        #expect(manager.loadError == nil && !manager.isLoading)
+
+        // A chat that uses another MLX model keeps it too.
+        bridge.selectedBackend = .mlx
+        bridge.selectedModelID = "another-model"
+        manager.downloadCompleted.send(modelID)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(bridge.selectedModelID == "another-model")
+        #expect(manager.loadError == nil && !manager.isLoading)
+
+        // A chat waiting for this model loads it. The test has no model files, so the
+        // attempt ends in a load error rather than a loaded model.
+        bridge.selectedModelID = modelID
+        manager.downloadCompleted.send(modelID)
+        try await Task.sleep(for: .milliseconds(100))
         #expect(manager.loadError != nil)
     }
 

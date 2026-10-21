@@ -81,6 +81,9 @@ final class MLXModelManager: ObservableObject {
     let deviceSupportProfile: MLXDeviceSupportProfile
     let inferenceWorker: MLXInferenceWorker
     var simulatedDownloadedModelIDs: Set<String> = []
+    /// Sends a model's ID when its download finishes. Whether to load it is the
+    /// backend bridge's call, since only it knows which model the chat is using.
+    let downloadCompleted = PassthroughSubject<String, Never>()
 
     let documentsDirectory: URL
     let defaults: UserDefaults

@@ -5,6 +5,7 @@
 //  Split out of MLXModelManager.swift as part of the Type+Concern organization.
 //
 
+import Combine
 import Foundation
 import OSLog
 
@@ -111,7 +112,7 @@ extension MLXModelManager {
                     forKey: Self.activeBackgroundDownloadModelIDKey
                 )
                 self.refreshModelAvailability()
-                self.startLoading(modelID: model.id, source: "download_complete")
+                self.downloadCompleted.send(model.id)
                 self.logger.notice("Model downloaded: \(model.displayName, privacy: .public)")
             } catch {
                 // Cancelling the background URLSession task surfaces as

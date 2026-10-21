@@ -100,6 +100,13 @@ class ModelBackendBridge: ObservableObject {
             }
             .store(in: &cancellables)
 
+        manager.downloadCompleted
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] id in
+                self?.loadDownloadedModelIfSelected(id)
+            }
+            .store(in: &cancellables)
+
         // Forward all modelManager @Published changes so views observing this bridge
         // (e.g. NavigationTitleView) re-render when isLoading or pendingModelToLoad changes.
         manager.objectWillChange
@@ -224,6 +231,16 @@ class ModelBackendBridge: ObservableObject {
             notifyPipelineReset(reason: "backend.mlx.\(modelID)")
         }
         manager.startLoading(modelID: modelID, source: source)
+    }
+
+    /// Loads a model that just finished downloading only when the chat is waiting
+    /// for it. Loading it otherwise would replace the chat's model, or sit beside
+    /// Apple Intelligence in memory.
+    private func loadDownloadedModelIfSelected(_ modelID: String) {
+        guard selectedBackend == .mlx,
+              (selectedModelID ?? modelID) == modelID,
+              modelManager?.currentModel?.id != modelID else { return }
+        switchToMLXModel(modelID, source: "download_complete")
     }
 
     private func notifyPipelineReset(reason: String) {
