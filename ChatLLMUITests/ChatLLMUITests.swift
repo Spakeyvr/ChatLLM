@@ -669,9 +669,26 @@ final class ChatLLMUITests: XCTestCase {
         thumbnail.tap()
         let done = app.buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 3))
+
         done.tap()
         XCTAssertFalse(done.waitForExistence(timeout: 2))
         XCTAssertTrue(app.textViews.firstMatch.exists)
+    }
+
+    @MainActor
+    func testFullScreenImageCanBeShared() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo", "-ui-test-image-message"]
+        app.launch()
+        let thumbnail = app.buttons["Attached image"]
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+        thumbnail.tap()
+
+        // A photo taken with the in-app camera exists only in the chat.
+        let share = app.buttons["imageViewer.share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 3))
+        share.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5))
     }
 
     @MainActor

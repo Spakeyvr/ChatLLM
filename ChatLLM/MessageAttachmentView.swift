@@ -33,7 +33,7 @@ struct FullscreenAttachmentImageView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    FullscreenDoneButton(isPresented: $isPresented)
+                    FullscreenToolbar(image: nil, isPresented: $isPresented)
                 }
             }
         }
@@ -90,7 +90,7 @@ struct FullscreenImageView: View {
             
             // Custom toolbar overlay
             VStack {
-                FullscreenDoneButton(isPresented: $isPresented)
+                FullscreenToolbar(image: image, isPresented: $isPresented)
                     .opacity(isDraggingToDismiss ? 0 : 1)
                 
                 Spacer()
@@ -108,7 +108,8 @@ struct FullscreenImageView: View {
     }
 }
 
-private struct FullscreenDoneButton: View {
+private struct FullscreenToolbar: View {
+    let image: UIImage?
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -119,9 +120,29 @@ private struct FullscreenDoneButton: View {
                 .foregroundStyle(.white)
 
             Spacer()
+
+            // A camera photo taken in the app exists only in the chat, so this is
+            // the way to save or send it elsewhere.
+            if let image {
+                shareButton(for: image)
+            }
         }
         .padding(.horizontal)
         .padding(.top, 8)
+    }
+
+    private func shareButton(for image: UIImage) -> some View {
+        ShareLink(
+            item: Image(uiImage: image),
+            preview: SharePreview(String(localized: "Image", bundle: .appLocalized), image: Image(uiImage: image))
+        ) {
+            Image(systemName: "square.and.arrow.up")
+                .fontWeight(.semibold)
+        }
+        .buttonStyle(.glass)
+        .foregroundStyle(.white)
+        .accessibilityLabel("Share")
+        .accessibilityIdentifier("imageViewer.share")
     }
 }
 
