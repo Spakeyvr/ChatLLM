@@ -239,9 +239,21 @@ extension ChatViewModel {
     }
 
     private func makeTitleFromText(_ text: String) -> String {
-        let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-        let title = words.prefix(6).joined(separator: " ")
-        if title.count > 50 { return String(title.prefix(47)) + "..." }
-        return title.isEmpty ? String(localized: "Untitled Chat", bundle: .appLocalized) : title
+        Self.fallbackTitle(from: text) ?? String(localized: "Untitled Chat", bundle: .appLocalized)
+    }
+
+    /// The first words of the user's message, without pasted code or Markdown
+    /// symbols. A message that is only code is named after its first lines.
+    nonisolated static func fallbackTitle(from text: String) -> String? {
+        let prose = text.replacingOccurrences(of: "```[\\s\\S]*?(```|$)", with: "\n", options: .regularExpression)
+        let source = prose.contains(where: { $0.isLetter || $0.isNumber })
+            ? prose
+            // Drop the fence lines, including a language tag such as ```swift.
+            : text.replacingOccurrences(of: "```[^\\n]*", with: "\n", options: .regularExpression)
+        let decoration = CharacterSet(charactersIn: "\"'“”‘’«»`*#_>")
+        let words = source.components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: decoration) }
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+        return sanitizedGeneratedTitle(words.prefix(6).joined(separator: " "))
     }
 }

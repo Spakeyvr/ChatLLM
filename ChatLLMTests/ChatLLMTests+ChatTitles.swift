@@ -161,6 +161,26 @@ extension ChatLLMTests {
         #expect(title.count <= 50)
     }
 
+    @Test func wordBasedTitleSkipsPastedCodeAndMarkdown() {
+        #expect(ChatViewModel.fallbackTitle(from: "Fix this:\n```python\nprint(1)\n```") == "Fix this")
+        #expect(ChatViewModel.fallbackTitle(from: "```swift\nlet x = 1\n```\nWhy does this crash?") == "Why does this crash")
+        #expect(ChatViewModel.fallbackTitle(from: "## **Plan** a trip to Vienna in May with friends") == "Plan a trip to Vienna in")
+        #expect(ChatViewModel.fallbackTitle(from: "Why does `fetch()` fail") == "Why does fetch() fail")
+        #expect(ChatViewModel.fallbackTitle(from: "- buy milk\n- call mom") == "buy milk call mom")
+        // A message that is only code is named after the code, not its language tag.
+        #expect(ChatViewModel.fallbackTitle(from: "```swift\nfunc loadModel() async throws\n```") == "func loadModel() async throws")
+        #expect(ChatViewModel.fallbackTitle(from: "```") == nil)
+    }
+
+    @Test func wordBasedTitleShortensAtAWordBoundary() throws {
+        let title = try #require(ChatViewModel.fallbackTitle(
+            from: "Internationalization considerations for multilingual applications development"
+        ))
+        #expect(title.hasSuffix("…"))
+        #expect(!title.contains("..."))
+        #expect(title.count <= 50)
+    }
+
     @Test func titleGenerationDoesNotRetryGuardrailViolations() {
         let violation = LanguageModelError.GuardrailViolation(debugDescription: "blocked")
 
