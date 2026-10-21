@@ -146,6 +146,19 @@ internal struct TestLLMGenerator: LLMGenerator {
     }
 }
 
+/// Records how many tools each request offered the model.
+internal final class ToolRecordingGenerator: LLMGenerator {
+    private(set) var toolCounts: [Int] = []
+
+    func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
+        toolCounts.append(tools.count)
+        return AsyncThrowingStream { continuation in
+            continuation.yield("Done.")
+            continuation.finish()
+        }
+    }
+}
+
 internal struct BlockingLLMGenerator: LLMGenerator {
     func streamResponse(to request: LLMRequest, tools: [any FoundationModelTool]) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in

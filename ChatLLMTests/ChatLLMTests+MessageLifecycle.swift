@@ -37,6 +37,27 @@ extension ChatLLMTests {
         }
     }
 
+    @Test func regeneratingAReplyToAnImageKeepsWebSearchOff() async throws {
+        let generator = ToolRecordingGenerator()
+        let viewModel = try makeViewModel(generator: generator)
+        viewModel.searchService = try makeSearchService()
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        let turn = try #require(viewModel.prepareUserMessageForSend("What is this?"))
+        let attachment = try await viewModel.addImageAttachment(image, to: turn.message)
+        let reply = viewModel.appendAssistantPlaceholder(isReasoningMode: false)
+        reply.text = "A teal square."
+        reply.markAsComplete()
+
+        await viewModel.regenerateAfterAssistant(messageID: reply.id)
+        await viewModel.regenerateReplacingAssistant(messageID: reply.id, instruction: "Be brief.")
+
+        #expect(generator.toolCounts == [0, 0])
+        try? await ImageStore.shared.delete(url: attachment.actualFileURL)
+    }
+
     @Test func resetForRegenerationClearsDeveloperMetadata() {
         let conversation = Conversation(title: "Test")
         let message = ChatLLM.Message(

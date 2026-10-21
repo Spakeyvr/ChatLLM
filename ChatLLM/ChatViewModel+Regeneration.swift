@@ -107,7 +107,11 @@ extension ChatViewModel {
 
         // basedOnHistoryUpTo is exclusive, so the prompt excludes this assistant
         // message itself while including all preceding user messages.
-        await streamAssistant(into: targetMessage, basedOnHistoryUpTo: targetMessage.order)
+        await streamAssistant(
+            into: targetMessage,
+            basedOnHistoryUpTo: targetMessage.order,
+            disableWebSearch: answersImageMessage(targetMessage)
+        )
         logger.debug("Regeneration completed for message order \(messageOrder, privacy: .public)")
     }
 
@@ -175,8 +179,18 @@ extension ChatViewModel {
         await streamAssistant(
             into: targetMessage,
             basedOnHistoryUpTo: targetMessage.order,
-            additionalUserInstruction: trimmed
+            additionalUserInstruction: trimmed,
+            disableWebSearch: answersImageMessage(targetMessage)
         )
+    }
+
+    /// Image turns are answered without web search (see `sendWithImage`), so a
+    /// regenerated reply to one must not search either.
+    private func answersImageMessage(_ reply: Message) -> Bool {
+        let question = conversation.messages
+            .filter { $0.role == .user && $0.order < reply.order }
+            .max { $0.order < $1.order }
+        return question?.attachments.isEmpty == false
     }
 
     @discardableResult
