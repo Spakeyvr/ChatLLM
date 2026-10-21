@@ -219,6 +219,20 @@ extension ChatLLMTests {
         #expect(ChatViewModel.promptNeedsReasoning("Can you list the trade-offs of SwiftData versus Core Data?"))
     }
 
+    @Test func smartReasoningRecognizesGermanAndSpanishTasks() {
+        #expect(ChatViewModel.promptNeedsReasoning("Wie behebe ich diesen Absturz in meiner App?"))
+        #expect(ChatViewModel.promptNeedsReasoning("Berechne die Fläche eines Kreises mit Radius 3"))
+        #expect(ChatViewModel.promptNeedsReasoning("Welche Vor- und Nachteile hat SwiftData?"))
+        #expect(ChatViewModel.promptNeedsReasoning("¿Cómo optimizar esta función de Swift?"))
+        #expect(ChatViewModel.promptNeedsReasoning("Resuelve la ecuación 2x + 3 = 7 paso a paso"))
+        #expect(ChatViewModel.promptNeedsReasoning("¿Por qué no compila mi struct de SwiftUI?"))
+        // Greetings and simple lookups still answer directly.
+        #expect(!ChatViewModel.promptNeedsReasoning("Hallo, wie geht's?"))
+        #expect(!ChatViewModel.promptNeedsReasoning("Was ist ein Hund?"))
+        #expect(!ChatViewModel.promptNeedsReasoning("Hola, ¿qué tal?"))
+        #expect(!ChatViewModel.promptNeedsReasoning("¿Qué es una manzana?"))
+    }
+
     @Test func chatFollowsGrowingReplyOnlyWhenReaderIsAtBottom() {
         typealias State = ChatView.ScrollFollowState
         let atBottom = State(contentHeight: 1_000, visibleHeight: 600, distanceFromBottom: 0)

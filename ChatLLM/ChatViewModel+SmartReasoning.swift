@@ -38,13 +38,20 @@ extension ChatViewModel {
     /// Heuristic for determining whether an MLX reasoning model should be used.
     /// Keywords match on word boundaries, so "ios" doesn't fire on "serious" or
     /// "fix" on "prefix"; task keywords also match inflections ("fixing", "errors").
+    /// Covers every interface language, since people usually write in theirs.
     nonisolated static func promptNeedsReasoning(_ userText: String) -> Bool {
         let text = normalizedForKeywordMatching(userText)
 
         // Simple questions that definitely don't need reasoning
         let simplePatterns = [
             "what is", "what are", "who is", "who was", "when was", "when is",
-            "hello", "hi", "hey", "thanks", "thank you", "goodbye", "bye"
+            "hello", "hi", "hey", "thanks", "thank you", "goodbye", "bye",
+            // German
+            "was ist", "was sind", "wer ist", "wer war", "wann ist", "wann war",
+            "hallo", "danke", "tschüss",
+            // Spanish
+            "qué es", "qué son", "quién es", "quién fue", "cuándo es", "cuándo fue",
+            "hola", "gracias", "adiós"
         ]
 
         let isSimpleQuestion = simplePatterns.contains { text.hasPrefix(" \($0) ") }
@@ -59,13 +66,26 @@ extension ChatViewModel {
             "compare", "analyze", "evaluate", "trade off", "pros and cons",
             "best practice", "approach", "strategy", "implementation",
             "why does", "why is", "how should", "what's wrong", "what's the best",
-            "step by step", "walk through", "explain how", "show me how"
+            "step by step", "walk through", "explain how", "show me how",
+            // German; stems also match their inflections
+            "behebe", "beheben", "optimier", "verbesser", "fehler", "vergleich",
+            "analysier", "bewerte", "vor und nachteile", "ansatz", "strategie",
+            "implementier", "warum funktioniert", "schritt für schritt", "erkläre wie",
+            // Spanish
+            "depura", "arregla", "corrige", "optimiza", "mejora", "compara", "analiza",
+            "evalúa", "ventajas y desventajas", "enfoque", "estrategia", "implementa",
+            "por qué no", "paso a paso", "explica cómo"
         ]
 
         // Mathematical or logical indicators
         let logicalKeywords = [
             "calculate", "solve", "equation", "formula", "logic", "reasoning",
-            "proof", "derive", "determine", "find the", "compute"
+            "proof", "derive", "determine", "find the", "compute",
+            // German
+            "berechne", "löse", "gleichung", "formel", "beweis", "herleit", "bestimme",
+            // Spanish
+            "calcula", "resuelve", "ecuación", "fórmula", "demuestra", "demostración",
+            "deriva", "determina"
         ]
 
         // Code-related complexity indicators; whole words only, since several
@@ -84,7 +104,9 @@ extension ChatViewModel {
         }
 
         // Additional heuristics
-        let hasQuestionWords = ["how", "why", "what", "what's"].contains { text.contains(" \($0) ") }
+        let hasQuestionWords = [
+            "how", "why", "what", "what's", "wie", "warum", "was", "cómo", "por qué", "qué"
+        ].contains { text.contains(" \($0) ") }
         let isLongQuery = userText.count > 100
         let hasMultipleSentences = userText.components(separatedBy: CharacterSet(charactersIn: ".!?")).count > 2
 
