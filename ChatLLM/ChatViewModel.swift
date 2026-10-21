@@ -599,22 +599,26 @@ final class ChatViewModel: ObservableObject {
                 forceAutoNaming: regenerateTitle,
                 replacingMessageID: editedUserMessageID
             ) else { return }
+            // Editing only the text of an image message keeps its image, and image
+            // turns are answered without web search (see `sendWithImage`).
+            let answersImage = !turn.message.attachments.isEmpty
+            let searches = forceSearch && !answersImage
             let assistantMsg = self.appendAssistantPlaceholder(
                 isReasoningMode: shouldUseReasoning,
-                searchQuery: forceSearch ? trimmed : nil,
-                requiresWebSearch: forceSearch
+                searchQuery: searches ? trimmed : nil,
+                requiresWebSearch: searches
             )
 
             guard self.isGenerationActive(generationID) else { return }
 
-            let searchInstruction = forceSearch
+            let searchInstruction = searches
                 ? "You must call the webSearch tool before answering. Search for current information about this request first, then answer using the tool results."
                 : nil
             await self.streamAssistant(
                 into: assistantMsg,
                 basedOnHistoryUpTo: assistantMsg.order,
                 additionalUserInstruction: searchInstruction,
-                disableWebSearch: disableToolCalls,
+                disableWebSearch: disableToolCalls || answersImage,
                 generationID: generationID
             )
 
