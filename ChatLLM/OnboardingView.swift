@@ -177,11 +177,11 @@ struct OnboardingView: View {
 
     private var mlxStep: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Download an MLX model if you want")
+            Text("Download a local model")
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("This is optional. You can finish onboarding right now, or start a model download and continue using the app while it runs.")
+            Text("You can finish now and keep using the app while the download runs in the background.")
                 .foregroundStyle(.secondary)
 
             if let modelManager {
