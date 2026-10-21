@@ -246,8 +246,8 @@ struct ModelRow: View {
 
     @ViewBuilder
     private var modelIcon: some View {
-        if model.id.hasPrefix("qwen") {
-            Image("Qwen-logo")
+        if let logoAssetName = Self.logoAssetName(forModelID: model.id) {
+            Image(logoAssetName)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 44, height: 44)
@@ -259,6 +259,12 @@ struct ModelRow: View {
                 .frame(width: 44, height: 44)
                 .background(Color.accentColor, in: Circle())
         }
+    }
+
+    static func logoAssetName(forModelID modelID: String) -> String? {
+        if modelID.hasPrefix("qwen") { return "Qwen-logo" }
+        if modelID.hasPrefix("lfm") { return "LFM-logo" }
+        return nil
     }
 
 }

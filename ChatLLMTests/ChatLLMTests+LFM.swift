@@ -3,6 +3,7 @@ import Foundation
 import MLXLMCommon
 import MLX
 import MLXNN
+import UIKit
 @testable import ChatLLM
 
 extension ChatLLMTests {
@@ -31,6 +32,13 @@ extension ChatLLMTests {
         #expect(items[1] as? String == "hello")
         #expect(items[2] as? Int == 0)
         #expect(try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(json)) == json)
+    }
+
+    @Test func modelRowUsesBrandLogoForQwenAndLFMModels() {
+        #expect(ModelRow.logoAssetName(forModelID: "lfm2.5-2.6b-4bit") == "LFM-logo")
+        #expect(ModelRow.logoAssetName(forModelID: "qwen3.5-4b-4bit") == "Qwen-logo")
+        #expect(ModelRow.logoAssetName(forModelID: "smollm3-3b-4bit") == nil)
+        #expect(UIImage(named: "LFM-logo") != nil)
     }
 
     @Test func lfmSelectionMigratesFromSmolLMPreferences() {
