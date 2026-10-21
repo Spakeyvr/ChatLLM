@@ -99,4 +99,10 @@ extension ChatLLMTests {
         let reply = try #require(viewModel.conversation.messages.first { $0.role == .assistant })
         #expect(reply.generationPromptTokenCount == nil)
     }
+
+    @Test func unavailableAppleIntelligenceExplainsWhatToDo() {
+        #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.deviceNotEligible)).contains("Manage Models"))
+        #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.appleIntelligenceNotEnabled)).contains("turned off"))
+        #expect(OnDeviceLLMGenerator.unavailableMessage(for: .unavailable(.modelNotReady)).contains("getting ready"))
+    }
 }

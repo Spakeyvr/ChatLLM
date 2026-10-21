@@ -882,6 +882,72 @@
     "Apple Foundation" : {
       "shouldTranslate" : false
     },
+    "Apple Intelligence is still getting ready. Try again in a few minutes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence wird noch vorbereitet. Versuche es in ein paar Minuten erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence is still getting ready. Try again in a few minutes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence aún se está preparando. Vuelve a intentarlo en unos minutos."
+          }
+        }
+      }
+    },
+    "Apple Intelligence is turned off. Turn it on in Settings, or download a local model in Manage Models." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence ist deaktiviert. Aktiviere es in den Einstellungen oder lade unter „Modelle verwalten“ ein lokales Modell herunter."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence is turned off. Turn it on in Settings, or download a local model in Manage Models."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence está desactivado. Actívalo en Ajustes o descarga un modelo local en «Gestionar modelos»."
+          }
+        }
+      }
+    },
+    "Apple Intelligence isn't available right now. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence ist gerade nicht verfügbar. Versuche es gleich noch einmal."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence isn't available right now. Try again in a moment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence no está disponible ahora mismo. Vuelve a intentarlo en un momento."
+          }
+        }
+      }
+    },
     "Apple's safety system blocked this response. Try rephrasing your request." : {
       "localizations" : {
         "de" : {
@@ -4549,28 +4615,6 @@
         }
       }
     },
-    "On‑device model unavailable on this device." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auf diesem Gerät ist kein geräteinternes Modell verfügbar."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On‑device model unavailable on this device."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El modelo local no está disponible en este dispositivo."
-          }
-        }
-      }
-    },
     "Opens the website" : {
       "localizations" : {
         "de" : {
@@ -7039,6 +7083,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pensando…"
+          }
+        }
+      }
+    },
+    "This device doesn't support Apple Intelligence. Download a local model in Manage Models to chat on this device." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Gerät unterstützt Apple Intelligence nicht. Lade unter „Modelle verwalten“ ein lokales Modell herunter, um auf diesem Gerät zu chatten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device doesn't support Apple Intelligence. Download a local model in Manage Models to chat on this device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este dispositivo no es compatible con Apple Intelligence. Descarga un modelo local en «Gestionar modelos» para chatear en este dispositivo."
           }
         }
       }

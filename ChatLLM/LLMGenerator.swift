@@ -78,8 +78,21 @@ final class OnDeviceLLMGenerator: LLMGenerator {
 
     nonisolated private static let safetyKeywords = ["unsafe", "safety", "content filter", "violates"]
 
-    private func isAvailable() -> Bool {
-        SystemLanguageModel.default.availability == .available
+    /// Says why Apple Intelligence can't answer and what the user can do instead.
+    nonisolated static func unavailableMessage(for availability: SystemLanguageModel.Availability) -> String {
+        guard case .unavailable(let reason) = availability else {
+            return String(localized: "Apple Intelligence isn't available right now. Try again in a moment.", bundle: .appLocalized)
+        }
+        switch reason {
+        case .deviceNotEligible:
+            return String(localized: "This device doesn't support Apple Intelligence. Download a local model in Manage Models to chat on this device.", bundle: .appLocalized)
+        case .appleIntelligenceNotEnabled:
+            return String(localized: "Apple Intelligence is turned off. Turn it on in Settings, or download a local model in Manage Models.", bundle: .appLocalized)
+        case .modelNotReady:
+            return String(localized: "Apple Intelligence is still getting ready. Try again in a few minutes.", bundle: .appLocalized)
+        @unknown default:
+            return String(localized: "Apple Intelligence isn't available right now. Try again in a moment.", bundle: .appLocalized)
+        }
     }
 
     nonisolated private func isSafetyModerationError(_ error: Error) -> Bool {
@@ -139,9 +152,10 @@ final class OnDeviceLLMGenerator: LLMGenerator {
         tools: [any FoundationModelTool],
         onMetrics: @escaping @Sendable (GenerationMetrics) -> Void
     ) async throws -> AsyncThrowingStream<String, Error> {
-        guard isAvailable() else {
+        let availability = SystemLanguageModel.default.availability
+        guard availability == .available else {
             throw NSError(domain: "OnDeviceLLMGenerator", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: String(localized: "On‑device model unavailable on this device.", bundle: .appLocalized)])
+                          userInfo: [NSLocalizedDescriptionKey: Self.unavailableMessage(for: availability)])
         }
         let session = Self.makeSession(for: request, tools: tools)
         let prompt = Self.makePrompt(for: request)
