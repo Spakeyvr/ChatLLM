@@ -560,6 +560,19 @@ final class ChatLLMUITests: XCTestCase {
     }
 
     @MainActor
+    func testVoiceOverSkipsTheChatMessagesBehindTheOpenSidebar() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]
+        app.launch()
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 5))
+
+        openSidebar(in: app)
+        XCTAssertTrue(app.buttons["message.sources"].waitForNonExistence(timeout: 3))
+        app.buttons["sidebar.dismiss"].tap()
+        XCTAssertTrue(app.buttons["message.sources"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSwipingRightFromAMessageOpensTheSidebar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-test-reset-app-state", "-ui-test-web-search-demo"]

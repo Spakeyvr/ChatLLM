@@ -176,6 +176,9 @@ struct ContentView: View {
                             .accessibilityIdentifier("sidebar.toggle")
                         }
                     }
+                    // The drawer's accessibilityHidden stops at the NavigationStack boundary,
+                    // so the covered chat's messages hide themselves from VoiceOver here.
+                    .accessibilityHidden(isSidebarOpen)
             }
         }
     }
