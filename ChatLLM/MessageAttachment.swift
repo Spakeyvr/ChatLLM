@@ -98,3 +98,19 @@ final class MessageAttachment {
         return nil
     }
 }
+
+extension MessageAttachment {
+    /// Files still used by saved chats. Fetches attachment rows directly, so cleanup
+    /// doesn't fault in every message of every chat just to reach their attachments.
+    static func referencedFileURLs(
+        in context: ModelContext,
+        excludingConversationIDs excludedConversationIDs: Set<UUID> = []
+    ) throws -> Set<URL> {
+        let attachments = try context.fetch(FetchDescriptor<MessageAttachment>())
+        return Set(attachments.compactMap { attachment in
+            guard let conversationID = attachment.message?.conversation?.id,
+                  !excludedConversationIDs.contains(conversationID) else { return nil }
+            return attachment.actualFileURL
+        })
+    }
+}

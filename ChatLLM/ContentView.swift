@@ -453,16 +453,6 @@ struct ContentView: View {
         return nil
     }
 
-    private func referencedAttachmentURLs(excludingConversationIDs excludedConversationIDs: Set<UUID> = []) -> Set<URL> {
-        Set(
-            conversations
-                .filter { !excludedConversationIDs.contains($0.id) }
-                .flatMap(\.messages)
-                .flatMap(\.attachments)
-                .map(\.actualFileURL)
-        )
-    }
-
     private func attachmentURLs(in conversations: [Conversation]) -> [URL] {
         conversations
             .flatMap(\.messages)
@@ -486,7 +476,11 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
 
-            let referencedURLs = referencedAttachmentURLs(excludingConversationIDs: excludedConversationIDs)
+            // A failed fetch must skip cleanup: an empty set would delete every image.
+            guard let referencedURLs = try? MessageAttachment.referencedFileURLs(
+                in: modelContext,
+                excludingConversationIDs: excludedConversationIDs
+            ) else { return }
             try? await ImageStore.shared.cleanupOrphanedFiles(referencedURLs: referencedURLs)
         }
     }

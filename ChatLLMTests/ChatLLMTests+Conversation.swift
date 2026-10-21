@@ -28,6 +28,36 @@ extension ChatLLMTests {
         #expect(!viewModel.conversation.reasoningMode)
     }
 
+    @Test func attachmentCleanupKeepsFilesOfSavedChatsOnly() throws {
+        let container = try ModelContainer(
+            for: Schema([Conversation.self, ChatLLM.Message.self, MessageAttachment.self]),
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        func chat(_ fileName: String) -> (Conversation, MessageAttachment) {
+            let conversation = Conversation(title: fileName)
+            context.insert(conversation)
+            let message = ChatLLM.Message(role: .user, text: "Look", order: 0, conversation: conversation, isFinal: true)
+            conversation.messages = [message]
+            let attachment = MessageAttachment(type: .image, fileURL: URL(fileURLWithPath: "/tmp/\(fileName)"), fileName: fileName)
+            message.attachments = [attachment]
+            attachment.message = message
+            return (conversation, attachment)
+        }
+        let (_, kept) = chat("kept.jpg")
+        let (deleting, _) = chat("deleting.jpg")
+        let orphan = MessageAttachment(type: .image, fileURL: URL(fileURLWithPath: "/tmp/orphan.jpg"), fileName: "orphan.jpg")
+        context.insert(orphan)
+        try context.save()
+
+        let referenced = try MessageAttachment.referencedFileURLs(
+            in: context,
+            excludingConversationIDs: [deleting.id]
+        )
+
+        #expect(referenced == [kept.actualFileURL])
+    }
+
     @Test func sidebarPreviewSkipsAReplyThatFailedBeforeWritingText() {
         let conversation = Conversation(title: "Failed reply")
         let user = ChatLLM.Message(role: .user, text: "Hello there", order: 0, conversation: conversation, isFinal: true)
