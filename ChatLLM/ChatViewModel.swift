@@ -1250,7 +1250,8 @@ final class ChatViewModel: ObservableObject {
             syncLiveSearchInvocations(into: liveTarget, from: preparation.webSearchBridge)
             updateMessageWithReasoningContent(liveTarget, fullText: result.cumulativeText, finalize: false)
             lastModelWrite = now
-            conversation.lastUpdated = now
+            // lastUpdated is set when the turn starts and ends, not on every repaint:
+            // the sidebar sorts and groups by it, so each write re-renders the sidebar.
             scheduleCoalescedSave()
         }
 
