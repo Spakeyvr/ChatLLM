@@ -16,18 +16,19 @@ import WebKit
 ///   when the transcript recycles a bubble off screen.
 /// - **Bundled WebView document** (`RichMarkdownWebViewRepresentable`): the only
 ///   remaining user of `RenderingAssets/` (`markdown-it.min.js`, `katex.min.js`,
-///   `katex-auto-render.min.js`, `katex.min.css`). It renders the *whole* message
-///   with markdown-it, then KaTeX auto-render handles the math. Chosen only when
+///   `katex.min.css`). It renders the *whole* message with markdown-it, whose math
+///   rules hand each formula to KaTeX. Chosen only when
 ///   `RichTextFeatureDetector.requiresAdvancedRendering` finds math outside code
 ///   spans, when the WebView fails to load, and while a math document is still
 ///   measuring its height.
 ///
 /// Do not delete the `RenderingAssets/` files: the native path cannot render
-/// KaTeX, and the WebView document inlines all four of them (see `makeHTML()`).
+/// KaTeX, and the WebView document inlines all three of them (see `makeHTML()`).
 /// All parser assets and WOFF2 fonts are required; a missing asset triggers the
 /// existing native fallback. Fonts are embedded as data URIs under the local CSP.
-/// Bare equation/align/alignat/gather/CD environments (including starred forms)
-/// use the same delimiter list for detection, Markdown protection and KaTeX.
+/// `$…$`, `$$…$$`, `\(…\)`, `\[…\]` and bare KaTeX environments (align, cases,
+/// pmatrix, …) share one delimiter list for detection and Markdown tokenizing.
+/// Display math that starts a line may span blank lines.
 ///
 /// Known limitations:
 /// - Images are disabled in both paths: the native renderer reduces
@@ -189,9 +190,18 @@ nonisolated enum MarkdownHeightCache {
     }
 }
 
-/// KaTeX's supported standalone environments. Keep parsing and routing aligned.
+/// KaTeX's display environments, which models also write without `$$`. Keep
+/// parsing and routing aligned. `$…$` is not listed: it has stricter rules so
+/// prices stay text (see `RichTextFeatureDetector.inlineDollarMath`).
 private enum RichMathDelimiters {
-    static let environments = ["equation", "equation*", "align", "align*", "alignat", "alignat*", "gather", "gather*", "CD"]
+    static let environments = [
+        "equation", "equation*", "align", "align*", "aligned", "alignat", "alignat*", "alignedat",
+        "gather", "gather*", "gathered", "split", "CD",
+        "cases", "dcases", "rcases", "drcases",
+        "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix",
+        "matrix*", "pmatrix*", "bmatrix*", "Bmatrix*", "vmatrix*", "Vmatrix*",
+        "smallmatrix", "array", "darray", "subarray"
+    ]
     static let json: String = {
         let delimiters: [[String: Any]] = [
             ["left": "$$", "right": "$$", "display": true],
@@ -218,6 +228,14 @@ enum RichTextFeatureDetector {
         return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: []) }
     }()
 
+    /// `$x$` on one line. The opener needs a non-space after it, and the next `$`
+    /// closes only with a non-space before it and no digit after it, so
+    /// "$5 and $10" stays text. Mirrors the `$` branch of the document's math rule.
+    private static let inlineDollarMath = try? NSRegularExpression(
+        pattern: #"(?<![\\$])\$(?![\s$])[^$\n]*(?<![\s\\])\$(?![$\d])"#,
+        options: []
+    )
+
     private static let inlineCodeSpan = try? NSRegularExpression(pattern: #"`+[^`]*`+"#, options: [])
 
     static func requiresAdvancedRendering(_ text: String) -> Bool {
@@ -232,7 +250,8 @@ enum RichTextFeatureDetector {
         }
 
         let range = NSRange(searchable.startIndex..., in: searchable)
-        return mathPatterns.contains { $0.firstMatch(in: searchable, options: [], range: range) != nil }
+        return (mathPatterns + [inlineDollarMath].compactMap { $0 })
+            .contains { $0.firstMatch(in: searchable, options: [], range: range) != nil }
     }
 
     /// Returns `text` with fenced blocks and inline code spans removed.
@@ -424,8 +443,6 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
     private static let katexCSS: String? = bundledMathCSS()?.escapedInlineStyle
     private static let katexJS: String? = bundledTextResource(named: "katex.min", extension: "js")?
         .escapedInlineScript
-    private static let katexAutoRenderJS: String? = bundledTextResource(named: "katex-auto-render.min", extension: "js")?
-        .escapedInlineScript
 
     // A single document per WebView. Message text only crosses the argument bridge,
     // so streamed tokens never reload the parser or become executable HTML/scripts.
@@ -433,7 +450,7 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
 
     private static func makeHTML() -> String? {
         let disabledMarkdownRules = RichMarkdownRenderingPolicy.disabledMarkdownRulesJSON
-        guard let markdownItJS, let katexCSS, let katexJS, let katexAutoRenderJS else { return nil }
+        guard let markdownItJS, let katexCSS, let katexJS else { return nil }
 
         return """
         <!doctype html>
@@ -567,9 +584,6 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
           \(katexJS)
           </script>
           <script>
-          \(katexAutoRenderJS)
-          </script>
-          <script>
             const root = document.getElementById('content');
             const md = window.markdownit({
               html: false,
@@ -578,24 +592,83 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
               breaks: true
             });
             md.disable(\(disabledMarkdownRules));
-            // Protect math from Markdown's escape/emphasis rules before KaTeX
-            // sees it. In particular, Markdown would strip \\( and \\[ delimiters.
+            // Math is tokenized here and rendered by KaTeX directly, so Markdown's
+            // escape/emphasis rules never see it (they would strip \\( and \\[),
+            // and code spans or fences are never mistaken for math.
             const mathDelimiters = \(RichMathDelimiters.json);
+            const isSpace = (character) => character === undefined || /\\s/.test(character);
+            // Environments go to KaTeX whole; other delimiters only wrap the TeX.
+            const mathToken = (state, type, source, delimiter) => {
+              const token = state.push(type, '', 0);
+              token.content = delimiter.left.startsWith('\\\\begin')
+                ? source
+                : source.slice(delimiter.left.length, source.length - delimiter.right.length);
+              token.meta = {display: delimiter.display, source};
+              return token;
+            };
             md.inline.ruler.before('escape', 'math', (state, silent) => {
-              for (const {left, right} of mathDelimiters) {
-                if (!state.src.startsWith(left, state.pos)) continue;
-                const end = state.src.indexOf(right, state.pos + left.length);
+              const src = state.src;
+              const pos = state.pos;
+              for (const delimiter of mathDelimiters) {
+                if (!src.startsWith(delimiter.left, pos)) continue;
+                const end = src.indexOf(delimiter.right, pos + delimiter.left.length);
                 if (end < 0) return false;
-                if (!silent) {
-                  const token = state.push('math', '', 0);
-                  token.content = state.src.slice(state.pos, end + right.length);
+                const next = end + delimiter.right.length;
+                if (!silent) mathToken(state, 'math', src.slice(pos, next), delimiter);
+                state.pos = next;
+                return true;
+              }
+              // $x$: same rules as RichTextFeatureDetector.inlineDollarMath.
+              if (src[pos] !== '$' || src[pos + 1] === '$' || isSpace(src[pos + 1])) return false;
+              const end = src.indexOf('$', pos + 1);
+              if (end < 0 || isSpace(src[end - 1]) || src[end - 1] === '\\\\'
+                  || /[\\d$]/.test(src[end + 1] ?? '') || src.slice(pos, end).includes('\\n')) return false;
+              if (!silent) mathToken(state, 'math', src.slice(pos, end + 1), {left: '$', right: '$', display: false});
+              state.pos = end + 1;
+              return true;
+            });
+            // A display block that starts a line may contain blank lines, which
+            // would otherwise split it into separate paragraphs.
+            md.block.ruler.before('paragraph', 'math_block', (state, startLine, endLine, silent) => {
+              if (state.sCount[startLine] - state.blkIndent >= 4) return false;
+              const lineText = (line) => state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
+              const first = lineText(startLine);
+              const delimiter = mathDelimiters.find(({left, display}) => display && first.startsWith(left));
+              if (!delimiter) return false;
+              let source = first;
+              let searchFrom = delimiter.left.length;
+              for (let line = startLine; line < endLine; line++) {
+                if (line > startLine) {
+                  const text = lineText(line);
+                  if (text && state.sCount[line] < state.blkIndent) return false;
+                  searchFrom = source.length;
+                  source += '\\n' + text;
                 }
-                state.pos = end + right.length;
+                const end = source.indexOf(delimiter.right, searchFrom);
+                if (end < 0) continue;
+                const next = end + delimiter.right.length;
+                if (source.slice(next).trim()) return false;
+                if (!silent) {
+                  mathToken(state, 'math_block', source.slice(0, next), delimiter).map = [startLine, line + 1];
+                }
+                state.line = line + 1;
                 return true;
               }
               return false;
-            });
-            md.renderer.rules.math = (tokens, index) => md.utils.escapeHtml(tokens[index].content);
+            }, {alt: ['paragraph', 'reference', 'blockquote', 'list']});
+            const renderMath = (token) => {
+              try {
+                return katex.renderToString(token.content, {
+                  displayMode: token.meta.display,
+                  throwOnError: false,
+                  strict: 'ignore'
+                });
+              } catch {
+                return md.utils.escapeHtml(token.meta.source);
+              }
+            };
+            md.renderer.rules.math = (tokens, index) => renderMath(tokens[index]);
+            md.renderer.rules.math_block = (tokens, index) => '<p>' + renderMath(tokens[index]) + '</p>\\n';
             let revision = 0;
 
             const postHeight = () => {
@@ -613,14 +686,6 @@ struct RichMarkdownWebViewRepresentable: UIViewRepresentable {
                 document.documentElement.style.setProperty('--' + key, value);
               }
               root.innerHTML = md.render(source);
-              if (window.renderMathInElement) {
-                window.renderMathInElement(root, {
-                  throwOnError: false,
-                  strict: 'ignore',
-                  ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
-                  delimiters: mathDelimiters
-                });
-              }
               postHeight();
               requestAnimationFrame(postHeight);
             };

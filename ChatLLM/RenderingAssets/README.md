@@ -9,5 +9,6 @@ https://registry.npmjs.org/katex/-/katex-0.16.28.tgz
 with its bundled WOFF2 data URI. Missing fonts or parser files cause the existing
 native fallback instead of silently displaying incomplete math.
 
-`RichMathDelimiters` is the shared list for routing, Markdown protection and KaTeX
-auto-render. Keep the version, fonts and license together when updating KaTeX.
+`RichMathDelimiters` is the shared list for routing and the document's markdown-it
+math rules, which pass each formula to `katex.renderToString`.
+Keep the version, fonts and license together when updating KaTeX.

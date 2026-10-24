@@ -358,3 +358,53 @@ extension ChatLLMTests {
         #expect(try await renderer.webView.evaluateJavaScript("performance.getEntriesByType('resource').every(r => !/^https?:/.test(r.name))") as? Bool == true)
     }
 }
+
+extension ChatLLMTests {
+    @Test func dollarMathAndBareMatrixEnvironmentsUseAdvancedRenderer() {
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("Let $x^2 + y^2 = r^2$ hold."))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"Price \$5 and $x$."#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"f(x) = \begin{cases} 1 & x > 0 \end{cases}"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering(#"\begin{pmatrix} 1 & 2 \end{pmatrix}"#))
+        #expect(RichTextFeatureDetector.requiresAdvancedRendering("\\begin{aligned}\na &= b\n\\end{aligned}"))
+        // Prices, ranges and escaped dollars stay native text.
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("Plans cost $5-$10, or $4.50 on sale."))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(#"Escaped \$x\$ is literal."#))
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering("Use `$x$` in code."))
+        // KaTeX has no multline, so it must not route there.
+        #expect(!RichTextFeatureDetector.requiresAdvancedRendering(#"\begin{multline} a \end{multline}"#))
+    }
+
+    @Test func webMarkdownRendersDollarMathBareEnvironmentsAndBlankLineDisplays() async throws {
+        let renderer = MarkdownWebTestHarness()
+        defer { renderer.close() }
+        renderer.update(#"""
+        Let $x^2$ hold, but $5 and $10 are prices and \$y\$ is escaped.
+
+        f(x) = \begin{cases} 1 & x > 0 \\ 0 & \text{else} \end{cases}
+
+        \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}
+
+        $$
+        \begin{aligned}
+        a &= b \\
+
+        c &= d
+        \end{aligned}
+        $$
+
+        After the block.
+        """#)
+        try await renderer.waitFor("document.querySelectorAll('.katex').length === 4")
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('.katex-error').length") as? Int == 0)
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelectorAll('.katex-display').length") as? Int == 3)
+        let text = try #require(try await renderer.webView.evaluateJavaScript("""
+        (() => { const clone = document.getElementById('content').cloneNode(true);
+          clone.querySelectorAll('.katex').forEach(e => e.remove()); return clone.textContent; })()
+        """) as? String)
+        #expect(text.contains("$5 and $10 are prices"))
+        #expect(text.contains("$y$ is escaped"))
+        #expect(!text.contains(#"\begin"#))
+        #expect(!text.contains("$$"))
+        #expect(try await renderer.webView.evaluateJavaScript("document.querySelector('#content > p:last-child').textContent") as? String == "After the block.")
+    }
+}
