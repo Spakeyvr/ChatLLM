@@ -137,8 +137,13 @@ actor ImageStore {
         var deletedCount = 0
         var freedBytes: Int64 = 0
 
+        // Match by file name: on device the directory listing can spell the
+        // container path differently (/private/var vs /var), so whole-URL
+        // comparison treated every saved image as orphaned.
+        let referencedNames = Set(referencedURLs.map(\.lastPathComponent))
+
         for fileURL in canonicalContents where fileURL.pathExtension == "jpg" {
-            if !referencedURLs.contains(fileURL) {
+            if !referencedNames.contains(fileURL.lastPathComponent) {
                 guard shouldDeleteDuringCleanup(fileURL) else { continue }
                 // Orphaned file found
                 if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {

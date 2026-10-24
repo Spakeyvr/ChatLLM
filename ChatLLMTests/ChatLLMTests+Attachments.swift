@@ -68,6 +68,21 @@ extension ChatLLMTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func referencedImagesSurviveCleanupWhenPathsAreSpelledDifferently() async throws {
+        // On device the directory listing and the stored reference can name the
+        // same container through /private/var and /var; that must not orphan the file.
+        let store = ImageStore.shared
+        let url = try await store.save(image: makeTestImage(width: 60, height: 40), maxDimension: 60)
+        defer { Task { try? await store.delete(url: url) } }
+        let old = Date().addingTimeInterval(-3_600)
+        try FileManager.default.setAttributes([.creationDate: old, .modificationDate: old], ofItemAtPath: url.path)
+
+        let differentlySpelled = URL(fileURLWithPath: "/private" + url.path)
+        try await store.cleanupOrphanedFiles(referencedURLs: [differentlySpelled])
+
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func imageStoreRejectsDegenerateImages() async {
         let store = ImageStore.shared
         await #expect(throws: (any Error).self) {
