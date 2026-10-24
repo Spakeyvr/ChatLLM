@@ -145,10 +145,13 @@ struct ConversationRow: View {
 
 extension ConversationSidebar: Equatable {
     /// The parent re-renders whenever SwiftData processes a change, several times a second
-    /// while a reply streams. Rows observe their own chats and the bindings refresh the
-    /// list on their own, so only the list's shape decides whether the body runs again.
+    /// while a reply streams. Rows observe their own chats, so only the list's shape and
+    /// the open chat decide whether the body runs again. The selection binding alone is
+    /// not enough: List keeps its rows' highlight until the parent passes new values.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.hasConversations == rhs.hasConversations && lhs.shape == rhs.shape
+        lhs.hasConversations == rhs.hasConversations
+            && lhs.selectedID == rhs.selectedID
+            && lhs.shape == rhs.shape
     }
 
     private var shape: [[String]] {
@@ -208,6 +211,9 @@ struct ConversationRecencySection: Identifiable {
 struct ConversationSidebar: View {
     let sections: [ConversationRecencySection]
     let hasConversations: Bool
+    /// The open chat, passed by value so a new selection fails the Equatable check
+    /// and the rows redraw their highlight.
+    let selectedID: UUID?
     @Binding var selection: Conversation?
     @Binding var searchText: String
     @Binding var isSearchPresented: Bool
@@ -325,7 +331,7 @@ struct ConversationSidebar: View {
     }
 
     private func isSelected(_ convo: Conversation) -> Bool {
-        selection?.id == convo.id
+        selectedID == convo.id
     }
 
     @ViewBuilder

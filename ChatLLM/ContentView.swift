@@ -586,6 +586,7 @@ struct ContentView: View {
             // One pass over the (potentially expensive) search filter per render.
             sections: ConversationRecencySection.grouping(filteredConversations),
             hasConversations: !conversations.isEmpty,
+            selectedID: selection?.id,
             selection: $selection,
             searchText: $searchText,
             isSearchPresented: $isSearchPresented,

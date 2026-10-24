@@ -50,15 +50,16 @@ extension ChatLLMTests {
         #expect(ConversationRecencySection.grouping([], now: now, calendar: calendar).isEmpty)
     }
 
-    @Test func sidebarRendersAgainOnlyWhenItsListChanges() {
+    @Test func sidebarRendersAgainOnlyWhenItsListOrOpenChatChanges() {
         let now = Date()
         let first = Conversation(title: "First", lastUpdated: now)
         let second = Conversation(title: "Second", lastUpdated: now.addingTimeInterval(-60))
-        func sidebar(_ conversations: [Conversation]) -> ConversationSidebar {
+        func sidebar(_ conversations: [Conversation], selected: Conversation? = nil) -> ConversationSidebar {
             ConversationSidebar(
                 sections: ConversationRecencySection.grouping(conversations, now: now),
                 hasConversations: !conversations.isEmpty,
-                selection: .constant(nil),
+                selectedID: selected?.id,
+                selection: .constant(selected),
                 searchText: .constant(""),
                 isSearchPresented: .constant(false),
                 onSubmitSearch: {}, onSelect: {}, onNewChat: {}, onShowSettings: {},
@@ -70,6 +71,11 @@ extension ChatLLMTests {
         let before = sidebar([first, second])
         first.title = "Renamed"
         #expect(before == sidebar([first, second]))
+
+        // Switching chats must move the highlight, so the sidebar renders again.
+        let firstOpen = sidebar([first, second], selected: first)
+        #expect(firstOpen != sidebar([first, second], selected: second))
+        #expect(firstOpen == sidebar([first, second], selected: first))
 
         #expect(before != sidebar([second, first]))
         #expect(before != sidebar([first]))
