@@ -53,15 +53,19 @@ struct ChatLLMApp: App {
 
     var body: some Scene {
         WindowGroup {
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-ui-test-markdown") {
-                MarkdownRenderingPreview()
-            } else {
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-ui-test-markdown") {
+                    MarkdownRenderingPreview()
+                } else {
+                    ContentView()
+                }
+                #else
                 ContentView()
+                #endif
             }
-            #else
-            ContentView()
-            #endif
+            // Fade content softly under the bars instead of the hard top edge.
+            .scrollEdgeEffectStyle(.soft, for: .all)
         }
         .modelContainer(sharedModelContainer)
         .commands { ChatLLMCommands() }
